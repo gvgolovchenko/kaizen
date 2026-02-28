@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaizen — Продукт</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="container">
+    <a href="/" class="back-link">&larr; Все продукты</a>
+
+    <div id="productHeader" class="product-header">
+      <h1 id="prodName">Загрузка...</h1>
+      <p class="desc" id="prodDesc"></p>
+      <div class="product-meta" id="prodMeta"></div>
+      <div style="margin-top: 14px">
+        <button class="btn btn-ghost btn-sm" onclick="showEditProductModal()">Редактировать</button>
+      </div>
+    </div>
+
+    <!-- Issues section -->
+    <div class="section">
+      <div class="section-header">
+        <h2>Задачи</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div class="filters" id="issueFilters">
+            <button class="btn btn-ghost btn-sm active" data-status="">Все</button>
+            <button class="btn btn-ghost btn-sm" data-status="open">Open</button>
+            <button class="btn btn-ghost btn-sm" data-status="in_release">In Release</button>
+            <button class="btn btn-ghost btn-sm" data-status="done">Done</button>
+            <button class="btn btn-ghost btn-sm" data-status="closed">Closed</button>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="showIssueModal()">+ Задача</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Задача</th>
+              <th>Тип</th>
+              <th>Приоритет</th>
+              <th>Статус</th>
+              <th>Дата</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="issuesBody"></tbody>
+        </table>
+      </div>
+      <div id="issuesEmpty" class="empty" style="display:none">
+        <p>Нет задач</p>
+      </div>
+    </div>
+
+    <!-- Releases section -->
+    <div class="section">
+      <div class="section-header">
+        <h2>Релизы</h2>
+        <button class="btn btn-primary btn-sm" onclick="showReleaseModal()">+ Релиз</button>
+      </div>
+      <div id="releasesList"></div>
+      <div id="releasesEmpty" class="empty" style="display:none">
+        <p>Нет релизов</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Product Modal -->
+  <div class="modal-overlay" id="editProductModal">
+    <div class="modal">
+      <h2>Редактировать продукт</h2>
+      <form id="editProductForm" onsubmit="return handleEditProduct(event)">
+        <div class="form-group">
+          <label>Название *</label>
+          <input type="text" id="epName" required>
+        </div>
+        <div class="form-group">
+          <label>Описание</label>
+          <textarea id="epDesc"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Репозиторий (URL)</label>
+          <input type="text" id="epRepo">
+        </div>
+        <div class="form-group">
+          <label>Стек технологий</label>
+          <input type="text" id="epStack">
+        </div>
+        <div class="form-group">
+          <label>Ответственный</label>
+          <input type="text" id="epOwner">
+        </div>
+        <div class="form-group">
+          <label>Путь к проекту</label>
+          <input type="text" id="epPath" placeholder="/Users/rivcmakar1/AIWork/Разработка ПО/...">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('editProductModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Issue Modal -->
+  <div class="modal-overlay" id="issueModal">
+    <div class="modal">
+      <h2 id="issueModalTitle">Новая задача</h2>
+      <form id="issueForm" onsubmit="return handleIssueSubmit(event)">
+        <input type="hidden" id="issueId">
+        <div class="form-group">
+          <label>Название *</label>
+          <input type="text" id="issueTitle" required>
+        </div>
+        <div class="form-group">
+          <label>Описание</label>
+          <textarea id="issueDesc"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Тип</label>
+          <select id="issueType">
+            <option value="improvement">Improvement</option>
+            <option value="bug">Bug</option>
+            <option value="feature">Feature</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Приоритет</label>
+          <select id="issuePriority">
+            <option value="medium">Medium</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('issueModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Release Modal -->
+  <div class="modal-overlay" id="releaseModal">
+    <div class="modal">
+      <h2>Новый релиз</h2>
+      <form id="releaseForm" onsubmit="return handleReleaseSubmit(event)">
+        <div class="form-group">
+          <label>Версия *</label>
+          <input type="text" id="releaseVersion" placeholder="1.0.0" required>
+        </div>
+        <div class="form-group">
+          <label>Название *</label>
+          <input type="text" id="releaseName" required>
+        </div>
+        <div class="form-group">
+          <label>Описание (Release notes)</label>
+          <textarea id="releaseDesc"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Включить задачи (open)</label>
+          <div class="checkbox-list" id="releaseIssuesList"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('releaseModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary">Создать релиз</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/js/product.js"></script>
+</body>
+</html>
