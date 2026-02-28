@@ -341,6 +341,141 @@ window.deleteRelease = async function (id) {
   }
 };
 
+// ── Improve (AI suggestions) ──────────────────────────
+
+let improveSuggestions = [];
+
+window.showImproveModal = async function () {
+  // Reset to form phase
+  document.getElementById('improvePhaseForm').style.display = '';
+  document.getElementById('improvePhaseLoading').style.display = 'none';
+  document.getElementById('improvePhaseReview').style.display = 'none';
+  document.getElementById('improvePrompt').value = '';
+  document.getElementById('improveCount').value = '5';
+  improveSuggestions = [];
+
+  try {
+    // Load templates
+    const templates = await api('/improve-templates');
+    const tplSelect = document.getElementById('improveTemplate');
+    tplSelect.innerHTML = '<option value="">— Свой промпт —</option>' +
+      templates.map(t => `<option value="${t.id}" data-prompt="${escapeHtml(t.prompt)}">${escapeHtml(t.name)}</option>`).join('');
+
+    // Load models
+    const models = await api('/ai-models');
+    const modelSelect = document.getElementById('improveModel');
+    modelSelect.innerHTML = models.length === 0
+      ? '<option value="">Нет моделей</option>'
+      : models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  openModal('improveModal');
+};
+
+window.handleTemplateChange = function () {
+  const sel = document.getElementById('improveTemplate');
+  const opt = sel.options[sel.selectedIndex];
+  const prompt = opt?.dataset?.prompt || '';
+  if (prompt) {
+    document.getElementById('improvePrompt').value = prompt;
+  }
+};
+
+window.handleImproveGenerate = async function () {
+  const prompt = document.getElementById('improvePrompt').value.trim();
+  const modelId = document.getElementById('improveModel').value;
+  const count = document.getElementById('improveCount').value;
+
+  if (!prompt) return toast('Введите промпт', 'error');
+  if (!modelId) return toast('Выберите модель', 'error');
+
+  // Switch to loading phase
+  document.getElementById('improvePhaseForm').style.display = 'none';
+  document.getElementById('improvePhaseLoading').style.display = '';
+
+  try {
+    const result = await api(`/products/${productId}/improve`, {
+      method: 'POST',
+      body: { model_id: modelId, prompt, count: parseInt(count) || 5 },
+    });
+
+    improveSuggestions = result.suggestions || [];
+
+    if (improveSuggestions.length === 0) {
+      toast('Модель не вернула предложений', 'error');
+      document.getElementById('improvePhaseLoading').style.display = 'none';
+      document.getElementById('improvePhaseForm').style.display = '';
+      return;
+    }
+
+    renderSuggestions();
+    document.getElementById('improvePhaseLoading').style.display = 'none';
+    document.getElementById('improvePhaseReview').style.display = '';
+  } catch (err) {
+    toast(err.message, 'error');
+    document.getElementById('improvePhaseLoading').style.display = 'none';
+    document.getElementById('improvePhaseForm').style.display = '';
+  }
+};
+
+function renderSuggestions() {
+  const list = document.getElementById('improveSuggestionsList');
+  list.innerHTML = improveSuggestions.map((s, i) => `
+    <label class="improve-suggestion">
+      <input type="checkbox" checked data-index="${i}" onchange="updateSelectedCount()">
+      <div class="improve-suggestion-content">
+        <div class="improve-suggestion-title">${escapeHtml(s.title)}</div>
+        <div style="display:flex;gap:6px;margin:4px 0">
+          <span class="badge badge-${s.type}">${s.type}</span>
+          <span class="badge badge-${s.priority}">${s.priority}</span>
+        </div>
+        ${s.description ? `<div class="improve-suggestion-desc">${escapeHtml(s.description)}</div>` : ''}
+      </div>
+    </label>
+  `).join('');
+  updateSelectedCount();
+}
+
+window.updateSelectedCount = function () {
+  const checked = document.querySelectorAll('#improveSuggestionsList input[type="checkbox"]:checked');
+  const btn = document.getElementById('improveApproveBtn');
+  btn.textContent = `Создать выбранные (${checked.length})`;
+  btn.disabled = checked.length === 0;
+};
+
+window.toggleAllSuggestions = function (state) {
+  document.querySelectorAll('#improveSuggestionsList input[type="checkbox"]').forEach(cb => {
+    cb.checked = state;
+  });
+  updateSelectedCount();
+};
+
+window.improveBack = function () {
+  document.getElementById('improvePhaseReview').style.display = 'none';
+  document.getElementById('improvePhaseForm').style.display = '';
+};
+
+window.handleImproveApprove = async function () {
+  const checkboxes = document.querySelectorAll('#improveSuggestionsList input[type="checkbox"]:checked');
+  const selected = Array.from(checkboxes).map(cb => improveSuggestions[parseInt(cb.dataset.index)]);
+
+  if (selected.length === 0) return toast('Выберите хотя бы одну задачу', 'error');
+
+  try {
+    const result = await api(`/products/${productId}/improve/approve`, {
+      method: 'POST',
+      body: { issues: selected },
+    });
+    toast(`Создано задач: ${result.count}`);
+    closeModal('improveModal');
+    loadIssues();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
 // Expose closeModal globally for inline onclick handlers
 window.closeModal = closeModal;
 

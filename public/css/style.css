@@ -497,3 +497,233 @@ tr:hover td { background: var(--bg-hover); }
   margin-bottom: 16px;
 }
 .back-link:hover { color: var(--text); text-decoration: none; }
+
+/* ── Nav bar ───────────────────────────────────────── */
+
+.nav-bar {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 0;
+  margin-bottom: 24px;
+}
+
+.nav-bar .nav-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-logo {
+  font-size: 1.3rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+.nav-logo:hover { text-decoration: none; }
+.nav-logo span { color: var(--accent); font-size: 1.1rem; }
+
+.nav-links {
+  display: flex;
+  gap: 6px;
+}
+
+.nav-links a {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-links a:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+.nav-links a.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── AI Model badges ───────────────────────────────── */
+
+.badge-local { background: rgba(96,165,250,0.15); color: var(--blue); }
+.badge-cloud { background: rgba(129,140,248,0.15); color: var(--accent); }
+
+.badge-model-loaded { background: rgba(52,211,153,0.15); color: var(--green); }
+.badge-model-unloaded { background: rgba(136,144,164,0.15); color: var(--text-dim); }
+.badge-model-unknown { background: rgba(251,191,36,0.15); color: var(--yellow); }
+
+/* ── Warmup button ─────────────────────────────────── */
+
+.warmup-btn {
+  background: transparent;
+  color: var(--green);
+  border: 1px solid var(--green);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.warmup-btn:hover { background: rgba(52,211,153,0.1); }
+
+.warmup-btn.loading {
+  color: var(--yellow);
+  border-color: var(--yellow);
+  cursor: wait;
+  opacity: 0.7;
+}
+
+/* ── Model ID mono ─────────────────────────────────── */
+
+.model-id {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* ── Inline actions (table) ────────────────────────── */
+
+.inline-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* ── Discover section ─────────────────────────────────── */
+
+.discover-section {
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.discover-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.discover-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+.discover-btn:hover { background: rgba(129,140,248,0.1); }
+
+.discover-btn.loading {
+  color: var(--yellow);
+  border-color: var(--yellow);
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.discover-select {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.discover-select:focus { border-color: var(--accent); }
+.discover-select:disabled { opacity: 0.5; }
+
+/* ── Improve (AI suggestions) ────────────────────────── */
+
+.improve-loading {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-dim);
+}
+
+.improve-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  margin: 0 auto 16px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.improve-actions-top {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.improve-suggestions-list {
+  max-height: 400px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.improve-suggestion {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.improve-suggestion:hover { border-color: var(--accent); }
+
+.improve-suggestion input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.improve-suggestion-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.improve-suggestion-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 2px;
+}
+
+.improve-suggestion-desc {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+  line-height: 1.4;
+}

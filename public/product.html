@@ -7,6 +7,16 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+  <nav class="nav-bar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
+      <div class="nav-links">
+        <a href="/">Продукты</a>
+        <a href="/models.html">Модели ИИ</a>
+      </div>
+    </div>
+  </nav>
+
   <div class="container">
     <a href="/" class="back-link">&larr; Все продукты</a>
 
@@ -14,8 +24,9 @@
       <h1 id="prodName">Загрузка...</h1>
       <p class="desc" id="prodDesc"></p>
       <div class="product-meta" id="prodMeta"></div>
-      <div style="margin-top: 14px">
+      <div style="margin-top: 14px; display:flex; gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="showEditProductModal()">Редактировать</button>
+        <button class="btn btn-primary btn-sm" onclick="showImproveModal()">Улучшение продукта</button>
       </div>
     </div>
 
@@ -169,6 +180,61 @@
           <button type="submit" class="btn btn-primary">Создать релиз</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Improve Modal -->
+  <div class="modal-overlay" id="improveModal">
+    <div class="modal" style="max-width:640px">
+      <h2>Улучшение продукта</h2>
+
+      <!-- Phase 1: Form -->
+      <div id="improvePhaseForm">
+        <div class="form-group">
+          <label>Шаблон промпта</label>
+          <select id="improveTemplate" onchange="handleTemplateChange()">
+            <option value="">— Свой промпт —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Промпт *</label>
+          <textarea id="improvePrompt" rows="4" required placeholder="Опишите, какие улучшения вы хотите получить..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Модель ИИ *</label>
+          <select id="improveModel" required></select>
+        </div>
+        <div class="form-group">
+          <label>Количество задач (1–10)</label>
+          <input type="number" id="improveCount" value="5" min="1" max="10">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('improveModal')">Отмена</button>
+          <button type="button" class="btn btn-primary" onclick="handleImproveGenerate()">Сгенерировать</button>
+        </div>
+      </div>
+
+      <!-- Phase 2: Loading -->
+      <div id="improvePhaseLoading" style="display:none">
+        <div class="improve-loading">
+          <div class="improve-spinner"></div>
+          <p>Модель анализирует продукт. До 2 минут.</p>
+        </div>
+      </div>
+
+      <!-- Phase 3: Review -->
+      <div id="improvePhaseReview" style="display:none">
+        <div class="improve-actions-top">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllSuggestions(true)">Выбрать все</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllSuggestions(false)">Снять все</button>
+        </div>
+        <div class="improve-suggestions-list" id="improveSuggestionsList"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="improveBack()">Назад</button>
+          <button type="button" class="btn btn-ghost" onclick="closeModal('improveModal')">Отмена</button>
+          <button type="button" class="btn btn-primary" id="improveApproveBtn" onclick="handleImproveApprove()">Создать выбранные (0)</button>
+        </div>
+      </div>
     </div>
   </div>
 

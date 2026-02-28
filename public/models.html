@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaizen — Модели ИИ</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="nav-bar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
+      <div class="nav-links">
+        <a href="/">Продукты</a>
+        <a href="/models.html" class="active">Модели ИИ</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container">
+    <header>
+      <h1>Модели ИИ</h1>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="filterDeployment" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85rem">
+          <option value="">Все типы</option>
+          <option value="local">Локальные</option>
+          <option value="cloud">Облачные</option>
+        </select>
+        <button class="btn btn-primary" onclick="showModelModal()">+ Модель</button>
+      </div>
+    </header>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Название</th>
+            <th>Провайдер</th>
+            <th>Model ID</th>
+            <th>Тип</th>
+            <th>Параметры</th>
+            <th>Контекст</th>
+            <th>Статус</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="modelsBody"></tbody>
+      </table>
+    </div>
+
+    <div id="modelsEmpty" class="empty" style="display:none">
+      <p>Нет моделей</p>
+    </div>
+  </div>
+
+  <!-- Create/Edit Model Modal -->
+  <div class="modal-overlay" id="modelModal">
+    <div class="modal">
+      <h2 id="modelModalTitle">Новая модель</h2>
+      <form id="modelForm" onsubmit="return handleModelSubmit(event)">
+        <input type="hidden" id="modelEditId">
+        <div class="form-group">
+          <label>Название *</label>
+          <input type="text" id="modelName" required placeholder="Qwen3 Coder 30B">
+        </div>
+        <div class="form-group">
+          <label>Model ID *</label>
+          <input type="text" id="modelModelId" required placeholder="qwen3-coder:30b">
+        </div>
+        <div class="form-group">
+          <label>Провайдер</label>
+          <select id="modelProvider">
+            <option value="ollama">Ollama</option>
+            <option value="mlx">MLX</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="google">Google</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Тип развёртывания</label>
+          <select id="modelDeployment">
+            <option value="local">Локальная</option>
+            <option value="cloud">Облачная</option>
+          </select>
+        </div>
+        <div class="discover-section" id="discoverSection" style="display:none">
+          <div class="discover-row">
+            <button type="button" class="discover-btn" id="discoverBtn" onclick="window._discoverModels()">Обнаружить установленные</button>
+            <select class="discover-select" id="discoverSelect" disabled onchange="window._onDiscoverSelect(this.value)">
+              <option value="">— Выберите модель —</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" id="apiKeyGroup" style="display:none">
+          <label>API Key</label>
+          <input type="password" id="modelApiKey" placeholder="sk-...">
+        </div>
+        <div class="form-group">
+          <label>Описание</label>
+          <textarea id="modelDescription" placeholder="Описание модели..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Размер параметров</label>
+          <input type="text" id="modelParamsSize" placeholder="30B, 70B...">
+        </div>
+        <div class="form-group">
+          <label>Длина контекста (токены)</label>
+          <input type="number" id="modelContextLength" placeholder="131072">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modelModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary" id="modelSubmitBtn">Создать</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/js/models.js"></script>
+</body>
+</html>
