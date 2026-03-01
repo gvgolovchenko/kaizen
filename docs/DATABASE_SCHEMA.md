@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.0.0 (миграция 001)
+> Версия схемы: 1.1.0 (миграции 001–003)
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -12,6 +12,7 @@
 - **Первичные ключи**: UUID (`gen_random_uuid()`)
 - **Временные метки**: `created_at` (auto), `updated_at` (trigger)
 - **Каскадное удаление**: продукт → задачи + релизы
+- **Таблицы**: 5 (products, issues, releases, release_issues, ai_models)
 
 ---
 
@@ -77,6 +78,25 @@
 
 **PK**: (release_id, issue_id) — составной ключ.
 
+### opii.kaizen_ai_models
+
+Реестр AI-моделей для генерации задач.
+
+| Поле | Тип | Null | Default | Описание |
+|------|-----|:----:|---------|----------|
+| id | UUID | NO | gen_random_uuid() | PK |
+| name | VARCHAR(255) | NO | — | Название модели |
+| provider | VARCHAR(50) | YES | 'ollama' | Провайдер (ollama/mlx/anthropic/openai/google) |
+| deployment | VARCHAR(20) | YES | 'local' | Тип развёртывания (local/cloud) |
+| model_id | VARCHAR(255) | NO | — | Идентификатор модели у провайдера |
+| description | TEXT | YES | '' | Описание модели |
+| parameters_size | VARCHAR(50) | YES | NULL | Размер параметров (30B, 70B) |
+| context_length | INTEGER | YES | NULL | Длина контекста (токены) |
+| status | VARCHAR(20) | YES | 'unknown' | Статус (loaded/unloaded/unknown) |
+| api_key | TEXT | YES | NULL | API-ключ для облачных провайдеров |
+| created_at | TIMESTAMPTZ | YES | now() | Дата создания |
+| updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
+
 ---
 
 ## Индексы
@@ -109,6 +129,8 @@ kaizen_products
     ├── 1:N → kaizen_issues (product_id, CASCADE)
     └── 1:N → kaizen_releases (product_id, CASCADE)
                     └── M:N → kaizen_issues (через kaizen_release_issues)
+
+kaizen_ai_models (независимая таблица)
 ```
 
 ---
@@ -118,3 +140,5 @@ kaizen_products
 | # | Файл | Описание |
 |---|------|----------|
 | 001 | 001_initial_schema.sql | Создание схемы opii, 4 таблицы, индексы, триггеры |
+| 002 | 002_ai_models.sql | Таблица kaizen_ai_models (модели ИИ) |
+| 003 | 003_ai_models_api_key.sql | Колонка api_key в ai_models |
