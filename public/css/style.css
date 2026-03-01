@@ -310,12 +310,12 @@ tr:hover td { background: var(--bg-hover); }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 24px;
+  padding: 18px;
   margin-bottom: 8px;
 }
 
 .product-header h1 {
-  font-size: 1.5rem;
+  font-size: 1.3rem;
   margin-bottom: 8px;
 }
 
@@ -347,6 +347,39 @@ tr:hover td { background: var(--bg-hover); }
   color: #fff;
   border-color: var(--accent);
 }
+
+/* ── Tabs ──────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border);
+  margin-top: 24px;
+}
+.tab {
+  padding: 10px 20px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.tab:hover { color: var(--text); }
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab .tab-count {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-left: 4px;
+}
+.tab.active .tab-count { color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
 
 /* ── Release card ───────────────────────────────────── */
 
@@ -735,6 +768,10 @@ tr:hover td { background: var(--bg-hover); }
 .badge-process-completed { background: rgba(52,211,153,0.15); color: var(--green); }
 .badge-process-failed { background: rgba(248,113,113,0.15); color: var(--red); }
 .badge-process-improve { background: rgba(129,140,248,0.15); color: var(--accent); }
+.badge-process-prepare_spec { background: rgba(251,191,36,0.15); color: var(--yellow); }
+.badge-process-roadmap_from_doc { background: rgba(52,211,153,0.15); color: var(--green); }
+.badge-mode-claude-code { background: rgba(129,140,248,0.15); color: var(--accent); }
+.badge-mode-standalone { background: rgba(96,165,250,0.15); color: var(--blue); }
 .badge-process-log { background: rgba(96,165,250,0.15); color: var(--blue); font-size: 0.7rem; }
 
 /* ── Process logs ────────────────────────────────────── */
@@ -759,3 +796,21 @@ tr:hover td { background: var(--bg-hover); }
   border-color: rgba(248,113,113,0.4);
   background: rgba(248,113,113,0.05);
 }
+
+/* ── Generic spinner ────────────────────────────────── */
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  margin: 0 auto 16px;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Char counter ───────────────────────────────────── */
+
+.char-counter { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; }
+.char-counter.warning { color: var(--yellow); }
+.char-counter.danger { color: var(--red); }

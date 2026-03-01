@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.2.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 5 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.2.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
 
 ## Архитектура
 
@@ -22,7 +22,7 @@ kaizen/
 ├── .env                          # DB credentials, PORT=3034
 ├── server/
 │   ├── index.js                  # Express-сервер (порт 3034), JSON + static
-│   ├── ai-caller.js              # Универсальный AI caller (5 провайдеров)
+│   ├── ai-caller.js              # Универсальный AI caller (6 провайдеров)
 │   ├── utils.js                  # parseJsonFromAI(), maskApiKey()
 │   ├── process-runner.js         # Фоновый исполнитель AI-процессов
 │   ├── db/
@@ -120,7 +120,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | GET | /api/improve-templates | 6 шаблонов промптов |
 | GET | /api/processes | Все процессы (?status=, ?product_id=) |
 | GET | /api/processes/:id | Детали процесса |
-| POST | /api/processes | Создать + запустить (fire-and-forget) |
+| POST | /api/processes | Создать + запустить (fire-and-forget, timeout_min) |
 | GET | /api/processes/:id/logs | Логи процесса |
 | POST | /api/processes/:id/approve | Утвердить предложения → создать issues |
 | DELETE | /api/processes/:id | Удалить процесс + логи |
@@ -133,10 +133,11 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Удаление issue из релиза**: issue → `open`
 - **Удаление релиза**: все issues → `open`, затем удаление
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
-- **Асинхронные AI-процессы**: POST /processes создаёт запись + запускает фоновый runner (fire-and-forget). Статусы: pending → running → completed/failed. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend использует polling (4с) для отслеживания.
+- **Асинхронные AI-процессы**: POST /processes создаёт запись + запускает фоновый runner (fire-and-forget). Статусы: pending → running → completed/failed. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend: polling 4с (активные) / 10с (покой), живая длительность для running-процессов.
 - **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
-- **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), anthropic, openai, google
+- **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google
+- **claude-code провайдер**: вызывает `/opt/homebrew/bin/claude` через `child_process.execFile`. Флаги: `-p --output-format text --dangerously-skip-permissions --tools Read,Glob,Grep --system-prompt <prompt> -- <user_prompt>`. Особенности: удаляет `CLAUDE*` env vars (защита от вложенных сессий), закрывает `child.stdin.end()`, использует `--` разделитель (чтобы `--system-prompt` не поглощал другие флаги), запускается в `cwd = product.project_path` для анализа реального кода. API key не требуется. Таймаут настраивается (3-60 мин, по умолчанию 20 мин).
 
 ## Важные правила
 

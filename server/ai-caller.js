@@ -20,41 +20,43 @@ const MAX_TOKENS = 4096;
 export async function callAI(model, systemPrompt, userPrompt, options = {}) {
   const { provider, model_id, api_key } = model;
 
+  const timeoutMs = options.timeoutMs || TIMEOUT;
+
   switch (provider) {
     case 'ollama':
-      return callOllama(model_id, systemPrompt, userPrompt);
+      return callOllama(model_id, systemPrompt, userPrompt, timeoutMs);
     case 'mlx':
-      return callMLX(model_id, systemPrompt, userPrompt);
+      return callMLX(model_id, systemPrompt, userPrompt, timeoutMs);
     case 'claude-code':
       return callClaudeCode(model_id, systemPrompt, userPrompt, options);
     case 'anthropic':
-      return callAnthropic(model_id, api_key, systemPrompt, userPrompt);
+      return callAnthropic(model_id, api_key, systemPrompt, userPrompt, timeoutMs);
     case 'openai':
-      return callOpenAI(model_id, api_key, systemPrompt, userPrompt);
+      return callOpenAI(model_id, api_key, systemPrompt, userPrompt, timeoutMs);
     case 'google':
-      return callGoogle(model_id, api_key, systemPrompt, userPrompt);
+      return callGoogle(model_id, api_key, systemPrompt, userPrompt, timeoutMs);
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
 
-async function fetchWithTimeout(url, opts) {
+async function fetchWithTimeout(url, opts, timeoutMs = TIMEOUT) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetch(url, { ...opts, signal: controller.signal });
     clearTimeout(timer);
     return resp;
   } catch (err) {
     clearTimeout(timer);
-    if (err.name === 'AbortError') throw new Error('AI request timed out (120s)');
+    if (err.name === 'AbortError') throw new Error(`AI request timed out (${Math.round(timeoutMs / 1000)}s)`);
     throw err;
   }
 }
 
 // ── Ollama ──────────────────────────────────────────────
 
-async function callOllama(modelId, systemPrompt, userPrompt) {
+async function callOllama(modelId, systemPrompt, userPrompt, timeoutMs) {
   const resp = await fetchWithTimeout('http://localhost:11434/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -67,7 +69,7 @@ async function callOllama(modelId, systemPrompt, userPrompt) {
       stream: false,
       options: { temperature: TEMPERATURE, num_predict: MAX_TOKENS },
     }),
-  });
+  }, timeoutMs);
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -79,7 +81,7 @@ async function callOllama(modelId, systemPrompt, userPrompt) {
 
 // ── MLX ─────────────────────────────────────────────────
 
-async function callMLX(modelId, systemPrompt, userPrompt) {
+async function callMLX(modelId, systemPrompt, userPrompt, timeoutMs) {
   const resp = await fetchWithTimeout('http://localhost:8080/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,7 +94,7 @@ async function callMLX(modelId, systemPrompt, userPrompt) {
       temperature: TEMPERATURE,
       max_tokens: MAX_TOKENS,
     }),
-  });
+  }, timeoutMs);
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -136,7 +138,7 @@ async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
 
 // ── Anthropic ───────────────────────────────────────────
 
-async function callAnthropic(modelId, apiKey, systemPrompt, userPrompt) {
+async function callAnthropic(modelId, apiKey, systemPrompt, userPrompt, timeoutMs) {
   if (!apiKey) throw new Error('API key required for Anthropic');
 
   const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
@@ -153,7 +155,7 @@ async function callAnthropic(modelId, apiKey, systemPrompt, userPrompt) {
       temperature: TEMPERATURE,
       max_tokens: MAX_TOKENS,
     }),
-  });
+  }, timeoutMs);
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -165,7 +167,7 @@ async function callAnthropic(modelId, apiKey, systemPrompt, userPrompt) {
 
 // ── OpenAI ──────────────────────────────────────────────
 
-async function callOpenAI(modelId, apiKey, systemPrompt, userPrompt) {
+async function callOpenAI(modelId, apiKey, systemPrompt, userPrompt, timeoutMs) {
   if (!apiKey) throw new Error('API key required for OpenAI');
 
   const resp = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
@@ -183,7 +185,7 @@ async function callOpenAI(modelId, apiKey, systemPrompt, userPrompt) {
       temperature: TEMPERATURE,
       max_tokens: MAX_TOKENS,
     }),
-  });
+  }, timeoutMs);
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -195,7 +197,7 @@ async function callOpenAI(modelId, apiKey, systemPrompt, userPrompt) {
 
 // ── Google (Gemini) ─────────────────────────────────────
 
-async function callGoogle(modelId, apiKey, systemPrompt, userPrompt) {
+async function callGoogle(modelId, apiKey, systemPrompt, userPrompt, timeoutMs) {
   if (!apiKey) throw new Error('API key required for Google');
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
@@ -210,7 +212,7 @@ async function callGoogle(modelId, apiKey, systemPrompt, userPrompt) {
         maxOutputTokens: MAX_TOKENS,
       },
     }),
-  });
+  }, timeoutMs);
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');

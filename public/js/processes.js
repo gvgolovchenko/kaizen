@@ -28,7 +28,9 @@ function renderProcesses() {
   }
   empty.style.display = 'none';
 
-  tbody.innerHTML = processesList.map(p => `
+  tbody.innerHTML = processesList.map(p => {
+    const isRoadmapDone = p.type === 'roadmap_from_doc' && p.status === 'completed';
+    return `
     <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
       <td>${escapeHtml(p.product_name)}</td>
       <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
@@ -36,11 +38,13 @@ function renderProcesses() {
       <td><span class="badge badge-process-${p.status}">${p.status}</span></td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
       <td style="white-space:nowrap">${liveDuration(p)}</td>
+      <td style="white-space:nowrap">${suggestionsInfo(p)}</td>
       <td style="white-space:nowrap">
+        ${isRoadmapDone ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.location.href='/roadmap.html?process_id=${p.id}&product_id=${p.product_id}'">Дорожная карта</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Уд.</button>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
 function formatDuration(ms) {
@@ -61,6 +65,22 @@ function liveDuration(p) {
   return '—';
 }
 
+function suggestionsInfo(p) {
+  if (p.type === 'roadmap_from_doc' && p.result && p.result.roadmap) {
+    const r = p.result;
+    const info = `${r.total_releases || 0} р. / ${r.total_issues || 0} з.`;
+    return p.approved_count ? `${p.approved_count} созд. (${info})` : info;
+  }
+  if (p.type === 'prepare_spec' && p.result && p.result.char_count) {
+    return `${p.result.char_count} сим.`;
+  }
+  const total = p.result ? p.result.length : 0;
+  if (!total) return '—';
+  const approved = p.approved_count || 0;
+  if (approved > 0) return `${approved}/${total}`;
+  return `${total}`;
+}
+
 // ── Polling ──────────────────────────────────────────────
 
 const POLL_FAST = 4000;   // при активных процессах
@@ -77,11 +97,23 @@ function updatePolling() {
 // ── Process detail ───────────────────────────────────────
 
 window.showProcessDetail = async function (id) {
+  // Roadmap processes open in a separate page
+  const cachedProc = processesList.find(p => p.id === id);
+  if (cachedProc && cachedProc.type === 'roadmap_from_doc') {
+    window.location.href = `/roadmap.html?process_id=${id}&product_id=${cachedProc.product_id}`;
+    return;
+  }
+
   try {
     const [proc, logs] = await Promise.all([
       api(`/processes/${id}`),
       api(`/processes/${id}/logs`),
     ]);
+
+    if (proc.type === 'roadmap_from_doc') {
+      window.location.href = `/roadmap.html?process_id=${id}&product_id=${proc.product_id}`;
+      return;
+    }
 
     document.getElementById('processDetailTitle').textContent = `Процесс: ${proc.type}`;
 

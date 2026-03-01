@@ -1,9 +1,27 @@
 import * as processes from './db/processes.js';
 import * as processLogs from './db/process-logs.js';
 import * as products from './db/products.js';
+import * as releases from './db/releases.js';
 import * as aiModels from './db/ai-models.js';
 import { callAI } from './ai-caller.js';
 import { parseJsonFromAI } from './utils.js';
+import { collectProjectContext } from './context-collector.js';
+
+/**
+ * Watchdog wrapper — guarantees a Promise settles within timeoutMs.
+ * If the inner promise hangs (callAI timeout doesn't fire), this rejects.
+ */
+function withWatchdog(promise, timeoutMs, label = 'AI call') {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Watchdog: ${label} не завершился за ${Math.round(timeoutMs / 1000)}с`));
+    }, timeoutMs);
+    promise.then(
+      val => { clearTimeout(timer); resolve(val); },
+      err => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 
 const IMPROVE_TEMPLATES = {
   general: 'Проанализируй продукт и предложи общие улучшения: UX, функциональность, стабильность, масштабируемость.',
@@ -42,11 +60,45 @@ export async function runProcess(processId, options = {}) {
       throw new Error('API key required for cloud model');
     }
 
+    // Dispatch by process type
+    if (proc.type === 'prepare_spec') {
+      await runPrepareSpec(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'roadmap_from_doc') {
+      await runRoadmapFromDoc(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
+
     const taskCount = Math.min(Math.max(parseInt(proc.input_count) || 5, 1), 10);
 
     // 3. Build prompts
     const isClaudeCode = model.provider === 'claude-code';
-    const hasProjectPath = isClaudeCode && product.project_path;
+    const hasProjectPath = !!product.project_path;
+    const useInteractiveTools = isClaudeCode && hasProjectPath;
+    const useCollectedContext = !isClaudeCode && hasProjectPath;
+
+    // Collect project context for non-claude-code providers
+    let fileContext = '';
+    let contextStats = null;
+    if (useCollectedContext) {
+      try {
+        const contextLength = model.context_length || 8192;
+        const maxTokens = Math.max(Math.floor(contextLength * 0.4), 1000);
+        const result = await collectProjectContext(product.project_path, {
+          maxTokens,
+          techStack: product.tech_stack,
+        });
+        fileContext = result.context;
+        contextStats = result.stats;
+      } catch (err) {
+        await processLogs.create({
+          process_id: processId,
+          step: 'context_warning',
+          message: `Не удалось собрать контекст: ${err.message}`,
+        });
+      }
+    }
 
     const systemPrompt = `Ты — эксперт по улучшению программных продуктов. Анализируй продукт и генерируй конкретные, реализуемые задачи.
 
@@ -55,7 +107,8 @@ ${product.description ? `Описание: ${product.description}` : ''}
 ${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
 ${!hasProjectPath && product.repo_url ? `Репозиторий: ${product.repo_url}` : ''}
 ${product.owner ? `Ответственный: ${product.owner}` : ''}
-${hasProjectPath ? `\nПроект находится в текущей директории. Используй инструменты Read, Glob, Grep чтобы изучить код, архитектуру, структуру файлов. Основывай предложения на реальном коде проекта.` : ''}
+${useInteractiveTools ? `\nПроект находится в текущей директории. Начни с чтения CLAUDE.md и файлов из docs/ — там контекст проекта, архитектура, API, схема БД, бизнес-логика. Затем используй инструменты Read, Glob, Grep чтобы изучить код и структуру файлов. Основывай предложения на реальном коде и документации проекта.` : ''}
+${fileContext ? `\nНиже приведён контекст проекта (файлы, документация, структура). Используй его для анализа и генерации предложений на основе реального кода.\n\n${fileContext}` : ''}
 
 ВАЖНО: Верни ответ ТОЛЬКО как JSON-массив из ${taskCount} задач. Никакого текста, рассуждений или тегов до или после JSON. Не используй <think> блоки.
 Формат каждой задачи:
@@ -69,18 +122,38 @@ ${hasProjectPath ? `\nПроект находится в текущей дире
     const userPrompt = proc.input_prompt || IMPROVE_TEMPLATES[proc.input_template_id] || IMPROVE_TEMPLATES.general;
 
     // 4. Log: request_sent
+    const logData = {
+      model_name: model.name,
+      provider: model.provider,
+      system_prompt_length: systemPrompt.length,
+      user_prompt_length: userPrompt.length,
+      cwd: useInteractiveTools ? product.project_path : null,
+    };
+    if (contextStats) {
+      logData.context_stats = contextStats;
+    }
+
+    let logMsg = `Запрос отправлен модели ${model.name}`;
+    if (useInteractiveTools) logMsg += ` (cwd: ${product.project_path})`;
+    if (contextStats) logMsg += ` (контекст: ${contextStats.filesRead} файлов, ${contextStats.totalChars} символов${contextStats.truncated ? ', усечён' : ''})`;
+
     await processLogs.create({
       process_id: processId,
       step: 'request_sent',
-      message: `Запрос отправлен модели ${model.name}${hasProjectPath ? ` (cwd: ${product.project_path})` : ''}`,
-      data: { model_name: model.name, provider: model.provider, system_prompt_length: systemPrompt.length, user_prompt_length: userPrompt.length, cwd: product.project_path || null },
+      message: logMsg,
+      data: logData,
     });
 
-    // 5. Call AI
+    // 5. Call AI (with watchdog safety net)
     const aiOptions = {};
-    if (hasProjectPath) aiOptions.cwd = product.project_path;
+    if (useInteractiveTools) aiOptions.cwd = product.project_path;
     if (timeoutMs) aiOptions.timeoutMs = timeoutMs;
-    const rawResponse = await callAI(model, systemPrompt, userPrompt, aiOptions);
+    const watchdogMs = timeoutMs + 60_000; // +60s grace for normal timeout to fire first
+    const rawResponse = await withWatchdog(
+      callAI(model, systemPrompt, userPrompt, aiOptions),
+      watchdogMs,
+      `improve/${model.name}`,
+    );
 
     // 6. Log: response_received
     await processLogs.create({
@@ -157,4 +230,356 @@ ${hasProjectPath ? `\nПроект находится в текущей дире
 
     console.error(`Process ${processId} failed:`, err.message);
   }
+}
+
+/**
+ * Run a prepare_spec process — generate AI release specification.
+ */
+async function runPrepareSpec(processId, proc, product, model, startTime, timeoutMs) {
+  // 1. Load release with issues
+  const release = await releases.getById(proc.release_id);
+  if (!release) throw new Error('Release not found');
+  if (!release.issues || release.issues.length === 0) throw new Error('Release has no issues');
+
+  // Load last 3 published releases for context
+  const publishedReleases = await releases.getPublishedByProduct(product.id, 3);
+
+  // 2. Determine mode (same pattern as improve)
+  const isClaudeCode = model.provider === 'claude-code';
+  const hasProjectPath = !!product.project_path;
+  const useInteractiveTools = isClaudeCode && hasProjectPath;
+  const useCollectedContext = !isClaudeCode && hasProjectPath;
+
+  // 3. Collect project context for standalone mode
+  let fileContext = '';
+  let contextStats = null;
+  if (useCollectedContext) {
+    try {
+      const contextLength = model.context_length || 8192;
+      const maxTokens = Math.max(Math.floor(contextLength * 0.4), 1000);
+      const result = await collectProjectContext(product.project_path, {
+        maxTokens,
+        techStack: product.tech_stack,
+      });
+      fileContext = result.context;
+      contextStats = result.stats;
+    } catch (err) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'context_warning',
+        message: `Не удалось собрать контекст: ${err.message}`,
+      });
+    }
+  }
+
+  // 4. Build system prompt
+  const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+
+  let systemPrompt = `Ты — опытный техлид и архитектор. Твоя задача — подготовить подробную спецификацию разработки для релиза программного продукта.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
+${product.owner ? `Ответственный: ${product.owner}` : ''}`;
+
+  if (useInteractiveTools) {
+    systemPrompt += `\n\nПроект находится в текущей директории. Начни с чтения CLAUDE.md и файлов из docs/ — там контекст проекта, архитектура, API, схема БД, бизнес-логика. Затем используй инструменты Read, Glob, Grep чтобы изучить код и структуру файлов. Основывай спецификацию на реальном коде и документации проекта.`;
+  }
+
+  if (fileContext) {
+    systemPrompt += `\n\nНиже приведён контекст проекта (файлы, документация, структура). Используй его для написания спецификации на основе реального кода.\n\n${fileContext}`;
+  }
+
+  systemPrompt += `\n\nВАЖНО: Верни ТОЛЬКО текст спецификации в формате Markdown. Никаких обёрток, тегов, JSON или рассуждений. Не используй <think> блоки.`;
+
+  // 5. Build user prompt
+  const issuesList = release.issues.map((iss, i) =>
+    `${i + 1}. **${iss.title}** (${iss.type}, ${iss.priority})${iss.description ? `\n   ${iss.description}` : ''}`
+  ).join('\n');
+
+  let historySection = '';
+  if (publishedReleases.length > 0) {
+    historySection = `\n\n## История последних релизов\n\n` + publishedReleases.map(r => {
+      const rIssues = (r.issues || []).map(i => `  - ${i.title} (${i.type})`).join('\n');
+      return `### ${r.version} — ${r.name}\n${rIssues}`;
+    }).join('\n\n');
+  }
+
+  const userPrompt = `Подготовь спецификацию разработки для релиза.
+
+## Релиз: ${release.version} — ${release.name}
+${release.description ? `\nОписание: ${release.description}` : ''}
+
+## Задачи релиза
+
+${issuesList}
+${historySection}
+
+## Формат спецификации
+
+Напиши документ в Markdown со следующей структурой:
+
+# Спецификация релиза ${release.version} — ${release.name}
+
+## Обзор
+Краткое описание релиза, его целей и ожидаемого результата.
+
+## Задачи
+
+Для каждой задачи из релиза:
+### Задача N: <название>
+- **Тип**: improvement/bug/feature
+- **Приоритет**: critical/high/medium/low
+- **Описание**: Подробное описание что нужно сделать
+- **Файлы для изменения**: Какие файлы нужно создать/изменить
+- **Шаги реализации**: Пошаговый план (конкретные действия)
+- **Критерии приёмки**: Как проверить что задача выполнена
+
+## Порядок реализации
+Рекомендуемая последовательность выполнения задач (с учётом зависимостей).
+
+## Риски и замечания
+Потенциальные риски, на что обратить внимание при реализации.`;
+
+  // 6. Log: request_sent
+  const logData = {
+    model_name: model.name,
+    provider: model.provider,
+    mode,
+    release_version: release.version,
+    issues_count: release.issues.length,
+    system_prompt_length: systemPrompt.length,
+    user_prompt_length: userPrompt.length,
+    cwd: useInteractiveTools ? product.project_path : null,
+  };
+  if (contextStats) logData.context_stats = contextStats;
+
+  let logMsg = `Запрос спецификации отправлен модели ${model.name} (${mode})`;
+  if (useInteractiveTools) logMsg += ` (cwd: ${product.project_path})`;
+  if (contextStats) logMsg += ` (контекст: ${contextStats.filesRead} файлов, ${contextStats.totalChars} символов${contextStats.truncated ? ', усечён' : ''})`;
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: logMsg,
+    data: logData,
+  });
+
+  // 7. Call AI (with watchdog safety net)
+  const aiOptions = {};
+  if (useInteractiveTools) aiOptions.cwd = product.project_path;
+  if (timeoutMs) aiOptions.timeoutMs = timeoutMs;
+  const watchdogMs = timeoutMs + 60_000;
+  const rawResponse = await withWatchdog(
+    callAI(model, systemPrompt, userPrompt, aiOptions),
+    watchdogMs,
+    `prepare_spec/${model.name}`,
+  );
+
+  // 8. Log: response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов)`,
+    data: { response_length: rawResponse.length },
+  });
+
+  // 9. Save spec
+  await releases.saveSpec(release.id, rawResponse);
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'spec_saved',
+    message: `Спецификация сохранена (${rawResponse.length} символов)`,
+    data: { char_count: rawResponse.length },
+  });
+
+  // 10. Update process → completed
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result: { text: rawResponse.slice(0, 500), mode, char_count: rawResponse.length },
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+}
+
+/**
+ * Run a roadmap_from_doc process — analyze requirements document and generate roadmap.
+ */
+async function runRoadmapFromDoc(processId, proc, product, model, startTime, timeoutMs) {
+  const docText = proc.input_prompt;
+  if (!docText) throw new Error('Document text is empty');
+
+  // 1. Determine mode
+  const isClaudeCode = model.provider === 'claude-code';
+  const hasProjectPath = !!product.project_path;
+  const useInteractiveTools = isClaudeCode && hasProjectPath;
+  const useCollectedContext = !isClaudeCode && hasProjectPath;
+  const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+
+  // 2. Collect project context for standalone mode
+  let fileContext = '';
+  let contextStats = null;
+  if (useCollectedContext) {
+    try {
+      const contextLength = model.context_length || 8192;
+      const maxTokens = Math.max(Math.floor(contextLength * 0.3), 1000);
+      const result = await collectProjectContext(product.project_path, {
+        maxTokens,
+        techStack: product.tech_stack,
+      });
+      fileContext = result.context;
+      contextStats = result.stats;
+    } catch (err) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'context_warning',
+        message: `Не удалось собрать контекст: ${err.message}`,
+      });
+    }
+  }
+
+  // 3. Build system prompt
+  let systemPrompt = `Ты — опытный технический аналитик и архитектор. Тебе предстоит создать дорожную карту разработки на основе документа с требованиями.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
+${product.owner ? `Ответственный: ${product.owner}` : ''}`;
+
+  if (useInteractiveTools) {
+    systemPrompt += `\n\nПуть к проекту: ${product.project_path}\nУ тебя есть доступ к файлам проекта (Read, Glob, Grep). Используй их для понимания текущего состояния кодовой базы перед составлением дорожной карты.`;
+  }
+
+  if (fileContext) {
+    systemPrompt += `\n\n=== ДОКУМЕНТАЦИЯ И АРХИТЕКТУРА ПРОЕКТА ===\n${fileContext}`;
+  }
+
+  systemPrompt += `\n\nВАЖНО: Верни ответ ТОЛЬКО как JSON указанного формата. Никакого текста вне JSON. Не используй <think> блоки.`;
+
+  // 4. Build user prompt
+  const userPrompt = `Проанализируй следующий документ с требованиями и создай дорожную карту разработки.
+
+=== ДОКУМЕНТ ===
+${docText}
+=== КОНЕЦ ДОКУМЕНТА ===
+
+Разбей требования на логические этапы (релизы) и задачи. Каждый релиз должен быть самодостаточным и приносить ценность. Учитывай зависимости между задачами при определении порядка релизов.
+
+Верни JSON строго в следующем формате:
+{
+  "summary": "Краткое описание дорожной карты (2-4 предложения)",
+  "total_releases": <число>,
+  "total_issues": <число>,
+  "roadmap": [
+    {
+      "version": "1.0.0",
+      "name": "Название релиза",
+      "description": "Что войдёт в этот релиз и какую ценность принесёт",
+      "issues": [
+        {
+          "title": "Краткое название задачи (до 150 символов)",
+          "description": "Подробное описание что нужно сделать и зачем",
+          "type": "feature | improvement | bug",
+          "priority": "critical | high | medium | low"
+        }
+      ]
+    }
+  ]
+}`;
+
+  // 5. Log: request_sent
+  const logData = {
+    model_name: model.name,
+    provider: model.provider,
+    mode,
+    document_length: docText.length,
+    system_prompt_length: systemPrompt.length,
+    user_prompt_length: userPrompt.length,
+    cwd: useInteractiveTools ? product.project_path : null,
+  };
+  if (contextStats) logData.context_stats = contextStats;
+
+  let logMsg = `Запрос отправлен модели ${model.name}, режим: ${mode}, документ: ${docText.length} символов`;
+  if (contextStats) logMsg += ` (контекст: ${contextStats.filesRead} файлов, ${contextStats.totalChars} символов${contextStats.truncated ? ', усечён' : ''})`;
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: logMsg,
+    data: logData,
+  });
+
+  // 6. Call AI (with watchdog safety net)
+  const aiOptions = {};
+  if (useInteractiveTools) aiOptions.cwd = product.project_path;
+  if (timeoutMs) aiOptions.timeoutMs = timeoutMs;
+  const watchdogMs = timeoutMs + 60_000;
+  const rawResponse = await withWatchdog(
+    callAI(model, systemPrompt, userPrompt, aiOptions),
+    watchdogMs,
+    `roadmap_from_doc/${model.name}`,
+  );
+
+  // 7. Log: response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов)`,
+    data: { response_length: rawResponse.length },
+  });
+
+  // 8. Parse and validate
+  const parsed = parseJsonFromAI(rawResponse);
+  if (!parsed || !Array.isArray(parsed.roadmap) || parsed.roadmap.length === 0) {
+    await processLogs.create({
+      process_id: processId,
+      step: 'error',
+      message: 'Невалидная структура дорожной карты в ответе модели',
+      data: { raw_response: rawResponse.slice(0, 2000) },
+    });
+    throw new Error('Invalid roadmap structure in AI response');
+  }
+
+  const validTypes = ['feature', 'improvement', 'bug'];
+  const validPriorities = ['critical', 'high', 'medium', 'low'];
+
+  const roadmap = parsed.roadmap.map(release => ({
+    version: String(release.version || '').slice(0, 20),
+    name: String(release.name || '').slice(0, 100),
+    description: String(release.description || ''),
+    issues: Array.isArray(release.issues) ? release.issues
+      .map(i => ({
+        title: String(i.title || '').slice(0, 200),
+        description: String(i.description || ''),
+        type: validTypes.includes(i.type) ? i.type : 'feature',
+        priority: validPriorities.includes(i.priority) ? i.priority : 'medium',
+      }))
+      .filter(i => i.title.length > 0) : [],
+  })).filter(r => r.version.length > 0 && r.name.length > 0);
+
+  const result = {
+    summary: String(parsed.summary || ''),
+    total_releases: roadmap.length,
+    total_issues: roadmap.reduce((sum, r) => sum + r.issues.length, 0),
+    roadmap,
+  };
+
+  // 9. Log: parse_result
+  await processLogs.create({
+    process_id: processId,
+    step: 'parse_result',
+    message: `Дорожная карта: ${result.total_releases} релизов, ${result.total_issues} задач`,
+    data: { total_releases: result.total_releases, total_issues: result.total_issues },
+  });
+
+  // 10. Save result
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
 }

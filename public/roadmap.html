@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaizen — Дорожная карта</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="nav-bar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
+      <div class="nav-links">
+        <a href="/">Продукты</a>
+        <a href="/processes.html">Процессы</a>
+        <a href="/models.html">Модели ИИ</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container">
+    <a id="backLink" href="/" class="back-link">&larr; К продукту</a>
+
+    <div id="pageHeader" class="product-header">
+      <h1 id="pageTitle">Дорожная карта</h1>
+      <div id="pageMeta" class="product-meta"></div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="stateLoading" class="section" style="display:none">
+      <div class="empty">
+        <div class="spinner"></div>
+        <p id="loadingMsg">Анализ выполняется...</p>
+      </div>
+      <div id="loadingLogs" style="margin-top:16px"></div>
+    </div>
+
+    <!-- Failed state -->
+    <div id="stateFailed" class="section" style="display:none">
+      <div id="failedError" style="padding:16px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px">
+      </div>
+      <div style="margin-top:16px">
+        <button class="btn btn-ghost" onclick="goBack()">Назад</button>
+      </div>
+    </div>
+
+    <!-- Completed state -->
+    <div id="stateCompleted" style="display:none">
+      <div id="summaryBlock" class="section"></div>
+      <div class="section">
+        <div class="section-header">
+          <h2 id="roadmapTitle">Предложенная дорожная карта</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-ghost btn-sm" onclick="toggleAll(true)">Выбрать все</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleAll(false)">Снять все</button>
+            <span id="selectionCount" style="font-size:0.85rem;color:var(--text-dim)"></span>
+          </div>
+        </div>
+        <div id="roadmapList"></div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:12px;padding:16px 0 32px">
+        <button class="btn btn-ghost" onclick="goBack()">Отмена</button>
+        <button class="btn btn-primary" id="applyBtn" onclick="handleApply()">
+          Применить дорожную карту
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/roadmap.js"></script>
+</body>
+</html>

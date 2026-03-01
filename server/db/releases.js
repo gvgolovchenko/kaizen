@@ -150,6 +150,38 @@ export async function remove(id) {
   }
 }
 
+export async function saveSpec(id, spec) {
+  const { rows } = await pool.query(
+    `UPDATE ${TABLE} SET spec = $1 WHERE id = $2 RETURNING *`,
+    [spec, id]
+  );
+  return rows[0] || null;
+}
+
+export async function getPublishedByProduct(productId, limit = 3) {
+  const { rows } = await pool.query(
+    `SELECT r.*,
+       (SELECT count(*) FROM ${LINK_TABLE} ri WHERE ri.release_id = r.id) AS issue_count
+     FROM ${TABLE} r
+     WHERE r.product_id = $1 AND r.status = 'released'
+     ORDER BY r.released_at DESC
+     LIMIT $2`,
+    [productId, limit]
+  );
+  // Load issues for each release
+  for (const r of rows) {
+    const issuesResult = await pool.query(
+      `SELECT i.* FROM ${ISSUES_TABLE} i
+       JOIN ${LINK_TABLE} ri ON ri.issue_id = i.id
+       WHERE ri.release_id = $1
+       ORDER BY i.created_at`,
+      [r.id]
+    );
+    r.issues = issuesResult.rows;
+  }
+  return rows;
+}
+
 export async function publish(id) {
   const client = await pool.connect();
   try {

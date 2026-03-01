@@ -10,6 +10,28 @@ let processesList = [];
 let currentFilter = '';
 let processPollingTimer = null;
 
+// ── Tabs ────────────────────────────────────────────────
+
+function switchTab(tabName) {
+  document.querySelectorAll('#productTabs .tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tabName));
+  document.querySelectorAll('.tab-panel').forEach(p =>
+    p.classList.toggle('active', p.id === `panel-${tabName}`));
+}
+
+document.getElementById('productTabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('.tab');
+  if (tab) switchTab(tab.dataset.tab);
+});
+
+function updateTabCounts() {
+  document.getElementById('tabIssuesCount').textContent = `(${issues.length})`;
+  document.getElementById('tabReleasesCount').textContent = `(${releases.length})`;
+  const active = processesList.filter(p => p.status === 'pending' || p.status === 'running').length;
+  const procText = active > 0 ? `(${processesList.length} · ${active} акт.)` : `(${processesList.length})`;
+  document.getElementById('tabProcessesCount').textContent = procText;
+}
+
 // ── Load data ──────────────────────────────────────────
 
 async function loadProduct() {
@@ -44,9 +66,17 @@ async function loadReleases() {
 
 async function loadProcesses() {
   try {
+    const prevActive = processesList.filter(p => p.status === 'pending' || p.status === 'running').length;
     processesList = await api(`/products/${productId}/processes`);
     renderProcesses();
+    renderReleases(); // Re-render release cards to update spec buttons
     updateProcessPolling();
+
+    // If active processes decreased — a process just completed, reload releases to get fresh spec
+    const nowActive = processesList.filter(p => p.status === 'pending' || p.status === 'running').length;
+    if (prevActive > 0 && nowActive < prevActive) {
+      loadReleases();
+    }
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -99,6 +129,7 @@ function renderIssues() {
       </td>
     </tr>
   `).join('');
+  updateTabCounts();
 }
 
 // ── Render releases ────────────────────────────────────
@@ -114,7 +145,9 @@ function renderReleases() {
   }
   empty.style.display = 'none';
 
-  el.innerHTML = releases.map(r => `
+  el.innerHTML = releases.map(r => {
+    const specBtn = getSpecButton(r);
+    return `
     <div class="release-card">
       <div class="release-card-header">
         <h3>
@@ -131,10 +164,35 @@ function renderReleases() {
         Задач: ${r.issue_count || 0}
         ${r.released_at ? ` &middot; Выпущен: ${formatDate(r.released_at)}` : ''}
       </div>
-      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="toggleReleaseDetails('${r.id}', this)">Показать задачи</button>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleReleaseDetails('${r.id}', this)">Показать задачи</button>
+        ${specBtn}
+      </div>
       <div class="release-issues" id="release-${r.id}" style="display:none"></div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
+  updateTabCounts();
+}
+
+function findActiveSpecProcess(releaseId) {
+  return processesList.find(p =>
+    p.type === 'prepare_spec' && p.release_id === releaseId &&
+    (p.status === 'pending' || p.status === 'running')
+  );
+}
+
+function getSpecButton(r) {
+  const activeProc = findActiveSpecProcess(r.id);
+  if (activeProc) {
+    return `<button class="btn btn-ghost btn-sm" disabled style="opacity:0.7;color:var(--yellow)">Генерация спецификации...</button>`;
+  }
+  if (r.spec) {
+    return `<button class="btn btn-ghost btn-sm" onclick="showSpecView('${r.id}')" style="color:var(--accent)">Открыть спецификацию</button>`;
+  }
+  if (r.status === 'draft' && parseInt(r.issue_count) > 0) {
+    return `<button class="btn btn-primary btn-sm" onclick="showPrepareSpecModal('${r.id}')">Подготовить спецификацию</button>`;
+  }
+  return '';
 }
 
 // ── Render processes ───────────────────────────────────
@@ -150,18 +208,23 @@ function renderProcesses() {
   }
   empty.style.display = 'none';
 
-  tbody.innerHTML = processesList.map(p => `
+  tbody.innerHTML = processesList.map(p => {
+    const isRoadmapDone = p.type === 'roadmap_from_doc' && p.status === 'completed';
+    return `
     <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
       <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
       <td>${escapeHtml(p.model_name)}</td>
       <td><span class="badge badge-process-${p.status}">${p.status}</span></td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
-      <td style="white-space:nowrap">${formatDuration(p.duration_ms)}</td>
+      <td style="white-space:nowrap">${liveDuration(p)}</td>
+      <td style="white-space:nowrap">${suggestionsInfo(p)}</td>
       <td style="white-space:nowrap">
+        ${isRoadmapDone ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.location.href='/roadmap.html?process_id=${p.id}&product_id=${productId}'">Дорожная карта</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Уд.</button>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
+  updateTabCounts();
 }
 
 function formatDuration(ms) {
@@ -173,14 +236,40 @@ function formatDuration(ms) {
   return `${min}м ${sec % 60}с`;
 }
 
+function liveDuration(p) {
+  if (p.duration_ms) return formatDuration(p.duration_ms);
+  if ((p.status === 'running' || p.status === 'pending') && p.started_at) {
+    const elapsed = Date.now() - new Date(p.started_at).getTime();
+    return `<span style="color:var(--yellow)">${formatDuration(elapsed)}…</span>`;
+  }
+  return '—';
+}
+
+function suggestionsInfo(p) {
+  if (p.type === 'roadmap_from_doc' && p.result && p.result.roadmap) {
+    const r = p.result;
+    const info = `${r.total_releases || 0} р. / ${r.total_issues || 0} з.`;
+    return p.approved_count ? `${p.approved_count} созд. (${info})` : info;
+  }
+  if (p.type === 'prepare_spec' && p.result && p.result.char_count) {
+    return `${p.result.char_count} сим.`;
+  }
+  const total = p.result ? p.result.length : 0;
+  if (!total) return '—';
+  const approved = p.approved_count || 0;
+  if (approved > 0) return `${approved}/${total}`;
+  return `${total}`;
+}
+
+const POLL_FAST = 4000;
+const POLL_SLOW = 10000;
+
 function updateProcessPolling() {
   const hasActive = processesList.some(p => p.status === 'pending' || p.status === 'running');
-  if (hasActive && !processPollingTimer) {
-    processPollingTimer = setInterval(loadProcesses, 4000);
-  } else if (!hasActive && processPollingTimer) {
-    clearInterval(processPollingTimer);
-    processPollingTimer = null;
-  }
+  const interval = hasActive ? POLL_FAST : POLL_SLOW;
+
+  if (processPollingTimer) clearInterval(processPollingTimer);
+  processPollingTimer = setInterval(loadProcesses, interval);
 }
 
 // ── Toggle release details ─────────────────────────────
@@ -470,11 +559,24 @@ window.handleImproveGenerate = async function () {
 // ── Process detail (on product page) ────────────────────
 
 window.showProcessDetail = async function (id) {
+  // Roadmap processes open in a separate page
+  const cachedProc = processesList.find(p => p.id === id);
+  if (cachedProc && cachedProc.type === 'roadmap_from_doc') {
+    window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
+    return;
+  }
+
   try {
     const [proc, logs] = await Promise.all([
       api(`/processes/${id}`),
       api(`/processes/${id}/logs`),
     ]);
+
+    // Also redirect if loaded proc is roadmap
+    if (proc.type === 'roadmap_from_doc') {
+      window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
+      return;
+    }
 
     document.getElementById('processDetailTitle').textContent = `Процесс: ${proc.type}`;
 
@@ -526,8 +628,21 @@ window.showProcessDetail = async function (id) {
         </div>`;
     }
 
+    // Spec link (for prepare_spec processes)
+    if (proc.type === 'prepare_spec' && proc.status === 'completed' && proc.release_id) {
+      html += `
+        <div style="margin-bottom:16px">
+          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Спецификация</div>
+          <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+            ${proc.result && proc.result.char_count ? `<span style="font-size:0.85rem;color:var(--text-dim)">${proc.result.char_count} символов</span> &middot; ` : ''}
+            ${proc.result && proc.result.mode ? `<span class="badge badge-mode-${proc.result.mode}">${proc.result.mode}</span> &middot; ` : ''}
+            <button class="btn btn-primary btn-sm" onclick="showSpecView('${proc.release_id}')">Открыть спецификацию</button>
+          </div>
+        </div>`;
+    }
+
     // Suggestions (if completed)
-    if (proc.status === 'completed' && proc.result && proc.result.length > 0) {
+    if (proc.type !== 'prepare_spec' && proc.status === 'completed' && proc.result && proc.result.length > 0) {
       html += `
         <div>
           <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Предложения (${proc.result.length})</div>
@@ -612,6 +727,195 @@ window.deleteProcess = async function (id) {
   try {
     await api(`/processes/${id}`, { method: 'DELETE' });
     toast('Процесс удалён');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Prepare spec ────────────────────────────────────────
+
+let specModels = [];
+let currentSpecReleaseId = null;
+let currentSpecText = '';
+let currentSpecRelease = null;
+
+window.showPrepareSpecModal = async function (releaseId) {
+  currentSpecReleaseId = releaseId;
+  const release = releases.find(r => r.id === releaseId);
+  document.getElementById('specReleaseId').value = releaseId;
+  document.getElementById('specReleaseName').textContent = release
+    ? `${release.version} — ${release.name}`
+    : releaseId;
+  document.getElementById('specTimeout').value = '20';
+
+  try {
+    specModels = await api('/ai-models');
+    const sel = document.getElementById('specModel');
+    sel.innerHTML = specModels.length === 0
+      ? '<option value="">Нет моделей</option>'
+      : specModels.map(m => `<option value="${m.id}" data-provider="${m.provider}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    updateSpecModeBadge();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  openModal('prepareSpecModal');
+};
+
+window.updateSpecModeBadge = function () {
+  const sel = document.getElementById('specModel');
+  const opt = sel.options[sel.selectedIndex];
+  const provider = opt?.dataset?.provider || '';
+  const hasPath = product && !!product.project_path;
+  const isClaudeCode = provider === 'claude-code';
+  const mode = (isClaudeCode && hasPath) ? 'claude-code' : 'standalone';
+  const badge = document.getElementById('specModeBadge');
+  badge.innerHTML = mode === 'claude-code'
+    ? `<span class="badge badge-mode-claude-code">claude-code</span> <span style="font-size:0.8rem;color:var(--text-dim);margin-left:4px">Модель изучит проект через CLI</span>`
+    : `<span class="badge badge-mode-standalone">standalone</span> <span style="font-size:0.8rem;color:var(--text-dim);margin-left:4px">${hasPath ? 'Контекст проекта будет собран автоматически' : 'Без доступа к файлам проекта'}</span>`;
+};
+
+window.handlePrepareSpec = async function () {
+  const releaseId = document.getElementById('specReleaseId').value;
+  const modelId = document.getElementById('specModel').value;
+  const timeoutMin = parseInt(document.getElementById('specTimeout').value) || 20;
+
+  if (!modelId) return toast('Выберите модель', 'error');
+
+  try {
+    await api(`/releases/${releaseId}/prepare-spec`, {
+      method: 'POST',
+      body: {
+        model_id: modelId,
+        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
+      },
+    });
+    toast('Процесс генерации спецификации запущен');
+    closeModal('prepareSpecModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.showSpecView = async function (releaseId) {
+  try {
+    const data = await api(`/releases/${releaseId}/spec`);
+    const release = releases.find(r => r.id === releaseId);
+    currentSpecText = data.spec || '';
+    currentSpecRelease = release;
+
+    document.getElementById('specViewTitle').textContent = release
+      ? `Спецификация: ${release.version} — ${release.name}`
+      : 'Спецификация';
+
+    let meta = '';
+    if (data.process) {
+      meta += `<span>Модель: <strong style="color:var(--text)">${escapeHtml(data.process.model_name || '')}</strong></span>`;
+      if (data.process.duration_ms) meta += `<span>Длительность: ${formatDuration(data.process.duration_ms)}</span>`;
+      if (data.process.result && data.process.result.mode) meta += `<span class="badge badge-mode-${data.process.result.mode}">${data.process.result.mode}</span>`;
+      if (data.process.result && data.process.result.char_count) meta += `<span>${data.process.result.char_count} символов</span>`;
+    }
+    document.getElementById('specViewMeta').innerHTML = meta;
+
+    document.getElementById('specViewContent').textContent = currentSpecText || 'Спецификация пуста';
+    openModal('specViewModal');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.handleCopySpec = async function () {
+  try {
+    await navigator.clipboard.writeText(currentSpecText);
+    toast('Спецификация скопирована');
+  } catch {
+    toast('Не удалось скопировать', 'error');
+  }
+};
+
+window.handleDownloadSpec = function () {
+  const release = currentSpecRelease;
+  const filename = release
+    ? `RELEASE_SPEC_${release.version.replace(/\./g, '_')}.md`
+    : 'RELEASE_SPEC.md';
+  const blob = new Blob([currentSpecText], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Файл скачан');
+};
+
+// ── Roadmap from document ────────────────────────────────
+
+window.showRoadmapModal = async function () {
+  document.getElementById('roadmapDocText').value = '';
+  document.getElementById('roadmapTimeout').value = '30';
+  document.getElementById('roadmapCharCount').textContent = '0 символов';
+  document.getElementById('roadmapCharCount').className = 'char-counter';
+
+  try {
+    const models = await api('/ai-models');
+    const sel = document.getElementById('roadmapModel');
+    sel.innerHTML = models.length === 0
+      ? '<option value="">Нет моделей</option>'
+      : models.map(m => `<option value="${m.id}" data-provider="${m.provider}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    updateRoadmapModeInfo();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  openModal('roadmapModal');
+};
+
+// Char counter with warning
+document.getElementById('roadmapDocText')?.addEventListener('input', function () {
+  const len = this.value.length;
+  const el = document.getElementById('roadmapCharCount');
+  el.textContent = `${len.toLocaleString('ru-RU')} символов`;
+  el.className = 'char-counter' + (len > 100000 ? ' danger' : len > 50000 ? ' warning' : '');
+});
+
+window.updateRoadmapModeInfo = function () {
+  const sel = document.getElementById('roadmapModel');
+  const opt = sel.options[sel.selectedIndex];
+  const provider = opt?.dataset?.provider || '';
+  const hasPath = product && !!product.project_path;
+  const isClaudeCode = provider === 'claude-code';
+  const el = document.getElementById('roadmapModeInfo');
+
+  if (isClaudeCode && hasPath) {
+    el.innerHTML = `<span class="badge badge-mode-claude-code">claude-code</span> <span style="margin-left:4px">Модель изучит проект через CLI</span>`;
+  } else {
+    el.innerHTML = `<span class="badge badge-mode-standalone">standalone</span> <span style="margin-left:4px">${hasPath ? 'Контекст проекта будет собран автоматически' : 'Без доступа к файлам проекта'}</span>`;
+  }
+};
+
+window.handleRoadmapGenerate = async function () {
+  const docText = document.getElementById('roadmapDocText').value.trim();
+  const modelId = document.getElementById('roadmapModel').value;
+  const timeoutMin = parseInt(document.getElementById('roadmapTimeout').value) || 30;
+
+  if (!docText) return toast('Вставьте текст документа', 'error');
+  if (!modelId) return toast('Выберите модель', 'error');
+
+  try {
+    await api('/processes', {
+      method: 'POST',
+      body: {
+        product_id: productId,
+        model_id: modelId,
+        type: 'roadmap_from_doc',
+        prompt: docText,
+        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
+      },
+    });
+    toast('Анализ запущен. Следите за статусом в таблице процессов.');
+    closeModal('roadmapModal');
     loadProcesses();
   } catch (err) {
     toast(err.message, 'error');

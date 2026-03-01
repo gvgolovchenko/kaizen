@@ -107,6 +107,62 @@ router.post('/releases/:id/publish', async (req, res) => {
   res.json(release);
 });
 
+router.post('/releases/:id/prepare-spec', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+    if (release.status === 'released') return res.status(400).json({ error: 'Release is already published' });
+    if (!release.issues || release.issues.length === 0) return res.status(400).json({ error: 'Release has no issues' });
+
+    const { model_id, timeout_min } = req.body;
+    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
+
+    const model = await aiModels.getById(model_id);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+
+    const proc = await processes.create({
+      product_id: release.product_id,
+      model_id,
+      type: 'prepare_spec',
+      release_id: release.id,
+    });
+
+    // Fire-and-forget
+    const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
+    runProcess(proc.id, { timeoutMs });
+
+    res.status(201).json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/releases/:id/spec', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+
+    // Find the latest prepare_spec process for this release
+    const allProcesses = await processes.getAll({ product_id: release.product_id });
+    const specProcess = allProcesses.find(p => p.type === 'prepare_spec' && p.release_id === release.id);
+
+    res.json({
+      release_id: release.id,
+      spec: release.spec || null,
+      process: specProcess ? {
+        id: specProcess.id,
+        status: specProcess.status,
+        model_name: specProcess.model_name,
+        duration_ms: specProcess.duration_ms,
+        created_at: specProcess.created_at,
+        result: specProcess.result,
+      } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── AI Models ────────────────────────────────────────────
 
 router.get('/ai-models/discover', async (req, res) => {
@@ -312,7 +368,10 @@ router.post('/processes', async (req, res) => {
     const model = await aiModels.getById(model_id);
     if (!model) return res.status(404).json({ error: 'Model not found' });
 
-    if (!prompt && !template_id) {
+    if (type === 'roadmap_from_doc' && !prompt) {
+      return res.status(400).json({ error: 'prompt (document text) is required for roadmap_from_doc' });
+    }
+    if (type !== 'roadmap_from_doc' && !prompt && !template_id) {
       return res.status(400).json({ error: 'prompt or template_id is required' });
     }
 
@@ -381,9 +440,103 @@ router.post('/processes/:id/approve', async (req, res) => {
       created.push(issue);
     }
 
+    await processes.update(proc.id, { approved_count: created.length });
     res.status(201).json({ created, count: created.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Roadmap ───────────────────────────────────────────────
+
+router.post('/processes/:id/approve-roadmap', async (req, res) => {
+  const client = await (await import('../db/pool.js')).pool.connect();
+  try {
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    if (proc.type !== 'roadmap_from_doc') return res.status(400).json({ error: 'Wrong process type' });
+    if (proc.status !== 'completed') return res.status(400).json({ error: 'Process not completed' });
+
+    const { releases: selectedReleases } = req.body;
+    if (!Array.isArray(selectedReleases) || selectedReleases.length === 0) {
+      return res.status(400).json({ error: 'releases array is required' });
+    }
+
+    const roadmap = proc.result?.roadmap || [];
+    if (roadmap.length === 0) return res.status(400).json({ error: 'No roadmap data in process result' });
+
+    await client.query('BEGIN');
+
+    const createdReleases = [];
+    let totalIssues = 0;
+
+    for (const sel of selectedReleases) {
+      const ri = sel.release_index;
+      if (ri < 0 || ri >= roadmap.length) continue;
+
+      const srcRelease = roadmap[ri];
+      const version = sel.version || srcRelease.version;
+      const name = sel.name || srcRelease.name;
+      const description = sel.description || srcRelease.description || null;
+
+      // Create release
+      const { rows: [newRelease] } = await client.query(
+        `INSERT INTO opii.kaizen_releases (product_id, version, name, description)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [proc.product_id, version, name, description]
+      );
+
+      // Create issues and link them
+      const issueIndices = Array.isArray(sel.issue_indices) ? sel.issue_indices : [];
+      let releaseIssueCount = 0;
+
+      for (const ii of issueIndices) {
+        if (ii < 0 || ii >= (srcRelease.issues || []).length) continue;
+        const srcIssue = srcRelease.issues[ii];
+
+        const { rows: [newIssue] } = await client.query(
+          `INSERT INTO opii.kaizen_issues (product_id, title, description, type, priority, status)
+           VALUES ($1, $2, $3, $4, $5, 'in_release') RETURNING *`,
+          [
+            proc.product_id,
+            String(srcIssue.title || '').slice(0, 200),
+            String(srcIssue.description || ''),
+            ['improvement', 'bug', 'feature'].includes(srcIssue.type) ? srcIssue.type : 'feature',
+            ['critical', 'high', 'medium', 'low'].includes(srcIssue.priority) ? srcIssue.priority : 'medium',
+          ]
+        );
+
+        await client.query(
+          `INSERT INTO opii.kaizen_release_issues (release_id, issue_id) VALUES ($1, $2)`,
+          [newRelease.id, newIssue.id]
+        );
+        releaseIssueCount++;
+      }
+
+      totalIssues += releaseIssueCount;
+      createdReleases.push({
+        id: newRelease.id,
+        version,
+        name,
+        issue_count: releaseIssueCount,
+      });
+    }
+
+    await client.query('COMMIT');
+
+    // Track approved_count
+    await processes.update(proc.id, { approved_count: totalIssues });
+
+    res.status(201).json({
+      created_releases: createdReleases.length,
+      created_issues: totalIssues,
+      releases: createdReleases,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

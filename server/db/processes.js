@@ -58,11 +58,11 @@ export async function getById(id) {
   return rows[0] || null;
 }
 
-export async function create({ product_id, model_id, type, input_prompt, input_template_id, input_count }) {
+export async function create({ product_id, model_id, type, input_prompt, input_template_id, input_count, release_id }) {
   const { rows } = await pool.query(
-    `INSERT INTO ${TABLE} (product_id, model_id, type, input_prompt, input_template_id, input_count)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [product_id, model_id, type || 'improve', input_prompt || null, input_template_id || null, input_count || 5]
+    `INSERT INTO ${TABLE} (product_id, model_id, type, input_prompt, input_template_id, input_count, release_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [product_id, model_id, type || 'improve', input_prompt || null, input_template_id || null, input_count || 5, release_id || null]
   );
   return rows[0];
 }
@@ -72,7 +72,7 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['status', 'result', 'error', 'started_at', 'completed_at', 'duration_ms'].includes(key)) {
+    if (['status', 'result', 'error', 'started_at', 'completed_at', 'duration_ms', 'approved_count'].includes(key)) {
       sets.push(`${key} = $${i++}`);
       vals.push(key === 'result' ? JSON.stringify(value) : value);
     }
