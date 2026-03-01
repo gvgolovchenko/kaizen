@@ -6,7 +6,9 @@ if (!productId) location.href = '/';
 let product = null;
 let issues = [];
 let releases = [];
+let processesList = [];
 let currentFilter = '';
+let processPollingTimer = null;
 
 // ── Load data ──────────────────────────────────────────
 
@@ -40,8 +42,18 @@ async function loadReleases() {
   }
 }
 
+async function loadProcesses() {
+  try {
+    processesList = await api(`/products/${productId}/processes`);
+    renderProcesses();
+    updateProcessPolling();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 async function loadAll() {
-  await Promise.all([loadProduct(), loadIssues(), loadReleases()]);
+  await Promise.all([loadProduct(), loadIssues(), loadReleases(), loadProcesses()]);
 }
 
 // ── Render product header ──────────────────────────────
@@ -123,6 +135,52 @@ function renderReleases() {
       <div class="release-issues" id="release-${r.id}" style="display:none"></div>
     </div>
   `).join('');
+}
+
+// ── Render processes ───────────────────────────────────
+
+function renderProcesses() {
+  const tbody = document.getElementById('processesBody');
+  const empty = document.getElementById('processesEmpty');
+
+  if (processesList.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = processesList.map(p => `
+    <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
+      <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
+      <td>${escapeHtml(p.model_name)}</td>
+      <td><span class="badge badge-process-${p.status}">${p.status}</span></td>
+      <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
+      <td style="white-space:nowrap">${formatDuration(p.duration_ms)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Уд.</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function formatDuration(ms) {
+  if (!ms) return '—';
+  if (ms < 1000) return `${ms}мс`;
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}с`;
+  const min = Math.floor(sec / 60);
+  return `${min}м ${sec % 60}с`;
+}
+
+function updateProcessPolling() {
+  const hasActive = processesList.some(p => p.status === 'pending' || p.status === 'running');
+  if (hasActive && !processPollingTimer) {
+    processPollingTimer = setInterval(loadProcesses, 4000);
+  } else if (!hasActive && processPollingTimer) {
+    clearInterval(processPollingTimer);
+    processPollingTimer = null;
+  }
 }
 
 // ── Toggle release details ─────────────────────────────
@@ -341,18 +399,12 @@ window.deleteRelease = async function (id) {
   }
 };
 
-// ── Improve (AI suggestions) ──────────────────────────
-
-let improveSuggestions = [];
+// ── Improve (create process) ────────────────────────────
 
 window.showImproveModal = async function () {
-  // Reset to form phase
-  document.getElementById('improvePhaseForm').style.display = '';
-  document.getElementById('improvePhaseLoading').style.display = 'none';
-  document.getElementById('improvePhaseReview').style.display = 'none';
   document.getElementById('improvePrompt').value = '';
   document.getElementById('improveCount').value = '5';
-  improveSuggestions = [];
+  document.getElementById('improveTimeout').value = '20';
 
   try {
     // Load templates
@@ -387,90 +439,180 @@ window.handleImproveGenerate = async function () {
   const prompt = document.getElementById('improvePrompt').value.trim();
   const modelId = document.getElementById('improveModel').value;
   const count = document.getElementById('improveCount').value;
+  const templateId = document.getElementById('improveTemplate').value;
+  const timeoutMin = parseInt(document.getElementById('improveTimeout').value) || 20;
 
   if (!prompt) return toast('Введите промпт', 'error');
   if (!modelId) return toast('Выберите модель', 'error');
 
-  // Switch to loading phase
-  document.getElementById('improvePhaseForm').style.display = 'none';
-  document.getElementById('improvePhaseLoading').style.display = '';
-
   try {
-    const result = await api(`/products/${productId}/improve`, {
+    await api('/processes', {
       method: 'POST',
-      body: { model_id: modelId, prompt, count: parseInt(count) || 5 },
+      body: {
+        product_id: productId,
+        model_id: modelId,
+        type: 'improve',
+        prompt,
+        template_id: templateId || null,
+        count: parseInt(count) || 5,
+        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
+      },
     });
 
-    improveSuggestions = result.suggestions || [];
-
-    if (improveSuggestions.length === 0) {
-      toast('Модель не вернула предложений', 'error');
-      document.getElementById('improvePhaseLoading').style.display = 'none';
-      document.getElementById('improvePhaseForm').style.display = '';
-      return;
-    }
-
-    renderSuggestions();
-    document.getElementById('improvePhaseLoading').style.display = 'none';
-    document.getElementById('improvePhaseReview').style.display = '';
+    toast('Процесс запущен');
+    closeModal('improveModal');
+    loadProcesses();
   } catch (err) {
     toast(err.message, 'error');
-    document.getElementById('improvePhaseLoading').style.display = 'none';
-    document.getElementById('improvePhaseForm').style.display = '';
   }
 };
 
-function renderSuggestions() {
-  const list = document.getElementById('improveSuggestionsList');
-  list.innerHTML = improveSuggestions.map((s, i) => `
-    <label class="improve-suggestion">
-      <input type="checkbox" checked data-index="${i}" onchange="updateSelectedCount()">
-      <div class="improve-suggestion-content">
-        <div class="improve-suggestion-title">${escapeHtml(s.title)}</div>
-        <div style="display:flex;gap:6px;margin:4px 0">
-          <span class="badge badge-${s.type}">${s.type}</span>
-          <span class="badge badge-${s.priority}">${s.priority}</span>
-        </div>
-        ${s.description ? `<div class="improve-suggestion-desc">${escapeHtml(s.description)}</div>` : ''}
-      </div>
-    </label>
-  `).join('');
-  updateSelectedCount();
-}
+// ── Process detail (on product page) ────────────────────
 
-window.updateSelectedCount = function () {
-  const checked = document.querySelectorAll('#improveSuggestionsList input[type="checkbox"]:checked');
-  const btn = document.getElementById('improveApproveBtn');
-  btn.textContent = `Создать выбранные (${checked.length})`;
-  btn.disabled = checked.length === 0;
+window.showProcessDetail = async function (id) {
+  try {
+    const [proc, logs] = await Promise.all([
+      api(`/processes/${id}`),
+      api(`/processes/${id}/logs`),
+    ]);
+
+    document.getElementById('processDetailTitle').textContent = `Процесс: ${proc.type}`;
+
+    let html = `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <span class="badge badge-process-${proc.status}">${proc.status}</span>
+          <span class="badge badge-process-${proc.type}">${proc.type}</span>
+        </div>
+        <div style="font-size:0.85rem;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">
+          <span>Модель: <strong style="color:var(--text)">${escapeHtml(proc.model_name)}</strong></span>
+          <span>Создан: ${formatDate(proc.created_at)}</span>
+          ${proc.duration_ms ? `<span>Длительность: ${formatDuration(proc.duration_ms)}</span>` : ''}
+        </div>
+      </div>`;
+
+    if (proc.input_prompt) {
+      html += `
+        <div style="margin-bottom:16px">
+          <div style="font-size:0.85rem;font-weight:600;margin-bottom:4px;color:var(--text-dim)">Промпт</div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:0.85rem;max-height:120px;overflow-y:auto">${escapeHtml(proc.input_prompt)}</div>
+        </div>`;
+    }
+
+    if (proc.error) {
+      html += `
+        <div style="margin-bottom:16px;padding:10px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px">
+          <div style="font-size:0.85rem;font-weight:600;color:var(--red);margin-bottom:4px">Ошибка</div>
+          <div style="font-size:0.85rem;color:var(--red)">${escapeHtml(proc.error)}</div>
+        </div>`;
+    }
+
+    // Logs
+    if (logs.length > 0) {
+      html += `
+        <div style="margin-bottom:16px">
+          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Логи</div>
+          <div class="process-logs-list">
+            ${logs.map(l => `
+              <div class="process-log-entry ${l.step === 'error' ? 'process-log-error' : ''}">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+                  <span class="badge badge-process-log">${l.step}</span>
+                  <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU')}</span>
+                </div>
+                ${l.message ? `<div style="font-size:0.85rem">${escapeHtml(l.message)}</div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+    }
+
+    // Suggestions (if completed)
+    if (proc.status === 'completed' && proc.result && proc.result.length > 0) {
+      html += `
+        <div>
+          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Предложения (${proc.result.length})</div>
+          <div class="improve-actions-top">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllProcessSuggestions(true)">Выбрать все</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllProcessSuggestions(false)">Снять все</button>
+          </div>
+          <div class="improve-suggestions-list" id="processSuggestionsList">
+            ${proc.result.map((s, i) => `
+              <label class="improve-suggestion">
+                <input type="checkbox" checked data-index="${i}" onchange="updateProcessApproveCount()">
+                <div class="improve-suggestion-content">
+                  <div class="improve-suggestion-title">${escapeHtml(s.title)}</div>
+                  <div style="display:flex;gap:6px;margin:4px 0">
+                    <span class="badge badge-${s.type}">${s.type}</span>
+                    <span class="badge badge-${s.priority}">${s.priority}</span>
+                  </div>
+                  ${s.description ? `<div class="improve-suggestion-desc">${escapeHtml(s.description)}</div>` : ''}
+                </div>
+              </label>
+            `).join('')}
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
+            <button type="button" class="btn btn-primary" id="processApproveBtn" onclick="handleProcessApprove('${proc.id}')">Создать выбранные (${proc.result.length})</button>
+          </div>
+        </div>`;
+    } else {
+      html += `
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
+        </div>`;
+    }
+
+    document.getElementById('processDetailContent').innerHTML = html;
+    openModal('processDetailModal');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 };
 
-window.toggleAllSuggestions = function (state) {
-  document.querySelectorAll('#improveSuggestionsList input[type="checkbox"]').forEach(cb => {
+window.toggleAllProcessSuggestions = function (state) {
+  document.querySelectorAll('#processSuggestionsList input[type="checkbox"]').forEach(cb => {
     cb.checked = state;
   });
-  updateSelectedCount();
+  updateProcessApproveCount();
 };
 
-window.improveBack = function () {
-  document.getElementById('improvePhaseReview').style.display = 'none';
-  document.getElementById('improvePhaseForm').style.display = '';
+window.updateProcessApproveCount = function () {
+  const checked = document.querySelectorAll('#processSuggestionsList input[type="checkbox"]:checked');
+  const btn = document.getElementById('processApproveBtn');
+  if (btn) {
+    btn.textContent = `Создать выбранные (${checked.length})`;
+    btn.disabled = checked.length === 0;
+  }
 };
 
-window.handleImproveApprove = async function () {
-  const checkboxes = document.querySelectorAll('#improveSuggestionsList input[type="checkbox"]:checked');
-  const selected = Array.from(checkboxes).map(cb => improveSuggestions[parseInt(cb.dataset.index)]);
+window.handleProcessApprove = async function (processId) {
+  const checkboxes = document.querySelectorAll('#processSuggestionsList input[type="checkbox"]:checked');
+  const indices = Array.from(checkboxes).map(cb => parseInt(cb.dataset.index));
 
-  if (selected.length === 0) return toast('Выберите хотя бы одну задачу', 'error');
+  if (indices.length === 0) return toast('Выберите хотя бы одну задачу', 'error');
 
   try {
-    const result = await api(`/products/${productId}/improve/approve`, {
+    const result = await api(`/processes/${processId}/approve`, {
       method: 'POST',
-      body: { issues: selected },
+      body: { indices },
     });
     toast(`Создано задач: ${result.count}`);
-    closeModal('improveModal');
+    closeModal('processDetailModal');
     loadIssues();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Delete process ──────────────────────────────────────
+
+window.deleteProcess = async function (id) {
+  const ok = await confirm('Удалить процесс?');
+  if (!ok) return;
+  try {
+    await api(`/processes/${id}`, { method: 'DELETE' });
+    toast('Процесс удалён');
+    loadProcesses();
   } catch (err) {
     toast(err.message, 'error');
   }

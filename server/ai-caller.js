@@ -3,6 +3,8 @@
  * Uses native fetch, no extra npm dependencies.
  */
 
+import { execFile } from 'child_process';
+
 const TIMEOUT = 120000;
 const TEMPERATURE = 0.7;
 const MAX_TOKENS = 4096;
@@ -12,9 +14,10 @@ const MAX_TOKENS = 4096;
  * @param {object} model - DB model record { provider, model_id, api_key }
  * @param {string} systemPrompt
  * @param {string} userPrompt
+ * @param {object} [options] - Extra options (e.g. { cwd } for claude-code)
  * @returns {Promise<string>} model response text
  */
-export async function callAI(model, systemPrompt, userPrompt) {
+export async function callAI(model, systemPrompt, userPrompt, options = {}) {
   const { provider, model_id, api_key } = model;
 
   switch (provider) {
@@ -22,6 +25,8 @@ export async function callAI(model, systemPrompt, userPrompt) {
       return callOllama(model_id, systemPrompt, userPrompt);
     case 'mlx':
       return callMLX(model_id, systemPrompt, userPrompt);
+    case 'claude-code':
+      return callClaudeCode(model_id, systemPrompt, userPrompt, options);
     case 'anthropic':
       return callAnthropic(model_id, api_key, systemPrompt, userPrompt);
     case 'openai':
@@ -95,6 +100,38 @@ async function callMLX(modelId, systemPrompt, userPrompt) {
   }
   const data = await resp.json();
   return data.choices?.[0]?.message?.content || '';
+}
+
+// ── Claude Code (CLI) ──────────────────────────────────
+
+async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-p',
+      '--output-format', 'text',
+      '--model', modelId,
+      '--dangerously-skip-permissions',
+      '--tools', 'Read,Glob,Grep',
+      '--system-prompt', systemPrompt,
+      '--',
+      userPrompt,
+    ];
+
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('CLAUDE')) delete env[key];
+    }
+
+    const timeout = opts.timeoutMs || 20 * 60 * 1000;
+    const execOpts = { timeout, env, maxBuffer: 10 * 1024 * 1024 };
+    if (opts.cwd) execOpts.cwd = opts.cwd;
+
+    const child = execFile('claude', args, execOpts, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`Claude Code error: ${err.message}`));
+      resolve(stdout || '');
+    });
+    child.stdin.end();
+  });
 }
 
 // ── Anthropic ───────────────────────────────────────────

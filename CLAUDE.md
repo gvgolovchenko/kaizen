@@ -1,14 +1,15 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.1.0. Отслеживает продукты компании, собирает задачи на улучшение (включая AI-генерацию через 5 провайдеров) и формирует из них релизы с автоматическим управлением статусами.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.2.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 5 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
 
 ## Архитектура
 
 Вариант Е-lite: Express.js + Vanilla JS + PostgreSQL. Без фреймворков на фронтенде, минимум зависимостей.
 
 ```
-[Браузер] → [Vanilla JS (3 страницы)] → [Express.js API (порт 3034)]
-                                                └── [PostgreSQL (схема opii)]
+[Браузер] → [Vanilla JS (4 страницы)] → [Express.js API (порт 3034)]
+                                                ├── [PostgreSQL (схема opii)]
+                                                └── [AI Process Runner (фоновые задачи)]
 ```
 
 ## Структура
@@ -22,29 +23,36 @@ kaizen/
 ├── server/
 │   ├── index.js                  # Express-сервер (порт 3034), JSON + static
 │   ├── ai-caller.js              # Универсальный AI caller (5 провайдеров)
+│   ├── utils.js                  # parseJsonFromAI(), maskApiKey()
+│   ├── process-runner.js         # Фоновый исполнитель AI-процессов
 │   ├── db/
 │   │   ├── pool.js               # pg Pool (Supavisor)
 │   │   ├── products.js           # getAll, getById, create, update, remove
 │   │   ├── issues.js             # getByProduct, getById, create, update, remove
 │   │   ├── releases.js           # getByProduct, getById, create, update, remove, publish
-│   │   └── ai-models.js          # getAll, getById, create, update, remove, updateStatus
+│   │   ├── ai-models.js          # getAll, getById, create, update, remove, updateStatus
+│   │   ├── processes.js          # getAll, getByProduct, getById, create, update, remove
+│   │   └── process-logs.js       # getByProcess, create
 │   └── routes/
-│       └── api.js                # Все 22 REST-эндпоинта
+│       └── api.js                # REST-эндпоинты
 ├── database/
 │   ├── exec-sql.js               # Утилита миграций
 │   └── migrations/
 │       ├── 001_initial_schema.sql
 │       ├── 002_ai_models.sql
-│       └── 003_ai_models_api_key.sql
+│       ├── 003_ai_models_api_key.sql
+│       └── 004_processes.sql     # Процессы + логи
 ├── public/
 │   ├── index.html                # Список продуктов (карточки)
-│   ├── product.html              # Детали: задачи + релизы + улучшение
+│   ├── product.html              # Детали: задачи + релизы + процессы
+│   ├── processes.html            # Все процессы (глобальная страница)
 │   ├── models.html               # Реестр AI-моделей
 │   ├── css/style.css             # Dark theme
 │   └── js/
 │       ├── app.js                # api(), toast(), confirm(), escapeHtml(), modal helpers
 │       ├── products.js           # Логика index.html
-│       ├── product.js            # Логика product.html + improve
+│       ├── product.js            # Логика product.html + процессы + improve
+│       ├── processes.js          # Логика processes.html
 │       └── models.js             # Логика models.html
 └── docs/
     ├── MAIN_FUNC.md              # Функции и бенефиты
@@ -76,13 +84,13 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 
 - **Схема**: `opii`
 - **Префикс**: `kaizen_` (изоляция в общей схеме)
-- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models
+- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs
 - **PK**: UUID (gen_random_uuid())
-- **Каскадное удаление**: products → issues + releases → release_issues
-- **Триггеры**: updated_at на products, issues, releases
+- **Каскадное удаление**: products → issues + releases + processes; processes → process_logs
+- **Триггеры**: updated_at на products, issues, releases, processes
 - **Подключение**: `DB_HOST:DB_PORT/DB_NAME` через pg Pool
 
-## API (22 эндпоинта)
+## API
 
 | Метод | Эндпоинт | Описание |
 |-------|----------|----------|
@@ -110,8 +118,13 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | DELETE | /api/ai-models/:id | Удалить |
 | POST | /api/ai-models/:id/warmup | Загрузить в GPU |
 | GET | /api/improve-templates | 6 шаблонов промптов |
-| POST | /api/products/:id/improve | AI-генерация задач |
-| POST | /api/products/:id/improve/approve | Утвердить задачи |
+| GET | /api/processes | Все процессы (?status=, ?product_id=) |
+| GET | /api/processes/:id | Детали процесса |
+| POST | /api/processes | Создать + запустить (fire-and-forget) |
+| GET | /api/processes/:id/logs | Логи процесса |
+| POST | /api/processes/:id/approve | Утвердить предложения → создать issues |
+| DELETE | /api/processes/:id | Удалить процесс + логи |
+| GET | /api/products/:id/processes | Процессы конкретного продукта |
 
 ## Бизнес-логика
 
@@ -120,7 +133,8 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Удаление issue из релиза**: issue → `open`
 - **Удаление релиза**: все issues → `open`, затем удаление
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
-- **AI-генерация задач**: модель получает контекст продукта + промпт, возвращает JSON-массив задач, пользователь утверждает нужные
+- **Асинхронные AI-процессы**: POST /processes создаёт запись + запускает фоновый runner (fire-and-forget). Статусы: pending → running → completed/failed. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend использует polling (4с) для отслеживания.
+- **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
 - **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), anthropic, openai, google
 

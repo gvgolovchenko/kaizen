@@ -3,22 +3,13 @@ import * as products from '../db/products.js';
 import * as issues from '../db/issues.js';
 import * as releases from '../db/releases.js';
 import * as aiModels from '../db/ai-models.js';
+import * as processes from '../db/processes.js';
+import * as processLogs from '../db/process-logs.js';
 import { callAI } from '../ai-caller.js';
+import { parseJsonFromAI, maskApiKey } from '../utils.js';
+import { runProcess } from '../process-runner.js';
 
 const router = Router();
-
-// ── Helpers ───────────────────────────────────────────────
-
-function maskApiKey(model) {
-  if (!model || !model.api_key) return model;
-  const key = model.api_key;
-  if (key.length <= 8) {
-    model.api_key = '****';
-  } else {
-    model.api_key = key.slice(0, 4) + '****' + key.slice(-4);
-  }
-  return model;
-}
 
 // ── Products ──────────────────────────────────────────────
 
@@ -271,7 +262,7 @@ router.post('/ai-models/:id/warmup', async (req, res) => {
   }
 });
 
-// ── Improve (AI suggestions) ────────────────────────────
+// ── Improve templates ────────────────────────────────────
 
 const IMPROVE_TEMPLATES = [
   { id: 'general', name: 'Общие улучшения', prompt: 'Проанализируй продукт и предложи общие улучшения: UX, функциональность, стабильность, масштабируемость.' },
@@ -286,94 +277,102 @@ router.get('/improve-templates', (req, res) => {
   res.json(IMPROVE_TEMPLATES);
 });
 
-router.post('/products/:id/improve', async (req, res) => {
+// ── Processes ────────────────────────────────────────────
+
+router.get('/processes', async (req, res) => {
   try {
-    const { model_id, prompt, count = 5 } = req.body;
-    const taskCount = Math.min(Math.max(parseInt(count) || 5, 1), 10);
-
-    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
-    if (!prompt || !prompt.trim()) return res.status(400).json({ error: 'prompt is required' });
-
-    const product = await products.getById(req.params.id);
-    if (!product) return res.status(404).json({ error: 'Product not found' });
-
-    const model = await aiModels.getById(model_id);
-    if (!model) return res.status(404).json({ error: 'Model not found' });
-
-    if (model.deployment === 'cloud' && !model.api_key) {
-      return res.status(400).json({ error: 'API key required for cloud model' });
-    }
-
-    const systemPrompt = `Ты — эксперт по улучшению программных продуктов. Анализируй продукт и генерируй конкретные, реализуемые задачи.
-
-Продукт: ${product.name}
-${product.description ? `Описание: ${product.description}` : ''}
-${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
-${product.repo_url ? `Репозиторий: ${product.repo_url}` : ''}
-${product.owner ? `Ответственный: ${product.owner}` : ''}
-
-ВАЖНО: Верни ответ ТОЛЬКО как JSON-массив из ${taskCount} задач. Никакого текста до или после JSON.
-Формат каждой задачи:
-{
-  "title": "Краткое название задачи",
-  "description": "Подробное описание что нужно сделать и зачем",
-  "type": "improvement | bug | feature",
-  "priority": "critical | high | medium | low"
-}`;
-
-    const rawResponse = await callAI(model, systemPrompt, prompt);
-
-    // Parse JSON from response (handle markdown code blocks)
-    let jsonStr = rawResponse.trim();
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim();
-    }
-
-    let suggestions;
-    try {
-      suggestions = JSON.parse(jsonStr);
-    } catch {
-      return res.status(422).json({ error: 'Failed to parse AI response as JSON', raw: rawResponse });
-    }
-
-    if (!Array.isArray(suggestions)) {
-      suggestions = [suggestions];
-    }
-
-    const validTypes = ['improvement', 'bug', 'feature'];
-    const validPriorities = ['critical', 'high', 'medium', 'low'];
-
-    suggestions = suggestions.slice(0, taskCount).map(s => ({
-      title: String(s.title || '').slice(0, 200),
-      description: String(s.description || ''),
-      type: validTypes.includes(s.type) ? s.type : 'improvement',
-      priority: validPriorities.includes(s.priority) ? s.priority : 'medium',
-    })).filter(s => s.title.length > 0);
-
-    res.json({ suggestions, model_name: model.name });
+    const { status, product_id } = req.query;
+    const rows = await processes.getAll({ status, product_id });
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post('/products/:id/improve/approve', async (req, res) => {
+router.get('/processes/:id', async (req, res) => {
   try {
-    const { issues: issueList } = req.body;
-    if (!Array.isArray(issueList) || issueList.length === 0) {
-      return res.status(400).json({ error: 'issues array is required' });
-    }
-    if (issueList.length > 10) {
-      return res.status(400).json({ error: 'Maximum 10 issues at once' });
-    }
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    res.json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    const product = await products.getById(req.params.id);
+router.post('/processes', async (req, res) => {
+  try {
+    const { product_id, model_id, type, prompt, template_id, count, timeout_min } = req.body;
+
+    if (!product_id) return res.status(400).json({ error: 'product_id is required' });
+    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
+
+    const product = await products.getById(product_id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
 
+    const model = await aiModels.getById(model_id);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+
+    if (!prompt && !template_id) {
+      return res.status(400).json({ error: 'prompt or template_id is required' });
+    }
+
+    const proc = await processes.create({
+      product_id,
+      model_id,
+      type: type || 'improve',
+      input_prompt: prompt || null,
+      input_template_id: template_id || null,
+      input_count: Math.min(Math.max(parseInt(count) || 5, 1), 10),
+    });
+
+    // Fire-and-forget — запускаем процесс без await
+    const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
+    runProcess(proc.id, { timeoutMs });
+
+    res.status(201).json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/processes/:id/logs', async (req, res) => {
+  try {
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    const logs = await processLogs.getByProcess(req.params.id);
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/processes/:id/approve', async (req, res) => {
+  try {
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    if (proc.status !== 'completed') {
+      return res.status(400).json({ error: 'Process is not completed' });
+    }
+
+    const suggestions = proc.result || [];
+    const { indices } = req.body;
+
+    if (!Array.isArray(indices) || indices.length === 0) {
+      return res.status(400).json({ error: 'indices array is required' });
+    }
+
+    const selected = indices
+      .filter(i => i >= 0 && i < suggestions.length)
+      .map(i => suggestions[i]);
+
+    if (selected.length === 0) {
+      return res.status(400).json({ error: 'No valid suggestions selected' });
+    }
+
     const created = [];
-    for (const item of issueList) {
+    for (const item of selected) {
       const issue = await issues.create({
-        product_id: req.params.id,
+        product_id: proc.product_id,
         title: String(item.title || '').slice(0, 200),
         description: String(item.description || ''),
         type: ['improvement', 'bug', 'feature'].includes(item.type) ? item.type : 'improvement',
@@ -383,6 +382,25 @@ router.post('/products/:id/improve/approve', async (req, res) => {
     }
 
     res.status(201).json({ created, count: created.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/processes/:id', async (req, res) => {
+  try {
+    const ok = await processes.remove(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Process not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/products/:id/processes', async (req, res) => {
+  try {
+    const rows = await processes.getByProduct(req.params.id);
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
