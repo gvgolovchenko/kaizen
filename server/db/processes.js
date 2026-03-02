@@ -72,7 +72,7 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['status', 'result', 'error', 'started_at', 'completed_at', 'duration_ms', 'approved_count'].includes(key)) {
+    if (['status', 'result', 'error', 'started_at', 'completed_at', 'duration_ms', 'approved_count', 'approved_indices'].includes(key)) {
       sets.push(`${key} = $${i++}`);
       vals.push(key === 'result' ? JSON.stringify(value) : value);
     }

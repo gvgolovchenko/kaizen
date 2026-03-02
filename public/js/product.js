@@ -1,4 +1,5 @@
-import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate } from './app.js';
+import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, notifyStatusChanges } from './app.js';
+import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess } from './process-detail.js';
 
 const productId = new URLSearchParams(location.search).get('id');
 if (!productId) location.href = '/';
@@ -296,15 +297,6 @@ function renderProcesses() {
   updateTabCounts();
 }
 
-function formatDuration(ms) {
-  if (!ms) return '—';
-  if (ms < 1000) return `${ms}мс`;
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec}с`;
-  const min = Math.floor(sec / 60);
-  return `${min}м ${sec % 60}с`;
-}
-
 function liveDuration(p) {
   if (p.duration_ms) return formatDuration(p.duration_ms);
   if ((p.status === 'running' || p.status === 'pending') && p.started_at) {
@@ -527,8 +519,14 @@ window.handleReleaseSubmit = async function (e) {
   };
 
   try {
-    await api('/releases', { method: 'POST', body });
-    toast('Релиз создан');
+    const result = await api('/releases', { method: 'POST', body });
+    const changes = result.status_changes || {};
+    notifyStatusChanges({
+      action: 'Релиз создан',
+      details: [
+        changes.issues_to_in_release ? `${changes.issues_to_in_release} задач(и) → in_release` : null,
+      ].filter(Boolean)
+    });
     closeModal('releaseModal');
     loadIssues();
     loadReleases();
@@ -540,8 +538,15 @@ window.handleReleaseSubmit = async function (e) {
 
 window.publishRelease = async function (id) {
   try {
-    await api(`/releases/${id}/publish`, { method: 'POST' });
-    toast('Релиз опубликован');
+    const result = await api(`/releases/${id}/publish`, { method: 'POST' });
+    const changes = result.status_changes || {};
+    notifyStatusChanges({
+      action: 'Релиз опубликован',
+      details: [
+        'Статус релиза → released',
+        changes.issues_to_done ? `${changes.issues_to_done} задач(и) → done` : null,
+      ].filter(Boolean)
+    });
     loadIssues();
     loadReleases();
   } catch (err) {
@@ -553,8 +558,14 @@ window.deleteRelease = async function (id) {
   const ok = await confirm('Удалить релиз? Задачи вернутся в статус open.');
   if (!ok) return;
   try {
-    await api(`/releases/${id}`, { method: 'DELETE' });
-    toast('Релиз удалён');
+    const result = await api(`/releases/${id}`, { method: 'DELETE' });
+    const changes = result.status_changes || {};
+    notifyStatusChanges({
+      action: 'Релиз удалён',
+      details: [
+        changes.issues_to_open ? `${changes.issues_to_open} задач(и) → open` : null,
+      ].filter(Boolean)
+    });
     loadIssues();
     loadReleases();
   } catch (err) {
@@ -633,7 +644,6 @@ window.handleImproveGenerate = async function () {
 // ── Process detail (on product page) ────────────────────
 
 window.showProcessDetail = async function (id) {
-  // Roadmap processes open in a separate page
   const cachedProc = processesList.find(p => p.id === id);
   if (cachedProc && cachedProc.type === 'roadmap_from_doc') {
     window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
@@ -646,169 +656,41 @@ window.showProcessDetail = async function (id) {
       api(`/processes/${id}/logs`),
     ]);
 
-    // Also redirect if loaded proc is roadmap
     if (proc.type === 'roadmap_from_doc') {
       window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
       return;
     }
 
     document.getElementById('processDetailTitle').textContent = `Процесс: ${proc.type}`;
-
-    let html = `
-      <div style="margin-bottom:16px">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-          <span class="badge badge-process-${proc.status}">${proc.status}</span>
-          <span class="badge badge-process-${proc.type}">${proc.type}</span>
-        </div>
-        <div style="font-size:0.85rem;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">
-          <span>Модель: <strong style="color:var(--text)">${escapeHtml(proc.model_name)}</strong></span>
-          <span>Создан: ${formatDate(proc.created_at)}</span>
-          ${proc.duration_ms ? `<span>Длительность: ${formatDuration(proc.duration_ms)}</span>` : ''}
-        </div>
-      </div>`;
-
-    if (proc.input_prompt) {
-      html += `
-        <div style="margin-bottom:16px">
-          <div style="font-size:0.85rem;font-weight:600;margin-bottom:4px;color:var(--text-dim)">Промпт</div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:0.85rem;max-height:120px;overflow-y:auto">${escapeHtml(proc.input_prompt)}</div>
-        </div>`;
-    }
-
-    if (proc.error) {
-      html += `
-        <div style="margin-bottom:16px;padding:10px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px">
-          <div style="font-size:0.85rem;font-weight:600;color:var(--red);margin-bottom:4px">Ошибка</div>
-          <div style="font-size:0.85rem;color:var(--red)">${escapeHtml(proc.error)}</div>
-        </div>`;
-    }
-
-    // Logs
-    if (logs.length > 0) {
-      html += `
-        <div style="margin-bottom:16px">
-          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Логи</div>
-          <div class="process-logs-list">
-            ${logs.map(l => `
-              <div class="process-log-entry ${l.step === 'error' ? 'process-log-error' : ''}">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-                  <span class="badge badge-process-log">${l.step}</span>
-                  <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU')}</span>
-                </div>
-                ${l.message ? `<div style="font-size:0.85rem">${escapeHtml(l.message)}</div>` : ''}
-              </div>
-            `).join('')}
-          </div>
-        </div>`;
-    }
-
-    // Spec link (for prepare_spec processes)
-    if (proc.type === 'prepare_spec' && proc.status === 'completed' && proc.release_id) {
-      html += `
-        <div style="margin-bottom:16px">
-          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Спецификация</div>
-          <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-            ${proc.result && proc.result.char_count ? `<span style="font-size:0.85rem;color:var(--text-dim)">${proc.result.char_count} символов</span> &middot; ` : ''}
-            ${proc.result && proc.result.mode ? `<span class="badge badge-mode-${proc.result.mode}">${proc.result.mode}</span> &middot; ` : ''}
-            <button class="btn btn-primary btn-sm" onclick="showSpecView('${proc.release_id}')">Открыть спецификацию</button>
-          </div>
-        </div>`;
-    }
-
-    // Develop release result
-    if (proc.type === 'develop_release' && proc.status === 'completed' && proc.result) {
-      const r = proc.result;
-      html += `
-        <div>
-          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Результат разработки</div>
-          <div style="display:flex;flex-direction:column;gap:8px;font-size:0.875rem">
-            <div>Ветка: <strong>${escapeHtml(r.branch || '—')}</strong></div>
-            <div>Коммит: <code>${escapeHtml(r.commit_hash ? r.commit_hash.slice(0, 7) : '—')}</code></div>
-            <div>Изменено файлов: <strong>${r.files_changed ?? '—'}</strong></div>
-            <div>Тестов написано: <strong>${r.tests_written ?? '—'}</strong></div>
-            <div>Тесты: <strong style="color:${r.tests_passed ? 'var(--green)' : 'var(--red)'}">
-              ${r.tests_passed ? 'пройдены' : 'не пройдены'}</strong></div>
-            ${r.summary ? `<div style="margin-top:8px;color:var(--text-dim)">${escapeHtml(r.summary)}</div>` : ''}
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
-          </div>
-        </div>`;
-    }
-
-    // Suggestions (if completed)
-    else if (proc.type !== 'prepare_spec' && proc.status === 'completed' && proc.result && proc.result.length > 0) {
-      html += `
-        <div>
-          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Предложения (${proc.result.length})</div>
-          <div class="improve-actions-top">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllProcessSuggestions(true)">Выбрать все</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllProcessSuggestions(false)">Снять все</button>
-          </div>
-          <div class="improve-suggestions-list" id="processSuggestionsList">
-            ${proc.result.map((s, i) => `
-              <label class="improve-suggestion">
-                <input type="checkbox" checked data-index="${i}" onchange="updateProcessApproveCount()">
-                <div class="improve-suggestion-content">
-                  <div class="improve-suggestion-title">${escapeHtml(s.title)}</div>
-                  <div style="display:flex;gap:6px;margin:4px 0">
-                    <span class="badge badge-${s.type}">${s.type}</span>
-                    <span class="badge badge-${s.priority}">${s.priority}</span>
-                  </div>
-                  ${s.description ? `<div class="improve-suggestion-desc">${escapeHtml(s.description)}</div>` : ''}
-                </div>
-              </label>
-            `).join('')}
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
-            <button type="button" class="btn btn-primary" id="processApproveBtn" onclick="handleProcessApprove('${proc.id}')">Создать выбранные (${proc.result.length})</button>
-          </div>
-        </div>`;
-    } else {
-      html += `
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
-        </div>`;
-    }
-
-    document.getElementById('processDetailContent').innerHTML = html;
+    document.getElementById('processDetailContent').innerHTML = renderProcessDetailHtml(proc, logs, {
+      showProductName: false,
+      showSpecLink: true,
+      showDevResult: true,
+      excludeTypes: ['prepare_spec'],
+      modalId: 'processDetailModal',
+      onShowSpecAttr: `onclick="showSpecView('${proc.release_id}')"`,
+    });
     openModal('processDetailModal');
   } catch (err) {
     toast(err.message, 'error');
   }
 };
 
-window.toggleAllProcessSuggestions = function (state) {
-  document.querySelectorAll('#processSuggestionsList input[type="checkbox"]').forEach(cb => {
-    cb.checked = state;
-  });
-  updateProcessApproveCount();
-};
+window.toggleAllProcessSuggestions = (state) => toggleAllSuggestions('processSuggestionsList', state);
 
-window.updateProcessApproveCount = function () {
-  const checked = document.querySelectorAll('#processSuggestionsList input[type="checkbox"]:checked');
-  const btn = document.getElementById('processApproveBtn');
-  if (btn) {
-    btn.textContent = `Создать выбранные (${checked.length})`;
-    btn.disabled = checked.length === 0;
-  }
-};
+window.updateProcessApproveCount = () => updateApproveCount('processSuggestionsList', 'processApproveBtn');
 
-window.handleProcessApprove = async function (processId) {
-  const checkboxes = document.querySelectorAll('#processSuggestionsList input[type="checkbox"]:checked');
-  const indices = Array.from(checkboxes).map(cb => parseInt(cb.dataset.index));
+window.handleProcessApprove = (processId) => approveProcess(processId, 'processSuggestionsList', {
+  modalId: 'processDetailModal',
+  onSuccess: () => loadIssues(),
+});
 
-  if (indices.length === 0) return toast('Выберите хотя бы одну задачу', 'error');
-
+window.handleProcessRestart = async function (processId) {
   try {
-    const result = await api(`/processes/${processId}/approve`, {
-      method: 'POST',
-      body: { indices },
-    });
-    toast(`Создано задач: ${result.count}`);
+    await api(`/processes/${processId}/restart`, { method: 'POST' });
+    toast('Процесс перезапущен');
     closeModal('processDetailModal');
-    loadIssues();
+    loadProcesses();
   } catch (err) {
     toast(err.message, 'error');
   }

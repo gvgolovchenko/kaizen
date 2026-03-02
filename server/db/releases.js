@@ -44,6 +44,7 @@ export async function create({ product_id, version, name, description, issue_ids
     );
     const release = rows[0];
 
+    let issuesMovedToInRelease = 0;
     if (issue_ids && issue_ids.length > 0) {
       for (const issueId of issue_ids) {
         await client.query(
@@ -54,11 +55,14 @@ export async function create({ product_id, version, name, description, issue_ids
           `UPDATE ${ISSUES_TABLE} SET status = 'in_release' WHERE id = $1`,
           [issueId]
         );
+        issuesMovedToInRelease++;
       }
     }
 
     await client.query('COMMIT');
-    return getById(release.id);
+    const result = await getById(release.id);
+    result.status_changes = { issues_to_in_release: issuesMovedToInRelease };
+    return result;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -90,6 +94,7 @@ export async function update(id, { version, name, description, status, add_issue
     }
 
     // Add issues
+    let addedCount = 0;
     if (add_issue_ids && add_issue_ids.length > 0) {
       for (const issueId of add_issue_ids) {
         await client.query(
@@ -100,10 +105,12 @@ export async function update(id, { version, name, description, status, add_issue
           `UPDATE ${ISSUES_TABLE} SET status = 'in_release' WHERE id = $1`,
           [issueId]
         );
+        addedCount++;
       }
     }
 
     // Remove issues
+    let removedCount = 0;
     if (remove_issue_ids && remove_issue_ids.length > 0) {
       for (const issueId of remove_issue_ids) {
         await client.query(
@@ -114,11 +121,14 @@ export async function update(id, { version, name, description, status, add_issue
           `UPDATE ${ISSUES_TABLE} SET status = 'open' WHERE id = $1`,
           [issueId]
         );
+        removedCount++;
       }
     }
 
     await client.query('COMMIT');
-    return getById(id);
+    const result = await getById(id);
+    result.status_changes = { issues_to_in_release: addedCount, issues_to_open: removedCount };
+    return result;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -132,6 +142,12 @@ export async function remove(id) {
   try {
     await client.query('BEGIN');
 
+    // Count issues that will be returned to open
+    const { rows: [{ count: issuesToOpen }] } = await client.query(
+      `SELECT count(*)::int AS count FROM ${LINK_TABLE} WHERE release_id = $1`,
+      [id]
+    );
+
     // Return issues to open status
     await client.query(
       `UPDATE ${ISSUES_TABLE} SET status = 'open'
@@ -141,7 +157,8 @@ export async function remove(id) {
 
     const { rowCount } = await client.query(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
     await client.query('COMMIT');
-    return rowCount > 0;
+    if (rowCount === 0) return false;
+    return { ok: true, status_changes: { issues_to_open: issuesToOpen } };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -203,6 +220,12 @@ export async function publish(id) {
   try {
     await client.query('BEGIN');
 
+    // Count issues that will move to done
+    const { rows: [{ count: issuesToDone }] } = await client.query(
+      `SELECT count(*)::int AS count FROM ${LINK_TABLE} WHERE release_id = $1`,
+      [id]
+    );
+
     await client.query(
       `UPDATE ${TABLE} SET status = 'released', released_at = now() WHERE id = $1`,
       [id]
@@ -215,7 +238,9 @@ export async function publish(id) {
     );
 
     await client.query('COMMIT');
-    return getById(id);
+    const result = await getById(id);
+    result.status_changes = { release_to_released: true, issues_to_done: issuesToDone };
+    return result;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

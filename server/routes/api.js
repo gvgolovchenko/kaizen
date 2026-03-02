@@ -96,9 +96,10 @@ router.put('/releases/:id', async (req, res) => {
 });
 
 router.delete('/releases/:id', async (req, res) => {
-  const ok = await releases.remove(req.params.id);
-  if (!ok) return res.status(404).json({ error: 'Release not found' });
-  res.json({ ok: true });
+  const result = await releases.remove(req.params.id);
+  if (!result) return res.status(404).json({ error: 'Release not found' });
+  const response = typeof result === 'object' ? result : { ok: true };
+  res.json(response);
 });
 
 router.post('/releases/:id/publish', async (req, res) => {
@@ -492,8 +493,38 @@ router.post('/processes/:id/approve', async (req, res) => {
       created.push(issue);
     }
 
-    await processes.update(proc.id, { approved_count: created.length });
+    // Merge previously approved indices with new ones
+    const prevApproved = proc.approved_indices || [];
+    const allApproved = [...new Set([...prevApproved, ...indices])];
+    await processes.update(proc.id, { approved_count: allApproved.length, approved_indices: JSON.stringify(allApproved) });
     res.status(201).json({ created, count: created.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/processes/:id/restart', async (req, res) => {
+  try {
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    if (proc.status !== 'completed' && proc.status !== 'failed') {
+      return res.status(400).json({ error: 'Process must be completed or failed to restart' });
+    }
+
+    const newProc = await processes.create({
+      product_id: proc.product_id,
+      model_id: proc.model_id,
+      type: proc.type,
+      input_prompt: proc.input_prompt,
+      input_template_id: proc.input_template_id,
+      input_count: proc.input_count,
+      release_id: proc.release_id,
+    });
+
+    const timeoutMs = 20 * 60 * 1000;
+    runProcess(newProc.id, { timeoutMs });
+
+    res.status(201).json(newProc);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

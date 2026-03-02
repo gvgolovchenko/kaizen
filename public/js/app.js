@@ -76,6 +76,24 @@ export function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// ── Status change notifications ───────────────────────
+
+/**
+ * Показывает детальный toast о произошедших автоматических изменениях статусов.
+ * @param {Object} params - { action: string, details: string[] }
+ */
+export function notifyStatusChanges({ action, details }) {
+  ensureContainer();
+  const el = document.createElement('div');
+  el.className = 'toast toast-info';
+  el.innerHTML = `
+    <div class="toast-title">${escapeHtml(action)}</div>
+    ${details.map(d => `<div class="toast-detail">${escapeHtml(d)}</div>`).join('')}
+  `;
+  toastContainer.appendChild(el);
+  setTimeout(() => { el.remove(); }, 5000);
+}
+
 // ── Modal helpers ──────────────────────────────────────
 
 export function openModal(id) {

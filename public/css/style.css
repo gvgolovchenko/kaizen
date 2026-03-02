@@ -469,6 +469,21 @@ tr:hover td { background: var(--bg-hover); }
 
 .toast-success { background: #059669; }
 .toast-error { background: #dc2626; }
+.toast-info {
+  background: #1e40af;
+  min-width: 260px;
+}
+.toast-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.toast-detail {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  padding-left: 8px;
+  border-left: 2px solid rgba(255,255,255,0.3);
+  margin-top: 3px;
+}
 
 @keyframes slideIn {
   from { transform: translateX(40px); opacity: 0; }
