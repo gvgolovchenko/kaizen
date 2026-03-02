@@ -204,6 +204,20 @@ header h1 span { font-size: 1.4rem; }
   max-height: 85vh;
   overflow-y: auto;
   box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+.modal .modal-actions {
+  position: sticky;
+  bottom: -28px;
+  margin: 20px -28px -28px;
+  padding: 14px 28px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .modal h2 {
@@ -730,8 +744,6 @@ tr:hover td { background: var(--bg-hover); }
 }
 
 .improve-suggestions-list {
-  max-height: 400px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -792,8 +804,6 @@ tr:hover td { background: var(--bg-hover); }
 /* ── Process logs ────────────────────────────────────── */
 
 .process-logs-list {
-  max-height: 300px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -838,3 +848,26 @@ tr:hover td { background: var(--bg-hover); }
 .dev-status-failed { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); }
 
 .badge-process-develop_release { background: rgba(96,165,250,0.15); color: var(--blue); }
+
+/* ── Collapsible sections ──────────────────────────────── */
+
+.collapsible-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 6px 0;
+  user-select: none;
+}
+.collapsible-toggle:hover { opacity: 0.8; }
+.collapsible-arrow {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+}
+.collapsible.open .collapsible-arrow { transform: rotate(90deg); }
+.collapsible-body {
+  display: none;
+  padding-top: 6px;
+}
+.collapsible.open .collapsible-body { display: block; }

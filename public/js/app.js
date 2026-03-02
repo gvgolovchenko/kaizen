@@ -103,3 +103,20 @@ export function openModal(id) {
 export function closeModal(id) {
   document.getElementById(id).classList.remove('active');
 }
+
+// Close topmost modal on ESC
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const modals = document.querySelectorAll('.modal-overlay.active');
+    if (modals.length > 0) {
+      modals[modals.length - 1].classList.remove('active');
+    }
+  }
+});
+
+// Close modal on click outside (on overlay)
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')) {
+    e.target.classList.remove('active');
+  }
+});

@@ -40,52 +40,57 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
   } = options;
 
   let html = `
-    <div style="margin-bottom:16px">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-        <span class="badge badge-process-${proc.status}">${proc.status}</span>
-        <span class="badge badge-process-${proc.type}">${proc.type}</span>
-      </div>
-      <div style="font-size:0.85rem;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">
-        ${showProductName ? `<span>Продукт: <strong style="color:var(--text)">${escapeHtml(proc.product_name)}</strong></span>` : ''}
-        <span>Модель: <strong style="color:var(--text)">${escapeHtml(proc.model_name)}</strong></span>
-        <span>Создан: ${formatDate(proc.created_at)}</span>
-        ${proc.duration_ms ? `<span>Длительность: ${formatDuration(proc.duration_ms)}</span>` : ''}
-      </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:0.85rem;color:var(--text-dim)">
+      <span class="badge badge-process-${proc.status}">${proc.status}</span>
+      <span class="badge badge-process-${proc.type}">${proc.type}</span>
+      ${showProductName ? `<span>&middot; ${escapeHtml(proc.product_name)}</span>` : ''}
+      <span>&middot; ${escapeHtml(proc.model_name)}</span>
+      ${proc.duration_ms ? `<span>&middot; ${formatDuration(proc.duration_ms)}</span>` : ''}
     </div>`;
 
-  // Промпт
+  // Промпт (сворачиваемый)
   if (proc.input_prompt) {
     html += `
-      <div style="margin-bottom:16px">
-        <div style="font-size:0.85rem;font-weight:600;margin-bottom:4px;color:var(--text-dim)">Промпт</div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:0.85rem;max-height:120px;overflow-y:auto">${escapeHtml(proc.input_prompt)}</div>
+      <div class="collapsible" style="margin-bottom:8px">
+        <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')">
+          <span class="collapsible-arrow">&#9654;</span>
+          <span style="font-size:0.85rem;font-weight:600;color:var(--text-dim)">Промпт</span>
+        </div>
+        <div class="collapsible-body">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:0.85rem;max-height:120px;overflow-y:auto">${escapeHtml(proc.input_prompt)}</div>
+        </div>
       </div>`;
   }
 
-  // Ошибка
+  // Ошибка (всегда видна)
   if (proc.error) {
     html += `
-      <div style="margin-bottom:16px;padding:10px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px">
+      <div style="margin-bottom:8px;padding:10px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px">
         <div style="font-size:0.85rem;font-weight:600;color:var(--red);margin-bottom:4px">Ошибка</div>
         <div style="font-size:0.85rem;color:var(--red)">${escapeHtml(proc.error)}</div>
       </div>`;
   }
 
-  // Логи
+  // Логи (сворачиваемые)
   if (logs.length > 0) {
     html += `
-      <div style="margin-bottom:16px">
-        <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Логи</div>
-        <div class="process-logs-list">
-          ${logs.map(l => `
-            <div class="process-log-entry ${l.step === 'error' ? 'process-log-error' : ''}">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-                <span class="badge badge-process-log">${l.step}</span>
-                <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU')}</span>
+      <div class="collapsible" style="margin-bottom:12px">
+        <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')">
+          <span class="collapsible-arrow">&#9654;</span>
+          <span style="font-size:0.85rem;font-weight:600;color:var(--text-dim)">Логи (${logs.length})</span>
+        </div>
+        <div class="collapsible-body">
+          <div class="process-logs-list">
+            ${logs.map(l => `
+              <div class="process-log-entry ${l.step === 'error' ? 'process-log-error' : ''}">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+                  <span class="badge badge-process-log">${l.step}</span>
+                  <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU')}</span>
+                </div>
+                ${l.message ? `<div style="font-size:0.85rem">${escapeHtml(l.message)}</div>` : ''}
               </div>
-              ${l.message ? `<div style="font-size:0.85rem">${escapeHtml(l.message)}</div>` : ''}
-            </div>
-          `).join('')}
+            `).join('')}
+          </div>
         </div>
       </div>`;
   }
