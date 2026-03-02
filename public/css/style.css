@@ -926,3 +926,95 @@ tr:hover td { background: var(--bg-hover); }
   line-height: 1.6;
   color: var(--text);
 }
+
+/* ── Checkpoint stepper ────────────────────────────────── */
+
+.checkpoint-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.checkpoint-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 0.85rem;
+  position: relative;
+}
+
+.checkpoint-item:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 28px;
+  width: 2px;
+  height: calc(100% - 16px);
+  background: var(--border);
+}
+
+.checkpoint-item.checkpoint-done:not(:last-child)::after {
+  background: var(--green);
+}
+
+.checkpoint-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-card);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  z-index: 1;
+}
+
+.checkpoint-done .checkpoint-dot {
+  border-color: var(--green);
+  background: var(--green);
+  color: #111;
+}
+
+.checkpoint-active .checkpoint-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  animation: checkpointPulse 1.5s ease-in-out infinite;
+}
+
+.checkpoint-pending .checkpoint-dot {
+  border-color: var(--border);
+  background: var(--bg-card);
+}
+
+.checkpoint-label {
+  color: var(--text-dim);
+}
+
+.checkpoint-done .checkpoint-label {
+  color: var(--green);
+}
+
+.checkpoint-active .checkpoint-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.checkpoint-time {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+@keyframes checkpointPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(129,140,248,0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(129,140,248,0); }
+}

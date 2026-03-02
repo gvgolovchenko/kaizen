@@ -3,7 +3,8 @@
  * Uses native fetch, no extra npm dependencies.
  */
 
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
+import { createInterface } from 'readline';
 
 const TIMEOUT = 120000;
 const TEMPERATURE = 0.7;
@@ -136,6 +137,88 @@ async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
       resolve(stdout || '');
     });
     child.stdin.end();
+  });
+}
+
+// ── Claude Code Streaming (spawn + NDJSON) ─────────────
+
+/**
+ * Call Claude Code CLI with streaming NDJSON output.
+ * Returns { text, events } where text is the final result.
+ * @param {string} modelId
+ * @param {string} systemPrompt
+ * @param {string} userPrompt
+ * @param {object} [opts]
+ * @param {string[]} [opts.allowedTools]
+ * @param {string} [opts.cwd]
+ * @param {number} [opts.timeoutMs]
+ * @param {function} [opts.onEvent] - called for each NDJSON event
+ * @returns {Promise<{text: string, events: object[]}>}
+ */
+export async function callClaudeCodeStreaming(modelId, systemPrompt, userPrompt, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const tools = (opts.allowedTools || ['Read', 'Glob', 'Grep']).join(',');
+    const args = [
+      '-p',
+      '--output-format', 'stream-json',
+      '--model', modelId,
+      '--dangerously-skip-permissions',
+      '--tools', tools,
+      '--system-prompt', systemPrompt,
+      '--', userPrompt,
+    ];
+
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('CLAUDE')) delete env[key];
+    }
+
+    const child = spawn('claude', args, {
+      env,
+      cwd: opts.cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child.stdin.end();
+
+    let resultText = '';
+    const events = [];
+
+    const rl = createInterface({ input: child.stdout });
+    rl.on('line', (line) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line);
+        events.push(event);
+        if (opts.onEvent) opts.onEvent(event);
+
+        // Collect final text from result event
+        if (event.type === 'result') {
+          resultText = event.result || '';
+        }
+      } catch { /* skip non-JSON lines */ }
+    });
+
+    const timeout = opts.timeoutMs || 20 * 60 * 1000;
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`Claude Code timeout (${Math.round(timeout / 60000)}min)`));
+    }, timeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      rl.close();
+      if (code !== 0 && !resultText) {
+        reject(new Error(`Claude Code exited with code ${code}`));
+      } else {
+        resolve({ text: resultText, events });
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      rl.close();
+      reject(new Error(`Claude Code spawn error: ${err.message}`));
+    });
   });
 }
 

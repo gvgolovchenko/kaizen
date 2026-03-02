@@ -2,6 +2,48 @@
 
 ---
 
+## v1.5.0 — Промежуточное логирование develop_release (2026-03-02)
+
+**Стриминг событий Claude Code и визуальный степпер контрольных точек для процесса разработки релизов.**
+
+### Стриминг вместо буферизации
+
+- Новая функция `callClaudeCodeStreaming()` в `ai-caller.js` — использует `spawn` + `--output-format stream-json` вместо `execFile` + `--output-format text`
+- NDJSON-события парсятся на лету через `readline`, callback `onEvent` вызывается для каждого события
+- Старая `callClaudeCode()` сохранена для обратной совместимости (используется остальными процессами)
+
+### Контрольные точки (checkpoints)
+
+- State machine в `process-runner.js` детектирует 7 фаз разработки по инструментам Claude Code:
+  - `repo` — git checkout/pull
+  - `study` — Read/Glob/Grep (изучение кода)
+  - `implement` — первое появление Write/Edit
+  - `docs` — Write/Edit в `docs/`
+  - `tests` — Write/Edit в `*.test.*` / `*.spec.*`
+  - `test_run` — Bash с тест-командой (npm test, vitest, jest)
+  - `commit` — Bash с git commit/push
+- Фазы продвигаются только вперёд (не откатываются)
+- При каждой смене фазы создаётся лог в `kaizen_process_logs` с `step: 'checkpoint'`
+
+### Визуальный степпер
+
+- В модале деталей `develop_release` процесса отображается степпер из 7 фаз
+- Пройденные фазы — зелёные с галочкой
+- Текущая фаза — фиолетовая с анимацией пульсации
+- Будущие фазы — серые
+- Время прохождения каждой фазы отображается справа
+- Обновляется автоматически при поллинге (каждые 4с)
+- Обратная совместимость: для старых процессов без checkpoint-логов степпер не показывается
+
+### Файлы
+
+- `server/ai-caller.js` — добавлена `callClaudeCodeStreaming()` (spawn + readline + NDJSON)
+- `server/process-runner.js` — `createCheckpointTracker()`, интеграция в `runDevelopRelease()`
+- `public/js/process-detail.js` — `renderCheckpointStepper()`, фильтрация checkpoint-логов
+- `public/css/style.css` — стили `.checkpoint-stepper`, `.checkpoint-item`, анимация `checkpointPulse`
+
+---
+
 ## v1.4.0 — Пресс-релизы (2026-03-02)
 
 **Генерация PR-материалов для опубликованных релизов по 4 каналам: соцсети, сайт, Битрикс24, СМИ.**

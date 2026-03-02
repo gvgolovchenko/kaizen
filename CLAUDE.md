@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.4.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.5.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
 
 ## Архитектура
 
@@ -22,7 +22,7 @@ kaizen/
 ├── .env                          # DB credentials, PORT=3034
 ├── server/
 │   ├── index.js                  # Express-сервер (порт 3034), JSON + static
-│   ├── ai-caller.js              # Универсальный AI caller (6 провайдеров)
+│   ├── ai-caller.js              # Универсальный AI caller (6 провайдеров + streaming)
 │   ├── utils.js                  # parseJsonFromAI(), maskApiKey(), detectTestCommand()
 │   ├── process-runner.js         # Фоновый исполнитель AI-процессов
 │   ├── db/
@@ -158,12 +158,15 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues, сохраняет approved_indices (повторное одобрение — disabled чекбоксы)
 - **Перезапуск процесса**: POST /processes/:id/restart → создаёт копию и запускает заново
 - **Генерация спецификации**: POST /releases/:id/prepare-spec → AI-процесс (standalone или claude-code)
-- **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты
+- **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты. Стриминг NDJSON с промежуточными checkpoint-логами (7 фаз)
 - **Дорожная карта из документа**: POST /processes с type=roadmap_from_doc → парсит документ в релизы + задачи
 - **Пресс-релиз**: POST /releases/:id/prepare-press-release → AI генерирует PR-материалы для 4 каналов (соцсети, сайт, Б24, СМИ)
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
 - **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google
-- **claude-code провайдер**: вызывает `/opt/homebrew/bin/claude` через `child_process.execFile`. Флаги: `-p --output-format text --dangerously-skip-permissions --tools Read,Glob,Grep --system-prompt <prompt> -- <user_prompt>`. Особенности: удаляет `CLAUDE*` env vars (защита от вложенных сессий), закрывает `child.stdin.end()`, использует `--` разделитель (чтобы `--system-prompt` не поглощал другие флаги), запускается в `cwd = product.project_path` для анализа реального кода. API key не требуется. Таймаут настраивается (3-60 мин, по умолчанию 20 мин).
+- **claude-code провайдер**: два режима вызова CLI `claude`:
+  - `callClaudeCode` (execFile, `--output-format text`) — для improve, prepare_spec и др. Буферизирует весь stdout.
+  - `callClaudeCodeStreaming` (spawn, `--output-format stream-json`) — для develop_release. Парсит NDJSON-события на лету, детектирует контрольные точки (7 фаз: repo → study → implement → docs → tests → test_run → commit), пишет промежуточные логи с `step: 'checkpoint'`.
+  - Общее: удаляет `CLAUDE*` env vars, `child.stdin.end()`, `--` разделитель, `cwd = product.project_path`. API key не требуется. Таймаут 3-60 мин (по умолчанию 20 мин).
 
 ## Важные правила
 

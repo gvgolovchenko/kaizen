@@ -39,6 +39,10 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
     onShowSpecAttr = '',
   } = options;
 
+  // Extract checkpoint logs for stepper
+  const checkpointLogs = logs.filter(l => l.step === 'checkpoint');
+  const isDevRelease = proc.type === 'develop_release';
+
   let html = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:0.85rem;color:var(--text-dim)">
       <span class="badge badge-process-${proc.status}">${proc.status}</span>
@@ -47,6 +51,11 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
       <span>&middot; ${escapeHtml(proc.model_name)}</span>
       ${proc.duration_ms ? `<span>&middot; ${formatDuration(proc.duration_ms)}</span>` : ''}
     </div>`;
+
+  // Checkpoint stepper for develop_release
+  if (isDevRelease && checkpointLogs.length > 0) {
+    html += renderCheckpointStepper(checkpointLogs, proc.status);
+  }
 
   // Промпт (сворачиваемый)
   if (proc.input_prompt) {
@@ -230,4 +239,56 @@ export async function approveProcess(processId, containerId, options = {}) {
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+// ── Checkpoint stepper renderer ──────────────────────────
+
+const CHECKPOINT_ALL_PHASES = [
+  { key: 'repo',      label: 'Подготовка репозитория' },
+  { key: 'study',     label: 'Изучение кодовой базы' },
+  { key: 'implement', label: 'Реализация задач' },
+  { key: 'docs',      label: 'Обновление документации' },
+  { key: 'tests',     label: 'Написание тестов' },
+  { key: 'test_run',  label: 'Запуск тестов' },
+  { key: 'commit',    label: 'Коммит и push' },
+];
+
+function renderCheckpointStepper(checkpointLogs, processStatus) {
+  const reachedPhases = new Map();
+  for (const log of checkpointLogs) {
+    const phase = log.data?.phase;
+    if (phase) reachedPhases.set(phase, log);
+  }
+
+  const lastPhase = checkpointLogs.length > 0
+    ? checkpointLogs[checkpointLogs.length - 1].data?.phase
+    : null;
+
+  const isFinished = processStatus === 'completed' || processStatus === 'failed';
+
+  const items = CHECKPOINT_ALL_PHASES.map(({ key, label }) => {
+    const log = reachedPhases.get(key);
+    let stateClass = 'checkpoint-pending';
+    let dotContent = '';
+
+    if (log) {
+      if (key === lastPhase && !isFinished) {
+        stateClass = 'checkpoint-active';
+        dotContent = '&#9679;';
+      } else {
+        stateClass = 'checkpoint-done';
+        dotContent = '&#10003;';
+      }
+    }
+
+    const timeStr = log ? new Date(log.created_at).toLocaleTimeString('ru-RU') : '';
+
+    return `<div class="checkpoint-item ${stateClass}">
+      <div class="checkpoint-dot">${dotContent}</div>
+      <span class="checkpoint-label">${label}</span>
+      ${timeStr ? `<span class="checkpoint-time">${timeStr}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  return `<div class="checkpoint-stepper">${items}</div>`;
 }
