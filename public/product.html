@@ -383,6 +383,89 @@
     </div>
   </div>
 
+  <!-- Prepare Press Release Modal -->
+  <div class="modal-overlay" id="preparePressReleaseModal">
+    <div class="modal" style="max-width:600px">
+      <h2>Подготовка пресс-релиза</h2>
+      <input type="hidden" id="prReleaseId">
+      <div style="margin-bottom:14px;font-size:0.9rem">
+        <span id="prReleaseName" style="font-weight:600"></span>
+      </div>
+
+      <div class="form-group">
+        <label>Каналы</label>
+        <div class="checkbox-list" style="max-height:none;padding:10px">
+          <label class="checkbox-item"><input type="checkbox" name="prChannel" value="social" checked> Соцсети (ВК, Telegram)</label>
+          <label class="checkbox-item"><input type="checkbox" name="prChannel" value="website" checked> Сайт компании</label>
+          <label class="checkbox-item"><input type="checkbox" name="prChannel" value="bitrix24" checked> Битрикс24 (внутренний пост)</label>
+          <label class="checkbox-item"><input type="checkbox" name="prChannel" value="media" checked> СМИ</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Тональность</label>
+        <select id="prTone">
+          <option value="official">Официальная</option>
+          <option value="friendly">Дружелюбная</option>
+          <option value="technical">Техническая</option>
+          <option value="marketing">Маркетинговая</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Аудитория</label>
+        <div class="checkbox-list" style="max-height:none;padding:10px">
+          <label class="checkbox-item"><input type="checkbox" name="prAudience" value="employees" checked> Сотрудники</label>
+          <label class="checkbox-item"><input type="checkbox" name="prAudience" value="clients"> Клиенты</label>
+          <label class="checkbox-item"><input type="checkbox" name="prAudience" value="tech_community"> Техническое сообщество</label>
+          <label class="checkbox-item"><input type="checkbox" name="prAudience" value="general"> Широкая аудитория</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="prGenerateImages" checked style="width:auto;margin-right:6px;accent-color:var(--accent)">
+          Генерировать промпты для изображений
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label>Ключевые акценты (необязательно)</label>
+        <textarea id="prKeyPoints" rows="3" placeholder="На чём сделать акцент в PR-материалах..."></textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Модель ИИ *</label>
+        <select id="prModel" required></select>
+      </div>
+
+      <div class="form-group">
+        <label>Таймаут (минуты, 3–60)</label>
+        <input type="number" id="prTimeout" value="20" min="3" max="60">
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('preparePressReleaseModal')">Отмена</button>
+        <button type="button" class="btn btn-primary" onclick="handlePreparePressRelease()">Запустить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Press Release View Modal -->
+  <div class="modal-overlay" id="pressReleaseViewModal">
+    <div class="modal" style="max-width:900px">
+      <h2 id="prViewTitle">Пресс-релиз</h2>
+      <div id="prViewMeta" style="margin-bottom:14px;font-size:0.85rem;color:var(--text-dim);display:flex;gap:12px;flex-wrap:wrap"></div>
+      <div id="prViewTabs" class="pr-tabs"></div>
+      <div id="prViewContent" class="pr-tab-content"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('pressReleaseViewModal')">Закрыть</button>
+        <button type="button" class="btn btn-ghost" onclick="handleCopyPressReleaseChannel()">Скопировать канал</button>
+        <button type="button" class="btn btn-primary" onclick="handleDownloadPressRelease()">Скачать .md</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="/js/product.js"></script>
 </body>
 </html>

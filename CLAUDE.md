@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.3.1. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.4.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
 
 ## Архитектура
 
@@ -29,7 +29,7 @@ kaizen/
 │   │   ├── pool.js               # pg Pool (Supavisor)
 │   │   ├── products.js           # getAll, getById, create, update, remove
 │   │   ├── issues.js             # getByProduct, getById, create, update, remove
-│   │   ├── releases.js           # getByProduct, getById, create, update, remove, publish, saveSpec, updateDevInfo
+│   │   ├── releases.js           # getByProduct, getById, create, update, remove, publish, saveSpec, savePressRelease, updateDevInfo
 │   │   ├── ai-models.js          # getAll, getById, create, update, remove, updateStatus
 │   │   ├── processes.js          # getAll, getByProduct, getById, create, update, remove
 │   │   └── process-logs.js       # getByProcess, create
@@ -46,7 +46,8 @@ kaizen/
 │       ├── 006_release_spec.sql
 │       ├── 007_develop_release.sql
 │       ├── 008_approved_indices.sql
-│       └── 009_product_rivc_connect.sql
+│       ├── 009_product_rivc_connect.sql
+│       └── 010_press_release.sql
 ├── public/
 │   ├── index.html                # Список продуктов (карточки)
 │   ├── product.html              # Детали: задачи + релизы + процессы
@@ -125,6 +126,8 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | POST | /api/releases/:id/prepare-spec | Генерация спецификации (AI) |
 | POST | /api/releases/:id/develop | Разработка релиза (claude-code) |
 | GET | /api/releases/:id/spec | Спецификация релиза |
+| POST | /api/releases/:id/prepare-press-release | Генерация пресс-релиза (AI) |
+| GET | /api/releases/:id/press-release | Пресс-релиз |
 | GET | /api/ai-models/discover | Автообнаружение (Ollama + MLX) |
 | GET | /api/ai-models | Список (api_key маскирован) |
 | POST | /api/ai-models | Создать модель |
@@ -157,6 +160,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Генерация спецификации**: POST /releases/:id/prepare-spec → AI-процесс (standalone или claude-code)
 - **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты
 - **Дорожная карта из документа**: POST /processes с type=roadmap_from_doc → парсит документ в релизы + задачи
+- **Пресс-релиз**: POST /releases/:id/prepare-press-release → AI генерирует PR-материалы для 4 каналов (соцсети, сайт, Б24, СМИ)
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
 - **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google
 - **claude-code провайдер**: вызывает `/opt/homebrew/bin/claude` через `child_process.execFile`. Флаги: `-p --output-format text --dangerously-skip-permissions --tools Read,Glob,Grep --system-prompt <prompt> -- <user_prompt>`. Особенности: удаляет `CLAUDE*` env vars (защита от вложенных сессий), закрывает `child.stdin.end()`, использует `--` разделитель (чтобы `--system-prompt` не поглощал другие флаги), запускается в `cwd = product.project_path` для анализа реального кода. API key не требуется. Таймаут настраивается (3-60 мин, по умолчанию 20 мин).

@@ -220,6 +220,7 @@ function renderReleases() {
   el.innerHTML = releases.map(r => {
     const specBtn = getSpecButton(r);
     const devBtn = getDevButton(r);
+    const prBtn = getPressReleaseButton(r);
     const devStatus = renderDevStatus(r);
     return `
     <div class="release-card">
@@ -238,10 +239,11 @@ function renderReleases() {
         Задач: ${r.issue_count || 0}
         ${r.released_at ? ` &middot; Выпущен: ${formatDate(r.released_at)}` : ''}
       </div>
-      <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+      <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="toggleReleaseDetails('${r.id}', this)">Показать задачи</button>
         ${specBtn}
         ${devBtn}
+        ${prBtn}
       </div>
       ${devStatus}
       <div class="release-issues" id="release-${r.id}" style="display:none"></div>
@@ -255,6 +257,27 @@ function findActiveSpecProcess(releaseId) {
     p.type === 'prepare_spec' && p.release_id === releaseId &&
     (p.status === 'pending' || p.status === 'running')
   );
+}
+
+function findActivePressReleaseProcess(releaseId) {
+  return processesList.find(p =>
+    p.type === 'prepare_press_release' && p.release_id === releaseId &&
+    (p.status === 'pending' || p.status === 'running')
+  );
+}
+
+function getPressReleaseButton(r) {
+  const activeProc = findActivePressReleaseProcess(r.id);
+  if (activeProc) {
+    return `<button class="btn btn-ghost btn-sm" disabled style="opacity:0.7;color:var(--yellow)">Генерация пресс-релиза...</button>`;
+  }
+  if (r.press_release) {
+    return `<button class="btn btn-ghost btn-sm" onclick="showPressReleaseView('${r.id}')" style="color:var(--accent)">Открыть пресс-релиз</button>`;
+  }
+  if (r.status === 'released') {
+    return `<button class="btn btn-primary btn-sm" onclick="showPreparePressReleaseModal('${r.id}')">Пресс-релиз</button>`;
+  }
+  return '';
 }
 
 function getSpecButton(r) {
@@ -325,6 +348,9 @@ function suggestionsInfo(p) {
   }
   if (p.type === 'prepare_spec' && p.result && p.result.char_count) {
     return `${p.result.char_count} сим.`;
+  }
+  if (p.type === 'prepare_press_release' && p.result && p.result.channels) {
+    return `${p.result.channels.length} кан.`;
   }
   const total = p.result ? p.result.length : 0;
   if (!total) return '—';
@@ -965,6 +991,295 @@ window.handleDevelopStart = async function () {
   } catch (err) {
     toast(err.message, 'error');
   }
+};
+
+// ── Prepare press release ──────────────────────────────────
+
+let currentPressRelease = null;
+let currentPressReleaseRelease = null;
+let currentPressReleaseTab = null;
+
+window.showPreparePressReleaseModal = async function (releaseId) {
+  const release = releases.find(r => r.id === releaseId);
+  document.getElementById('prReleaseId').value = releaseId;
+  document.getElementById('prReleaseName').textContent = release
+    ? `${release.version} — ${release.name}`
+    : releaseId;
+  document.getElementById('prTimeout').value = '20';
+  document.getElementById('prKeyPoints').value = '';
+
+  // Reset checkboxes
+  document.querySelectorAll('#preparePressReleaseModal input[name="prChannel"]').forEach(cb => cb.checked = true);
+  document.querySelectorAll('#preparePressReleaseModal input[name="prAudience"]').forEach(cb => cb.checked = false);
+  document.querySelector('#preparePressReleaseModal input[name="prAudience"][value="employees"]').checked = true;
+  document.getElementById('prGenerateImages').checked = true;
+  document.getElementById('prTone').value = 'official';
+
+  try {
+    const models = await api('/ai-models');
+    const sel = document.getElementById('prModel');
+    sel.innerHTML = models.length === 0
+      ? '<option value="">Нет моделей</option>'
+      : models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  openModal('preparePressReleaseModal');
+};
+
+window.handlePreparePressRelease = async function () {
+  const releaseId = document.getElementById('prReleaseId').value;
+  const modelId = document.getElementById('prModel').value;
+  const timeoutMin = parseInt(document.getElementById('prTimeout').value) || 20;
+  const tone = document.getElementById('prTone').value;
+  const generateImages = document.getElementById('prGenerateImages').checked;
+  const keyPoints = document.getElementById('prKeyPoints').value.trim();
+
+  const channels = Array.from(document.querySelectorAll('#preparePressReleaseModal input[name="prChannel"]:checked')).map(cb => cb.value);
+  const audiences = Array.from(document.querySelectorAll('#preparePressReleaseModal input[name="prAudience"]:checked')).map(cb => cb.value);
+
+  if (channels.length === 0) return toast('Выберите хотя бы один канал', 'error');
+  if (!modelId) return toast('Выберите модель', 'error');
+
+  try {
+    await api(`/releases/${releaseId}/prepare-press-release`, {
+      method: 'POST',
+      body: {
+        model_id: modelId,
+        channels,
+        tone,
+        audiences,
+        generate_images: generateImages,
+        key_points: keyPoints || null,
+        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
+      },
+    });
+    toast('Генерация пресс-релиза запущена');
+    closeModal('preparePressReleaseModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Press release view ─────────────────────────────────────
+
+window.showPressReleaseView = async function (releaseId) {
+  try {
+    const data = await api(`/releases/${releaseId}/press-release`);
+    const release = releases.find(r => r.id === releaseId);
+    currentPressRelease = data.press_release;
+    currentPressReleaseRelease = release;
+
+    document.getElementById('prViewTitle').textContent = release
+      ? `Пресс-релиз: ${release.version} — ${release.name}`
+      : 'Пресс-релиз';
+
+    let meta = '';
+    if (data.process) {
+      meta += `<span>Модель: <strong style="color:var(--text)">${escapeHtml(data.process.model_name || '')}</strong></span>`;
+      if (data.process.duration_ms) meta += `<span>Длительность: ${formatDuration(data.process.duration_ms)}</span>`;
+      if (data.process.result && data.process.result.mode) meta += `<span class="badge badge-mode-${data.process.result.mode}">${data.process.result.mode}</span>`;
+    }
+    document.getElementById('prViewMeta').innerHTML = meta;
+
+    if (!currentPressRelease || !currentPressRelease.channels) {
+      document.getElementById('prViewTabs').innerHTML = '';
+      document.getElementById('prViewContent').innerHTML = '<p style="color:var(--text-dim)">Пресс-релиз пуст</p>';
+      openModal('pressReleaseViewModal');
+      return;
+    }
+
+    // Build tabs
+    const channelNames = { social: 'Соцсети', website: 'Сайт', bitrix24: 'Битрикс24', media: 'СМИ' };
+    const availableChannels = Object.keys(currentPressRelease.channels);
+    let tabs = availableChannels.map(ch =>
+      `<div class="pr-tab" data-tab="${ch}" onclick="switchPressReleaseTab('${ch}')">${channelNames[ch] || ch}</div>`
+    );
+    if (currentPressRelease.image_prompts || currentPressRelease.screenshots_needed) {
+      tabs.push(`<div class="pr-tab" data-tab="images" onclick="switchPressReleaseTab('images')">Изображения</div>`);
+    }
+    document.getElementById('prViewTabs').innerHTML = tabs.join('');
+
+    // Show first tab
+    const firstTab = availableChannels[0] || 'images';
+    switchPressReleaseTab(firstTab);
+
+    openModal('pressReleaseViewModal');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.switchPressReleaseTab = function (tabName) {
+  currentPressReleaseTab = tabName;
+  document.querySelectorAll('#prViewTabs .pr-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tabName));
+
+  const content = document.getElementById('prViewContent');
+  const pr = currentPressRelease;
+
+  if (tabName === 'social' && pr.channels.social) {
+    const s = pr.channels.social;
+    content.innerHTML = `
+      <div class="pr-channel-block">
+        <h4>ВКонтакте</h4>
+        <pre class="pr-text">${escapeHtml(s.platform_vk || '')}</pre>
+      </div>
+      <div class="pr-channel-block">
+        <h4>Telegram</h4>
+        <pre class="pr-text">${escapeHtml(s.platform_telegram || '')}</pre>
+      </div>
+      ${s.hashtags && s.hashtags.length ? `<div class="pr-channel-block"><h4>Хештеги</h4><p>${s.hashtags.map(h => `<span class="badge badge-improvement">${escapeHtml(h)}</span>`).join(' ')}</p></div>` : ''}`;
+  } else if (tabName === 'website' && pr.channels.website) {
+    const w = pr.channels.website;
+    content.innerHTML = `
+      <div class="pr-channel-block">
+        <h4>${escapeHtml(w.title || '')}</h4>
+        ${w.subtitle ? `<p style="color:var(--text-dim);font-style:italic;margin-bottom:12px">${escapeHtml(w.subtitle)}</p>` : ''}
+        <pre class="pr-text">${escapeHtml(w.body || '')}</pre>
+      </div>
+      ${w.seo_keywords && w.seo_keywords.length ? `<div class="pr-channel-block"><h4>SEO-ключи</h4><p>${w.seo_keywords.map(k => `<span class="badge badge-feature">${escapeHtml(k)}</span>`).join(' ')}</p></div>` : ''}
+      ${w.meta_description ? `<div class="pr-channel-block"><h4>Meta Description</h4><p style="color:var(--text-dim)">${escapeHtml(w.meta_description)}</p></div>` : ''}`;
+  } else if (tabName === 'bitrix24' && pr.channels.bitrix24) {
+    const b = pr.channels.bitrix24;
+    content.innerHTML = `
+      <div class="pr-channel-block">
+        <h4>${escapeHtml(b.title || '')}</h4>
+        <pre class="pr-text">${escapeHtml(b.body || '')}</pre>
+      </div>
+      ${b.mentions && b.mentions.length ? `<div class="pr-channel-block"><h4>Упоминания</h4><p>${b.mentions.map(m => `<span class="badge badge-improvement">${escapeHtml(m)}</span>`).join(' ')}</p></div>` : ''}`;
+  } else if (tabName === 'media' && pr.channels.media) {
+    const m = pr.channels.media;
+    content.innerHTML = `
+      <div class="pr-channel-block">
+        <h4>${escapeHtml(m.title || '')}</h4>
+        ${m.lead ? `<p style="font-weight:600;margin-bottom:12px">${escapeHtml(m.lead)}</p>` : ''}
+        <pre class="pr-text">${escapeHtml(m.body || '')}</pre>
+      </div>
+      ${m.quotes && m.quotes.length ? `<div class="pr-channel-block"><h4>Цитаты</h4>${m.quotes.map(q => `<blockquote style="border-left:3px solid var(--accent);padding-left:12px;color:var(--text-dim);margin:8px 0">${escapeHtml(q)}</blockquote>`).join('')}</div>` : ''}
+      ${m.boilerplate ? `<div class="pr-channel-block"><h4>О компании</h4><p style="color:var(--text-dim)">${escapeHtml(m.boilerplate)}</p></div>` : ''}`;
+  } else if (tabName === 'images') {
+    let html = '';
+    if (pr.image_prompts && pr.image_prompts.length) {
+      html += `<div class="pr-channel-block"><h4>Промпты для генерации изображений</h4>`;
+      html += pr.image_prompts.map((ip, i) => `
+        <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">${i + 1}. ${escapeHtml(ip.description || '')}</div>
+          ${ip.purpose ? `<div style="font-size:0.85rem;color:var(--text-dim)">Назначение: ${escapeHtml(ip.purpose)}</div>` : ''}
+          ${ip.style ? `<div style="font-size:0.85rem;color:var(--text-dim)">Стиль: ${escapeHtml(ip.style)}</div>` : ''}
+          ${ip.dimensions ? `<div style="font-size:0.85rem;color:var(--text-dim)">Размеры: ${escapeHtml(ip.dimensions)}</div>` : ''}
+        </div>
+      `).join('');
+      html += `</div>`;
+    }
+    if (pr.screenshots_needed && pr.screenshots_needed.length) {
+      html += `<div class="pr-channel-block"><h4>Необходимые скриншоты</h4>`;
+      html += pr.screenshots_needed.map((ss, i) => `
+        <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">${i + 1}. ${escapeHtml(ss.what || '')}</div>
+          ${ss.why ? `<div style="font-size:0.85rem;color:var(--text-dim)">Зачем: ${escapeHtml(ss.why)}</div>` : ''}
+          ${ss.annotations ? `<div style="font-size:0.85rem;color:var(--text-dim)">Подписи: ${escapeHtml(ss.annotations)}</div>` : ''}
+        </div>
+      `).join('');
+      html += `</div>`;
+    }
+    content.innerHTML = html || '<p style="color:var(--text-dim)">Нет данных об изображениях</p>';
+  } else {
+    content.innerHTML = '<p style="color:var(--text-dim)">Нет данных для этого канала</p>';
+  }
+};
+
+window.handleCopyPressReleaseChannel = async function () {
+  if (!currentPressRelease || !currentPressReleaseTab) return;
+  const pr = currentPressRelease;
+  const tab = currentPressReleaseTab;
+  let text = '';
+
+  if (tab === 'social' && pr.channels.social) {
+    const s = pr.channels.social;
+    text = `ВКонтакте:\n${s.platform_vk || ''}\n\nTelegram:\n${s.platform_telegram || ''}`;
+    if (s.hashtags) text += `\n\nХештеги: ${s.hashtags.join(' ')}`;
+  } else if (tab === 'website' && pr.channels.website) {
+    const w = pr.channels.website;
+    text = `${w.title || ''}\n${w.subtitle || ''}\n\n${w.body || ''}`;
+    if (w.seo_keywords) text += `\n\nSEO: ${w.seo_keywords.join(', ')}`;
+    if (w.meta_description) text += `\nMeta: ${w.meta_description}`;
+  } else if (tab === 'bitrix24' && pr.channels.bitrix24) {
+    const b = pr.channels.bitrix24;
+    text = `${b.title || ''}\n\n${b.body || ''}`;
+  } else if (tab === 'media' && pr.channels.media) {
+    const m = pr.channels.media;
+    text = `${m.title || ''}\n\n${m.lead || ''}\n\n${m.body || ''}`;
+    if (m.quotes) text += `\n\nЦитаты:\n${m.quotes.join('\n')}`;
+    if (m.boilerplate) text += `\n\nО компании:\n${m.boilerplate}`;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Канал скопирован');
+  } catch {
+    toast('Не удалось скопировать', 'error');
+  }
+};
+
+window.handleDownloadPressRelease = function () {
+  if (!currentPressRelease) return;
+  const pr = currentPressRelease;
+  const release = currentPressReleaseRelease;
+  let md = `# Пресс-релиз ${release ? `${release.version} — ${release.name}` : ''}\n\n`;
+
+  if (pr.channels.social) {
+    const s = pr.channels.social;
+    md += `## Соцсети\n\n### ВКонтакте\n\n${s.platform_vk || ''}\n\n### Telegram\n\n${s.platform_telegram || ''}\n\n`;
+    if (s.hashtags) md += `**Хештеги:** ${s.hashtags.join(' ')}\n\n`;
+  }
+  if (pr.channels.website) {
+    const w = pr.channels.website;
+    md += `## Сайт\n\n### ${w.title || ''}\n\n`;
+    if (w.subtitle) md += `*${w.subtitle}*\n\n`;
+    md += `${w.body || ''}\n\n`;
+    if (w.seo_keywords) md += `**SEO:** ${w.seo_keywords.join(', ')}\n\n`;
+    if (w.meta_description) md += `**Meta:** ${w.meta_description}\n\n`;
+  }
+  if (pr.channels.bitrix24) {
+    const b = pr.channels.bitrix24;
+    md += `## Битрикс24\n\n### ${b.title || ''}\n\n${b.body || ''}\n\n`;
+    if (b.mentions) md += `**Упоминания:** ${b.mentions.join(', ')}\n\n`;
+  }
+  if (pr.channels.media) {
+    const m = pr.channels.media;
+    md += `## СМИ\n\n### ${m.title || ''}\n\n**Лид:** ${m.lead || ''}\n\n${m.body || ''}\n\n`;
+    if (m.quotes) md += `**Цитаты:**\n${m.quotes.map(q => `> ${q}`).join('\n')}\n\n`;
+    if (m.boilerplate) md += `**О компании:** ${m.boilerplate}\n\n`;
+  }
+  if (pr.image_prompts) {
+    md += `## Промпты для изображений\n\n`;
+    pr.image_prompts.forEach((ip, i) => {
+      md += `${i + 1}. ${ip.description || ''} (${ip.purpose || ''}, ${ip.style || ''}, ${ip.dimensions || ''})\n`;
+    });
+    md += `\n`;
+  }
+  if (pr.screenshots_needed) {
+    md += `## Необходимые скриншоты\n\n`;
+    pr.screenshots_needed.forEach((ss, i) => {
+      md += `${i + 1}. ${ss.what || ''} — ${ss.why || ''}\n`;
+    });
+    md += `\n`;
+  }
+
+  const filename = release
+    ? `PRESS_RELEASE_v${release.version.replace(/\./g, '_')}.md`
+    : 'PRESS_RELEASE.md';
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Файл скачан');
 };
 
 // Expose closeModal globally for inline onclick handlers

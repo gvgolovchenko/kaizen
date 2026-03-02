@@ -848,6 +848,7 @@ tr:hover td { background: var(--bg-hover); }
 .dev-status-failed { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); }
 
 .badge-process-develop_release { background: rgba(96,165,250,0.15); color: var(--blue); }
+.badge-process-prepare_press_release { background: rgba(251,146,60,0.15); color: #fb923c; }
 
 /* ── Collapsible sections ──────────────────────────────── */
 
@@ -871,3 +872,57 @@ tr:hover td { background: var(--bg-hover); }
   padding-top: 6px;
 }
 .collapsible.open .collapsible-body { display: block; }
+
+/* ── Press Release tabs ──────────────────────────────── */
+
+.pr-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 16px;
+}
+.pr-tab {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.pr-tab:hover { color: var(--text); }
+.pr-tab.active {
+  color: #fb923c;
+  border-bottom-color: #fb923c;
+}
+
+.pr-tab-content {
+  max-height: 55vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.pr-channel-block {
+  margin-bottom: 16px;
+}
+.pr-channel-block h4 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.pr-text {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.6;
+  color: var(--text);
+}

@@ -175,6 +175,14 @@ export async function saveSpec(id, spec) {
   return rows[0] || null;
 }
 
+export async function savePressRelease(id, data) {
+  const { rows } = await pool.query(
+    `UPDATE ${TABLE} SET press_release = $1 WHERE id = $2 RETURNING *`,
+    [JSON.stringify(data), id]
+  );
+  return rows[0] || null;
+}
+
 export async function getPublishedByProduct(productId, limit = 3) {
   const { rows } = await pool.query(
     `SELECT r.*,

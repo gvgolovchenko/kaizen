@@ -73,6 +73,10 @@ export async function runProcess(processId, options = {}) {
       await runDevelopRelease(processId, proc, product, model, startTime, timeoutMs);
       return;
     }
+    if (proc.type === 'prepare_press_release') {
+      await runPreparePressRelease(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
 
     const taskCount = Math.min(Math.max(parseInt(proc.input_count) || 5, 1), 10);
 
@@ -758,5 +762,207 @@ ${issuesList}`;
     dev_branch: resultObj.branch,
     dev_commit: resultObj.commit_hash,
     dev_status: resultObj.tests_passed ? 'done' : 'failed',
+  });
+}
+
+/**
+ * Run a prepare_press_release process — generate PR materials for multiple channels.
+ */
+async function runPreparePressRelease(processId, proc, product, model, startTime, timeoutMs) {
+  // 1. Load release with issues
+  const release = await releases.getById(proc.release_id);
+  if (!release) throw new Error('Release not found');
+  if (release.status !== 'released') throw new Error('Release must be published first');
+  if (!release.issues || release.issues.length === 0) throw new Error('Release has no issues');
+
+  // 2. Parse parameters from input_prompt
+  let params = {};
+  try { params = JSON.parse(proc.input_prompt || '{}'); } catch {}
+  const channels = params.channels || ['social', 'website', 'bitrix24', 'media'];
+  const tone = params.tone || 'official';
+  const audiences = params.audiences || ['employees'];
+  const generateImages = params.generate_images !== false;
+  const keyPoints = params.key_points || '';
+
+  // 3. Determine mode
+  const isClaudeCode = model.provider === 'claude-code';
+  const hasProjectPath = !!product.project_path;
+  const useInteractiveTools = isClaudeCode && hasProjectPath;
+  const useCollectedContext = !isClaudeCode && hasProjectPath;
+  const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+
+  // 4. Collect project context for standalone mode
+  let fileContext = '';
+  let contextStats = null;
+  if (useCollectedContext) {
+    try {
+      const contextLength = model.context_length || 8192;
+      const maxTokens = Math.max(Math.floor(contextLength * 0.3), 1000);
+      const result = await collectProjectContext(product.project_path, {
+        maxTokens,
+        techStack: product.tech_stack,
+      });
+      fileContext = result.context;
+      contextStats = result.stats;
+    } catch (err) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'context_warning',
+        message: `Не удалось собрать контекст: ${err.message}`,
+      });
+    }
+  }
+
+  // 5. Build tone/audience labels
+  const toneLabels = { official: 'Официальная', friendly: 'Дружелюбная', technical: 'Техническая', marketing: 'Маркетинговая' };
+  const audienceLabels = { employees: 'Сотрудники', clients: 'Клиенты', tech_community: 'Техническое сообщество', general: 'Широкая аудитория' };
+  const toneText = toneLabels[tone] || tone;
+  const audienceText = audiences.map(a => audienceLabels[a] || a).join(', ');
+
+  // 6. Build system prompt
+  let systemPrompt = `Ты — PR-менеджер и маркетолог технологической компании. Твоя задача — подготовить PR-материалы для опубликованного релиза программного продукта.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
+${product.owner ? `Ответственный: ${product.owner}` : ''}
+
+Тональность: ${toneText}
+Целевая аудитория: ${audienceText}`;
+
+  if (useInteractiveTools) {
+    systemPrompt += `\n\nПроект находится в текущей директории. Изучи CLAUDE.md и docs/ для понимания продукта. Используй Read, Glob, Grep для анализа.`;
+  }
+
+  if (fileContext) {
+    systemPrompt += `\n\nКонтекст проекта:\n\n${fileContext}`;
+  }
+
+  const channelInstructions = [];
+  if (channels.includes('social')) channelInstructions.push('"social" — посты для ВКонтакте и Telegram с хештегами');
+  if (channels.includes('website')) channelInstructions.push('"website" — статья для сайта компании с SEO');
+  if (channels.includes('bitrix24')) channelInstructions.push('"bitrix24" — внутренний пост в ленту Битрикс24 для сотрудников');
+  if (channels.includes('media')) channelInstructions.push('"media" — пресс-релиз для СМИ с цитатами и бойлерплейтом');
+
+  systemPrompt += `\n\nВАЖНО: Верни ответ ТОЛЬКО как JSON указанного формата. Никакого текста вне JSON. Не используй <think> блоки.`;
+
+  // 7. Build user prompt
+  const issuesList = release.issues.map((iss, i) =>
+    `${i + 1}. **${iss.title}** (${iss.type}, ${iss.priority})${iss.description ? `\n   ${iss.description}` : ''}`
+  ).join('\n');
+
+  let userPrompt = `Подготовь PR-материалы для опубликованного релиза.
+
+## Релиз: ${release.version} — ${release.name}
+${release.description ? `\nОписание: ${release.description}` : ''}
+
+## Задачи релиза
+
+${issuesList}
+
+${release.spec ? `## Спецификация\n\n${typeof release.spec === 'string' ? release.spec.slice(0, 3000) : ''}\n` : ''}
+${keyPoints ? `## Ключевые акценты\n\n${keyPoints}\n` : ''}
+
+## Требуемые каналы
+
+${channelInstructions.join('\n')}
+
+## JSON-формат ответа
+
+{
+  "channels": {
+    ${channels.includes('social') ? `"social": { "platform_vk": "Текст поста для ВК", "platform_telegram": "Текст поста для Telegram", "hashtags": ["#тег1", "#тег2"] },` : ''}
+    ${channels.includes('website') ? `"website": { "title": "Заголовок", "subtitle": "Подзаголовок", "body": "Текст статьи (Markdown)", "seo_keywords": ["ключ1"], "meta_description": "Мета-описание" },` : ''}
+    ${channels.includes('bitrix24') ? `"bitrix24": { "title": "Заголовок", "body": "Текст поста", "mentions": ["@отдел или @имя"] },` : ''}
+    ${channels.includes('media') ? `"media": { "title": "Заголовок", "lead": "Лид", "body": "Текст", "quotes": ["Цитата 1"], "boilerplate": "О компании" }` : ''}
+  }${generateImages ? `,
+  "image_prompts": [{ "description": "Описание изображения", "purpose": "Для чего", "style": "Стиль", "dimensions": "Размеры" }],
+  "screenshots_needed": [{ "what": "Что снять", "why": "Зачем", "annotations": "Подписи" }]` : ''}
+}`;
+
+  // 8. Log: request_sent
+  const logData = {
+    model_name: model.name,
+    provider: model.provider,
+    mode,
+    release_version: release.version,
+    issues_count: release.issues.length,
+    channels,
+    tone,
+    audiences,
+    system_prompt_length: systemPrompt.length,
+    user_prompt_length: userPrompt.length,
+    cwd: useInteractiveTools ? product.project_path : null,
+  };
+  if (contextStats) logData.context_stats = contextStats;
+
+  let logMsg = `Запрос пресс-релиза отправлен модели ${model.name} (${mode}), каналы: ${channels.join(', ')}`;
+  if (contextStats) logMsg += ` (контекст: ${contextStats.filesRead} файлов, ${contextStats.totalChars} символов${contextStats.truncated ? ', усечён' : ''})`;
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: logMsg,
+    data: logData,
+  });
+
+  // 9. Call AI (with watchdog safety net)
+  const aiOptions = {};
+  if (useInteractiveTools) aiOptions.cwd = product.project_path;
+  if (timeoutMs) aiOptions.timeoutMs = timeoutMs;
+  const watchdogMs = timeoutMs + 60_000;
+  const rawResponse = await withWatchdog(
+    callAI(model, systemPrompt, userPrompt, aiOptions),
+    watchdogMs,
+    `prepare_press_release/${model.name}`,
+  );
+
+  // 10. Log: response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов)`,
+    data: { response_length: rawResponse.length },
+  });
+
+  // 11. Parse JSON
+  const parsed = parseJsonFromAI(rawResponse);
+  const data = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!data || !data.channels) {
+    await processLogs.create({
+      process_id: processId,
+      step: 'error',
+      message: 'Не удалось распарсить JSON пресс-релиза из ответа модели',
+      data: { raw_response: rawResponse.slice(0, 2000) },
+    });
+    throw new Error('Failed to parse press release JSON from AI response');
+  }
+
+  // 12. Normalize: keep only requested channels
+  const normalizedChannels = {};
+  for (const ch of channels) {
+    if (data.channels[ch]) normalizedChannels[ch] = data.channels[ch];
+  }
+  const normalizedData = { channels: normalizedChannels };
+  if (generateImages && data.image_prompts) normalizedData.image_prompts = data.image_prompts;
+  if (generateImages && data.screenshots_needed) normalizedData.screenshots_needed = data.screenshots_needed;
+
+  // 13. Save press release
+  await releases.savePressRelease(release.id, normalizedData);
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'press_release_saved',
+    message: `Пресс-релиз сохранён (${Object.keys(normalizedChannels).length} каналов)`,
+    data: { channels: Object.keys(normalizedChannels) },
+  });
+
+  // 14. Update process → completed
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result: { mode, channels: Object.keys(normalizedChannels), has_images: !!normalizedData.image_prompts },
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
   });
 }

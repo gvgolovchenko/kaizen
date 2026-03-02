@@ -216,6 +216,64 @@ router.get('/releases/:id/spec', async (req, res) => {
   }
 });
 
+// ── Press Release ─────────────────────────────────────────
+
+router.post('/releases/:id/prepare-press-release', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+    if (release.status !== 'released') return res.status(400).json({ error: 'Release must be published first' });
+    if (!release.issues || release.issues.length === 0) return res.status(400).json({ error: 'Release has no issues' });
+
+    const { model_id, channels, tone, audiences, generate_images, key_points, timeout_min } = req.body;
+    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
+    if (!channels || !Array.isArray(channels) || channels.length === 0) return res.status(400).json({ error: 'At least one channel is required' });
+
+    const model = await aiModels.getById(model_id);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+
+    const proc = await processes.create({
+      product_id: release.product_id,
+      model_id,
+      type: 'prepare_press_release',
+      input_prompt: JSON.stringify({ channels, tone, audiences, generate_images, key_points }),
+      release_id: release.id,
+    });
+
+    const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
+    runProcess(proc.id, { timeoutMs });
+
+    res.status(201).json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/releases/:id/press-release', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+
+    const allProcesses = await processes.getAll({ product_id: release.product_id });
+    const prProcess = allProcesses.find(p => p.type === 'prepare_press_release' && p.release_id === release.id);
+
+    res.json({
+      release_id: release.id,
+      press_release: release.press_release || null,
+      process: prProcess ? {
+        id: prProcess.id,
+        status: prProcess.status,
+        model_name: prProcess.model_name,
+        duration_ms: prProcess.duration_ms,
+        created_at: prProcess.created_at,
+        result: prProcess.result,
+      } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── AI Models ────────────────────────────────────────────
 
 router.get('/ai-models/discover', async (req, res) => {

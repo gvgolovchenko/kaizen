@@ -2,7 +2,7 @@
 
 > Отслеживание продуктов, сбор задач на улучшение, формирование и публикация релизов.
 
-**Версия:** 1.3.1
+**Версия:** 1.4.0
 **Дата:** 2026-03-02
 
 ---
@@ -15,7 +15,7 @@
 | Задачи (Issues) | Реализован | CRUD задач, типизация (bug/improvement/feature), приоритеты, фильтрация по статусу |
 | Релизы | Реализован | Формирование релизов из задач, публикация, уведомления о статусах, спецификации |
 | Модели ИИ | Реализован | Реестр моделей (ollama/mlx/claude-code/anthropic/openai/google), auto-discover, warmup |
-| AI-процессы | Реализован | Улучшение продукта, генерация спецификаций, разработка релизов, дорожная карта |
+| AI-процессы | Реализован | Улучшение продукта, генерация спецификаций, разработка релизов, дорожная карта, пресс-релизы |
 | Уведомления | Реализован | Toast-уведомления о автоматических изменениях статусов при операциях с релизами |
 
 ## Технологический стек
@@ -69,6 +69,7 @@ node database/exec-sql.js --file database/migrations/006_release_spec.sql
 node database/exec-sql.js --file database/migrations/007_develop_release.sql
 node database/exec-sql.js --file database/migrations/008_approved_indices.sql
 node database/exec-sql.js --file database/migrations/009_product_rivc_connect.sql
+node database/exec-sql.js --file database/migrations/010_press_release.sql
 
 # Запуск (development)
 npm run dev
@@ -82,11 +83,11 @@ open http://localhost:3034
 | Этап | Статус |
 |------|--------|
 | Инициация и планирование | Готово |
-| Миграция БД (001–009) | Готово |
-| Backend API (30+ эндпоинтов) | Готово |
+| Миграция БД (001–010) | Готово |
+| Backend API (35+ эндпоинтов) | Готово |
 | Frontend (5 страниц) | Готово |
 | Модели ИИ + discover | Готово |
-| AI-процессы (improve, spec, develop, roadmap) | Готово |
+| AI-процессы (improve, spec, develop, roadmap, press_release) | Готово |
 | Уведомления о статусах | Готово |
 | Перезапуск процессов | Готово |
 | Документация | Готово |
