@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.1.0 (миграции 001–003)
+> Версия схемы: 1.2.0 (миграции 001–003, 009)
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -31,6 +31,8 @@
 | tech_stack | VARCHAR(255) | YES | NULL | Стек технологий |
 | owner | VARCHAR(255) | YES | NULL | Ответственный |
 | project_path | VARCHAR(500) | YES | NULL | Путь к проекту на сервере |
+| rc_system_id | INTEGER | YES | NULL | ID системы в Rivc.Connect |
+| rc_module_id | INTEGER | YES | NULL | ID модуля в Rivc.Connect |
 | status | VARCHAR(20) | YES | 'active' | active / archived |
 | created_at | TIMESTAMPTZ | YES | now() | Дата создания |
 | updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
@@ -142,3 +144,4 @@ kaizen_ai_models (независимая таблица)
 | 001 | 001_initial_schema.sql | Создание схемы opii, 4 таблицы, индексы, триггеры |
 | 002 | 002_ai_models.sql | Таблица kaizen_ai_models (модели ИИ) |
 | 003 | 003_ai_models_api_key.sql | Колонка api_key в ai_models |
+| 009 | 009_product_rivc_connect.sql | Колонки rc_system_id, rc_module_id в products |

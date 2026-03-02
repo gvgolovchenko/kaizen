@@ -2,7 +2,7 @@
 
 > Отслеживание продуктов, сбор задач на улучшение, формирование и публикация релизов.
 
-**Версия:** 1.3.0
+**Версия:** 1.3.1
 **Дата:** 2026-03-02
 
 ---
@@ -11,7 +11,7 @@
 
 | Модуль | Статус | Описание |
 |--------|--------|----------|
-| Продукты | Реализован | CRUD продуктов, архивирование, путь к проекту |
+| Продукты | Реализован | CRUD продуктов, архивирование, путь к проекту, привязка к Rivc.Connect |
 | Задачи (Issues) | Реализован | CRUD задач, типизация (bug/improvement/feature), приоритеты, фильтрация по статусу |
 | Релизы | Реализован | Формирование релизов из задач, публикация, уведомления о статусах, спецификации |
 | Модели ИИ | Реализован | Реестр моделей (ollama/mlx/claude-code/anthropic/openai/google), auto-discover, warmup |
@@ -68,6 +68,7 @@ node database/exec-sql.js --file database/migrations/005_processes_approved_coun
 node database/exec-sql.js --file database/migrations/006_release_spec.sql
 node database/exec-sql.js --file database/migrations/007_develop_release.sql
 node database/exec-sql.js --file database/migrations/008_approved_indices.sql
+node database/exec-sql.js --file database/migrations/009_product_rivc_connect.sql
 
 # Запуск (development)
 npm run dev
@@ -81,7 +82,7 @@ open http://localhost:3034
 | Этап | Статус |
 |------|--------|
 | Инициация и планирование | Готово |
-| Миграция БД (001–008) | Готово |
+| Миграция БД (001–009) | Готово |
 | Backend API (30+ эндпоинтов) | Готово |
 | Frontend (5 страниц) | Готово |
 | Модели ИИ + discover | Готово |
