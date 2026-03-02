@@ -100,6 +100,12 @@ function renderProductHeader() {
   if (product.owner) meta.push(`<span>${escapeHtml(product.owner)}</span>`);
   if (product.repo_url) meta.push(`<span><a href="${escapeHtml(product.repo_url)}" target="_blank">Репозиторий</a></span>`);
   if (product.project_path) meta.push(`<span style="font-family:monospace;font-size:0.8rem">${escapeHtml(product.project_path)}</span>`);
+  if (product.rc_system_id || product.rc_module_id) {
+    const parts = [];
+    if (product.rc_system_id) parts.push(`система ${product.rc_system_id}`);
+    if (product.rc_module_id) parts.push(`модуль ${product.rc_module_id}`);
+    meta.push(`<span>RC: ${parts.join(' / ')}</span>`);
+  }
   meta.push(`<span class="badge badge-${product.status}">${product.status}</span>`);
   document.getElementById('prodMeta').innerHTML = meta.join('');
 }
@@ -390,6 +396,8 @@ window.showEditProductModal = function () {
   document.getElementById('epStack').value = product.tech_stack || '';
   document.getElementById('epOwner').value = product.owner || '';
   document.getElementById('epPath').value = product.project_path || '';
+  document.getElementById('epRcSystemId').value = product.rc_system_id || '';
+  document.getElementById('epRcModuleId').value = product.rc_module_id || '';
   openModal('editProductModal');
 };
 
@@ -405,6 +413,8 @@ window.handleEditProduct = async function (e) {
         tech_stack: document.getElementById('epStack').value,
         owner: document.getElementById('epOwner').value,
         project_path: document.getElementById('epPath').value,
+        rc_system_id: parseInt(document.getElementById('epRcSystemId').value) || null,
+        rc_module_id: parseInt(document.getElementById('epRcModuleId').value) || null,
       },
     });
     toast('Продукт обновлён');

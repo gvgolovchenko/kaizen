@@ -17,11 +17,11 @@ export async function getById(id) {
   return rows[0] || null;
 }
 
-export async function create({ name, description, repo_url, tech_stack, owner, project_path }) {
+export async function create({ name, description, repo_url, tech_stack, owner, project_path, rc_system_id, rc_module_id }) {
   const { rows } = await pool.query(
-    `INSERT INTO ${TABLE} (name, description, repo_url, tech_stack, owner, project_path)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [name, description || null, repo_url || null, tech_stack || null, owner || null, project_path || null]
+    `INSERT INTO ${TABLE} (name, description, repo_url, tech_stack, owner, project_path, rc_system_id, rc_module_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [name, description || null, repo_url || null, tech_stack || null, owner || null, project_path || null, rc_system_id || null, rc_module_id || null]
   );
   return rows[0];
 }
@@ -31,7 +31,7 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path'].includes(key)) {
+    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id'].includes(key)) {
       sets.push(`${key} = $${i++}`);
       vals.push(value);
     }

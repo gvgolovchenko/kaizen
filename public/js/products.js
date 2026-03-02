@@ -62,6 +62,8 @@ window.showEditModal = function (id) {
   document.getElementById('productStack').value = p.tech_stack || '';
   document.getElementById('productOwner').value = p.owner || '';
   document.getElementById('productPath').value = p.project_path || '';
+  document.getElementById('productRcSystemId').value = p.rc_system_id || '';
+  document.getElementById('productRcModuleId').value = p.rc_module_id || '';
   openModal('productModal');
 };
 
@@ -79,6 +81,8 @@ window.handleProductSubmit = async function (e) {
     tech_stack: document.getElementById('productStack').value,
     owner: document.getElementById('productOwner').value,
     project_path: document.getElementById('productPath').value,
+    rc_system_id: parseInt(document.getElementById('productRcSystemId').value) || null,
+    rc_module_id: parseInt(document.getElementById('productRcModuleId').value) || null,
   };
 
   try {
