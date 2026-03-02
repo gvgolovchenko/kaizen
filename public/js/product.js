@@ -132,6 +132,71 @@ function renderIssues() {
   updateTabCounts();
 }
 
+// ── Dev status helpers ──────────────────────────────────
+
+function detectTestCommandFE(techStack) {
+  const s = (techStack || '').toLowerCase();
+  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue'))
+    return 'npm test';
+  if (s.includes('python') || s.includes('fastapi') || s.includes('django'))
+    return 'pytest';
+  if (s.includes('go'))      return 'go test ./...';
+  if (s.includes('dotnet') || s.includes('c#')) return 'dotnet test';
+  if (s.includes('rust'))    return 'cargo test';
+  if (s.includes('java'))    return 'mvn test';
+  return 'npm test';
+}
+
+function findActiveDevProcess(releaseId) {
+  return processesList.find(p =>
+    p.type === 'develop_release' && p.release_id === releaseId &&
+    (p.status === 'pending' || p.status === 'running')
+  );
+}
+
+function renderDevStatus(r) {
+  const activeProc = findActiveDevProcess(r.id);
+
+  if (activeProc || r.dev_status === 'in_progress') {
+    return `<div class="dev-status dev-status-running">
+      &#9203; Разработка в процессе...
+    </div>`;
+  }
+
+  if (r.dev_status === 'done') {
+    const short = r.dev_commit ? r.dev_commit.slice(0, 7) : '';
+    return `<div class="dev-status dev-status-done">
+      &#10004; <strong>${escapeHtml(r.dev_branch || '')}</strong>
+      ${short ? ` &middot; <code>${short}</code>` : ''}
+      &middot; тесты &#10004;
+    </div>`;
+  }
+
+  if (r.dev_status === 'failed') {
+    return `<div class="dev-status dev-status-failed">
+      &#10060; Ошибка разработки
+      ${r.status !== 'released'
+        ? ` <button class="btn btn-ghost btn-sm" onclick="showDevelopModal('${r.id}')">Повторить</button>`
+        : ''}
+    </div>`;
+  }
+
+  return '';
+}
+
+function getDevButton(r) {
+  if (r.dev_status === 'in_progress' || findActiveDevProcess(r.id)) return '';
+  if (r.dev_status === 'done') return '';
+  if (r.dev_status === 'failed') return '';
+  if (r.status === 'released') return '';
+
+  const hasSpec = !!r.spec;
+  if (hasSpec) {
+    return `<button class="btn btn-primary btn-sm" onclick="showDevelopModal('${r.id}')">Разработать</button>`;
+  }
+  return `<button class="btn btn-ghost btn-sm" disabled title="Сначала подготовьте спецификацию">Разработать</button>`;
+}
+
 // ── Render releases ────────────────────────────────────
 
 function renderReleases() {
@@ -147,6 +212,8 @@ function renderReleases() {
 
   el.innerHTML = releases.map(r => {
     const specBtn = getSpecButton(r);
+    const devBtn = getDevButton(r);
+    const devStatus = renderDevStatus(r);
     return `
     <div class="release-card">
       <div class="release-card-header">
@@ -164,10 +231,12 @@ function renderReleases() {
         Задач: ${r.issue_count || 0}
         ${r.released_at ? ` &middot; Выпущен: ${formatDate(r.released_at)}` : ''}
       </div>
-      <div style="display:flex;gap:6px;margin-top:8px">
+      <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
         <button class="btn btn-ghost btn-sm" onclick="toggleReleaseDetails('${r.id}', this)">Показать задачи</button>
         ${specBtn}
+        ${devBtn}
       </div>
+      ${devStatus}
       <div class="release-issues" id="release-${r.id}" style="display:none"></div>
     </div>`;
   }).join('');
@@ -246,6 +315,11 @@ function liveDuration(p) {
 }
 
 function suggestionsInfo(p) {
+  if (p.type === 'develop_release' && p.result) {
+    const r = p.result;
+    if (r.branch) return `${r.tests_passed ? '&#10004;' : '&#10060;'} ${escapeHtml(r.branch)}`;
+    return '—';
+  }
   if (p.type === 'roadmap_from_doc' && p.result && p.result.roadmap) {
     const r = p.result;
     const info = `${r.total_releases || 0} р. / ${r.total_issues || 0} з.`;
@@ -641,8 +715,29 @@ window.showProcessDetail = async function (id) {
         </div>`;
     }
 
+    // Develop release result
+    if (proc.type === 'develop_release' && proc.status === 'completed' && proc.result) {
+      const r = proc.result;
+      html += `
+        <div>
+          <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Результат разработки</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:0.875rem">
+            <div>Ветка: <strong>${escapeHtml(r.branch || '—')}</strong></div>
+            <div>Коммит: <code>${escapeHtml(r.commit_hash ? r.commit_hash.slice(0, 7) : '—')}</code></div>
+            <div>Изменено файлов: <strong>${r.files_changed ?? '—'}</strong></div>
+            <div>Тестов написано: <strong>${r.tests_written ?? '—'}</strong></div>
+            <div>Тесты: <strong style="color:${r.tests_passed ? 'var(--green)' : 'var(--red)'}">
+              ${r.tests_passed ? 'пройдены' : 'не пройдены'}</strong></div>
+            ${r.summary ? `<div style="margin-top:8px;color:var(--text-dim)">${escapeHtml(r.summary)}</div>` : ''}
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
+          </div>
+        </div>`;
+    }
+
     // Suggestions (if completed)
-    if (proc.type !== 'prepare_spec' && proc.status === 'completed' && proc.result && proc.result.length > 0) {
+    else if (proc.type !== 'prepare_spec' && proc.status === 'completed' && proc.result && proc.result.length > 0) {
       html += `
         <div>
           <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Предложения (${proc.result.length})</div>
@@ -916,6 +1011,64 @@ window.handleRoadmapGenerate = async function () {
     });
     toast('Анализ запущен. Следите за статусом в таблице процессов.');
     closeModal('roadmapModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Develop release ──────────────────────────────────────
+
+window.showDevelopModal = async function (releaseId) {
+  window._developReleaseId = releaseId;
+
+  const release = releases.find(r => r.id === releaseId) || await api(`/releases/${releaseId}`);
+  const version = release.version;
+
+  document.getElementById('developModalTitle').textContent =
+    `Разработать: ${release.version} — ${release.name}`;
+  document.getElementById('developProjectPath').textContent =
+    product?.project_path || '—';
+  document.getElementById('developBranch').value =
+    `kaizen/release-${version}`;
+  document.getElementById('developTestCmd').value =
+    detectTestCommandFE(product?.tech_stack || '');
+  document.getElementById('developTimeout').value = '60';
+
+  // Load only claude-code models
+  try {
+    const models = await api('/ai-models');
+    const ccModels = models.filter(m => m.provider === 'claude-code');
+    const sel = document.getElementById('developModel');
+    sel.innerHTML = ccModels.length === 0
+      ? '<option value="">Нет Claude Code моделей</option>'
+      : ccModels.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  openModal('developModal');
+};
+
+window.handleDevelopStart = async function () {
+  const releaseId  = window._developReleaseId;
+  const modelId    = document.getElementById('developModel').value;
+  const gitBranch  = document.getElementById('developBranch').value.trim();
+  const testCmd    = document.getElementById('developTestCmd').value.trim();
+  const timeoutMin = parseInt(document.getElementById('developTimeout').value) || 60;
+
+  if (!modelId)   return toast('Выберите модель', 'error');
+  if (!gitBranch) return toast('Укажите имя ветки', 'error');
+
+  try {
+    await api(`/releases/${releaseId}/develop`, {
+      method: 'POST',
+      body: { model_id: modelId, git_branch: gitBranch,
+              test_command: testCmd, timeout_min: timeoutMin },
+    });
+    toast('Разработка запущена');
+    closeModal('developModal');
+    loadReleases();
     loadProcesses();
   } catch (err) {
     toast(err.message, 'error');

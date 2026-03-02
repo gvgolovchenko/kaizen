@@ -6,7 +6,7 @@ import * as aiModels from '../db/ai-models.js';
 import * as processes from '../db/processes.js';
 import * as processLogs from '../db/process-logs.js';
 import { callAI } from '../ai-caller.js';
-import { parseJsonFromAI, maskApiKey } from '../utils.js';
+import { parseJsonFromAI, maskApiKey, detectTestCommand } from '../utils.js';
 import { runProcess } from '../process-runner.js';
 
 const router = Router();
@@ -129,6 +129,58 @@ router.post('/releases/:id/prepare-spec', async (req, res) => {
 
     // Fire-and-forget
     const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
+    runProcess(proc.id, { timeoutMs });
+
+    res.status(201).json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Release Development ───────────────────────────────────
+
+router.post('/releases/:id/develop', async (req, res) => {
+  try {
+    const { model_id, git_branch, test_command, timeout_min } = req.body;
+
+    // Load release
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+
+    // Preconditions
+    if (release.status === 'released')
+      return res.status(400).json({ error: 'Release already published' });
+    if (!release.spec)
+      return res.status(400).json({ error: 'Release spec is required. Run prepare-spec first.' });
+    if (!release.issues || release.issues.length === 0)
+      return res.status(400).json({ error: 'Release has no issues' });
+
+    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
+
+    const model = await aiModels.getById(model_id);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+    if (model.provider !== 'claude-code')
+      return res.status(400).json({ error: 'Only claude-code models are supported for development' });
+
+    const product = await products.getById(release.product_id);
+    if (!product?.project_path)
+      return res.status(400).json({ error: 'product.project_path is required for development' });
+
+    // Determine parameters
+    const branchName = git_branch  || `kaizen/release-${release.version}`;
+    const testCmd    = test_command || detectTestCommand(product.tech_stack);
+    const timeoutMs  = Math.min(Math.max(parseInt(timeout_min) || 60, 10), 480) * 60 * 1000;
+
+    // Create process
+    const proc = await processes.create({
+      product_id:  release.product_id,
+      model_id,
+      type:        'develop_release',
+      input_prompt: JSON.stringify({ git_branch: branchName, test_command: testCmd }),
+      release_id:  release.id,
+    });
+
+    // Fire-and-forget
     runProcess(proc.id, { timeoutMs });
 
     res.status(201).json(proc);

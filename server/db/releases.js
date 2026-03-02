@@ -182,6 +182,22 @@ export async function getPublishedByProduct(productId, limit = 3) {
   return rows;
 }
 
+export async function updateDevInfo(id, { dev_branch, dev_commit, dev_status }) {
+  const sets = [];
+  const vals = [];
+  let i = 1;
+  if (dev_branch  !== undefined) { sets.push(`dev_branch  = $${i++}`); vals.push(dev_branch); }
+  if (dev_commit  !== undefined) { sets.push(`dev_commit  = $${i++}`); vals.push(dev_commit); }
+  if (dev_status  !== undefined) { sets.push(`dev_status  = $${i++}`); vals.push(dev_status); }
+  if (sets.length === 0) return null;
+  vals.push(id);
+  const { rows } = await pool.query(
+    `UPDATE ${TABLE} SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+    vals
+  );
+  return rows[0] || null;
+}
+
 export async function publish(id) {
   const client = await pool.connect();
   try {

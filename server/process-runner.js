@@ -4,7 +4,7 @@ import * as products from './db/products.js';
 import * as releases from './db/releases.js';
 import * as aiModels from './db/ai-models.js';
 import { callAI } from './ai-caller.js';
-import { parseJsonFromAI } from './utils.js';
+import { parseJsonFromAI, detectTestCommand } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 
 /**
@@ -67,6 +67,10 @@ export async function runProcess(processId, options = {}) {
     }
     if (proc.type === 'roadmap_from_doc') {
       await runRoadmapFromDoc(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'develop_release') {
+      await runDevelopRelease(processId, proc, product, model, startTime, timeoutMs);
       return;
     }
 
@@ -227,6 +231,11 @@ ${fileContext ? `\nНиже приведён контекст проекта (ф
       completed_at: new Date().toISOString(),
       duration_ms: durationMs,
     }).catch(() => {});
+
+    // Reset dev_status on failure for develop_release processes
+    if (proc?.type === 'develop_release' && proc?.release_id) {
+      await releases.updateDevInfo(proc.release_id, { dev_status: 'failed' }).catch(() => {});
+    }
 
     console.error(`Process ${processId} failed:`, err.message);
   }
@@ -581,5 +590,165 @@ ${docText}
     result,
     completed_at: new Date().toISOString(),
     duration_ms: durationMs,
+  });
+}
+
+/**
+ * Run a develop_release process — Claude Code implements all release tasks.
+ */
+async function runDevelopRelease(processId, proc, product, model, startTime, timeoutMs) {
+  // 1. Load release with issues
+  const release = await releases.getById(proc.release_id);
+  if (!release) throw new Error('Release not found');
+  if (!release.spec) throw new Error('Release spec is required for development');
+  if (!product.project_path) throw new Error('product.project_path is required');
+
+  // 2. Parse config from input_prompt
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+  const branchName  = config.git_branch  || `kaizen/release-${release.version}`;
+  const testCommand = config.test_command || detectTestCommand(product.tech_stack);
+
+  // 3. Mark release as in_progress
+  await releases.updateDevInfo(release.id, { dev_status: 'in_progress' });
+
+  // 4. System prompt
+  const systemPrompt = `Ты — опытный разработчик. Твоя задача — полностью реализовать релиз программного продукта.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack  ? `Стек: ${product.tech_stack}`       : ''}
+Путь к проекту: ${product.project_path}
+
+СТРОГИЙ ПОРЯДОК ДЕЙСТВИЙ:
+
+Шаг 1 — ПОДГОТОВКА РЕПОЗИТОРИЯ
+  Выполни: git pull
+  Создай ветку: git checkout -b ${branchName}
+  (если ветка существует: git checkout ${branchName})
+
+Шаг 2 — ИЗУЧЕНИЕ КОДОВОЙ БАЗЫ
+  Изучи структуру проекта, ключевые файлы, архитектурные паттерны.
+  Пойми стиль кода прежде чем писать.
+
+Шаг 3 — РЕАЛИЗАЦИЯ ВСЕХ ЗАДАЧ
+  Реализуй каждую задачу из спецификации полностью.
+  Пиши код в стиле существующего проекта.
+  Не пропускай задачи — реализуй все.
+
+Шаг 4 — НАПИСАНИЕ ТЕСТОВ
+  Напиши тесты для каждого реализованного компонента / функции / эндпоинта.
+  Покрой основные сценарии использования и граничные случаи.
+
+Шаг 5 — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
+  Запусти: ${testCommand}
+  Если тесты упали:
+    - Проанализируй ошибки
+    - Исправь код (не тест, если только тест не содержит явную ошибку)
+    - Запусти снова
+  После 3 неудачных итераций: зафиксируй причину в summary и переходи к шагу 6.
+
+Шаг 6 — КОММИТ И ПУШ
+  git add -A
+  git commit -m "feat: ${release.version} — ${release.name}"
+  git push origin ${branchName}
+  (если отклонён: git push --set-upstream origin ${branchName})
+  Получи хэш коммита: git rev-parse HEAD
+
+Шаг 7 — ИТОГОВЫЙ JSON
+  Последней строкой ответа выведи ТОЛЬКО этот JSON (без пояснений):
+  {"branch":"${branchName}","commit_hash":"<хэш>","files_changed":<N>,"tests_written":<N>,"tests_passed":<true|false>,"summary":"<краткое описание>"}
+
+ПРАВИЛА:
+- Не выходи за пределы ${product.project_path}
+- Не создавай Pull Request
+- При непреодолимой ошибке: опиши в summary, верни JSON с tests_passed: false`;
+
+  // 5. User prompt
+  const issuesList = release.issues.map((iss, i) =>
+    `### ${i + 1}. ${iss.title} (${iss.type}, ${iss.priority})\n${iss.description || '—'}`
+  ).join('\n\n');
+
+  const userPrompt = `Реализуй релиз:
+
+ВЕТКА: ${branchName}
+ТЕСТ-КОМАНДА: ${testCommand}
+
+=== СПЕЦИФИКАЦИЯ ===
+${release.spec}
+
+=== ЗАДАЧИ РЕЛИЗА (${release.issues.length} шт.) ===
+${issuesList}`;
+
+  // 6. Log: request_sent
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: `Запрос отправлен Claude Code. Ветка: ${branchName}, задач: ${release.issues.length}`,
+    data: { branch: branchName, test_command: testCommand, issues_count: release.issues.length,
+            cwd: product.project_path },
+  });
+
+  // 7. Call Claude Code with full tools
+  const watchdogMs = timeoutMs + 60_000;
+  const rawResponse = await withWatchdog(
+    callAI(model, systemPrompt, userPrompt, {
+      cwd: product.project_path,
+      timeoutMs,
+      allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
+      maxBufferMb: 50,
+    }),
+    watchdogMs,
+    `develop_release/${model.name}`,
+  );
+
+  // 8. Log: response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов)`,
+    data: { response_length: rawResponse.length },
+  });
+
+  // 9. Parse JSON from last line of response
+  const parsedArr = parseJsonFromAI(rawResponse);
+  const parsed = parsedArr ? parsedArr[0] : null;
+  const resultObj = parsed ? {
+    branch:        parsed.branch        || branchName,
+    commit_hash:   parsed.commit_hash   || null,
+    files_changed: parsed.files_changed || null,
+    tests_written: parsed.tests_written || null,
+    tests_passed:  parsed.tests_passed  !== false,
+    summary:       parsed.summary       || '',
+  } : {
+    branch:       branchName,
+    commit_hash:  null,
+    tests_passed: false,
+    summary:      'Не удалось распарсить итоговый JSON',
+    raw_tail:     rawResponse.slice(-2000),
+  };
+
+  // 10. Log: parse_result
+  await processLogs.create({
+    process_id: processId,
+    step: 'parse_result',
+    message: `Ветка: ${resultObj.branch} · коммит: ${resultObj.commit_hash || '—'} · тесты: ${resultObj.tests_passed ? 'пройдены' : 'не пройдены'}`,
+    data: resultObj,
+  });
+
+  // 11. Update process → completed
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result: resultObj,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+
+  // 12. Update release
+  await releases.updateDevInfo(release.id, {
+    dev_branch: resultObj.branch,
+    dev_commit: resultObj.commit_hash,
+    dev_status: resultObj.tests_passed ? 'done' : 'failed',
   });
 }

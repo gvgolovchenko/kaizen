@@ -51,6 +51,28 @@ export function parseJsonFromAI(raw) {
 }
 
 /**
+ * Detect test command based on product tech stack.
+ * @param {string} techStack
+ * @returns {string}
+ */
+export function detectTestCommand(techStack) {
+  const s = (techStack || '').toLowerCase();
+  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue'))
+    return 'npm test';
+  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
+    return 'pytest';
+  if (s.includes('go'))
+    return 'go test ./...';
+  if (s.includes('dotnet') || s.includes('c#') || s.includes('asp'))
+    return 'dotnet test';
+  if (s.includes('rust'))
+    return 'cargo test';
+  if (s.includes('java') || s.includes('spring'))
+    return 'mvn test';
+  return 'npm test';
+}
+
+/**
  * Mask api_key in model object for API responses.
  * @param {object} model
  * @returns {object}

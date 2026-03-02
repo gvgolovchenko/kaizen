@@ -108,12 +108,14 @@ async function callMLX(modelId, systemPrompt, userPrompt, timeoutMs) {
 
 async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
   return new Promise((resolve, reject) => {
+    const tools = (opts.allowedTools || ['Read', 'Glob', 'Grep']).join(',');
+
     const args = [
       '-p',
       '--output-format', 'text',
       '--model', modelId,
       '--dangerously-skip-permissions',
-      '--tools', 'Read,Glob,Grep',
+      '--tools', tools,
       '--system-prompt', systemPrompt,
       '--',
       userPrompt,
@@ -125,7 +127,8 @@ async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
     }
 
     const timeout = opts.timeoutMs || 20 * 60 * 1000;
-    const execOpts = { timeout, env, maxBuffer: 10 * 1024 * 1024 };
+    const maxBuffer = (opts.maxBufferMb || 10) * 1024 * 1024;
+    const execOpts = { timeout, env, maxBuffer };
     if (opts.cwd) execOpts.cwd = opts.cwd;
 
     const child = execFile('claude', args, execOpts, (err, stdout, stderr) => {

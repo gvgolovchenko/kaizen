@@ -333,6 +333,48 @@
     </div>
   </div>
 
+  <!-- Develop Release Modal -->
+  <div class="modal-overlay" id="developModal">
+    <div class="modal" style="max-width:560px">
+      <h2 id="developModalTitle">Разработать релиз</h2>
+
+      <div class="form-group" style="padding:10px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;margin-bottom:16px">
+        <div style="font-size:0.85rem;color:var(--text-dim)">
+          Claude Code будет изменять файлы в
+          <code id="developProjectPath" style="color:var(--text)"></code>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Модель (только Claude Code) *</label>
+        <select id="developModel" required></select>
+      </div>
+
+      <div class="form-group">
+        <label>Ветка Git</label>
+        <input type="text" id="developBranch" placeholder="kaizen/release-1.0.0">
+      </div>
+
+      <div class="form-group">
+        <label>Команда для тестов</label>
+        <input type="text" id="developTestCmd" placeholder="npm test">
+        <div style="font-size:0.8rem;color:var(--text-dim);margin-top:4px">
+          Claude напишет тесты и проверит их этой командой
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Таймаут (мин, 10-480)</label>
+        <input type="number" id="developTimeout" value="60" min="10" max="480">
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('developModal')">Отмена</button>
+        <button type="button" class="btn btn-primary" onclick="handleDevelopStart()">Запустить разработку</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="/js/product.js"></script>
 </body>
 </html>
