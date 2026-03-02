@@ -41,13 +41,14 @@ const IMPROVE_TEMPLATES = {
 export async function runProcess(processId, options = {}) {
   const timeoutMs = options.timeoutMs || 20 * 60 * 1000;
   const startTime = Date.now();
+  let proc = null;
 
   try {
     // 1. Update status → running
     await processes.update(processId, { status: 'running', started_at: new Date().toISOString() });
 
     // 2. Load process + product + model
-    const proc = await processes.getById(processId);
+    proc = await processes.getById(processId);
     if (!proc) throw new Error('Process not found');
 
     const product = await products.getById(proc.product_id);
