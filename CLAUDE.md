@@ -165,7 +165,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google
 - **claude-code провайдер**: два режима вызова CLI `claude`:
   - `callClaudeCode` (execFile, `--output-format text`) — для improve, prepare_spec и др. Буферизирует весь stdout.
-  - `callClaudeCodeStreaming` (spawn, `--output-format stream-json`) — для develop_release. Парсит NDJSON-события на лету, детектирует контрольные точки (7 фаз: repo → study → implement → docs → tests → test_run → commit), пишет промежуточные логи с `step: 'checkpoint'`.
+  - `callClaudeCodeStreaming` (spawn, `--output-format stream-json`) — для develop_release. Парсит NDJSON-события на лету, детектирует контрольные точки (7 фаз: repo → study → implement → tests → test_run → docs → commit), пишет промежуточные логи с `step: 'checkpoint'`.
   - Общее: удаляет `CLAUDE*` env vars, `child.stdin.end()`, `--` разделитель, `cwd = product.project_path`. API key не требуется. Таймаут 3-60 мин (по умолчанию 20 мин).
 
 ## Важные правила

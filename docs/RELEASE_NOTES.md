@@ -18,9 +18,9 @@
   - `repo` — git checkout/pull
   - `study` — Read/Glob/Grep (изучение кода)
   - `implement` — первое появление Write/Edit
-  - `docs` — Write/Edit в `docs/`
   - `tests` — Write/Edit в `*.test.*` / `*.spec.*`
   - `test_run` — Bash с тест-командой (npm test, vitest, jest)
+  - `docs` — Write/Edit в `docs/`
   - `commit` — Bash с git commit/push
 - Фазы продвигаются только вперёд (не откатываются)
 - При каждой смене фазы создаётся лог в `kaizen_process_logs` с `step: 'checkpoint'`
