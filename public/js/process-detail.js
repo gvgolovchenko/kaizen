@@ -247,9 +247,9 @@ const CHECKPOINT_ALL_PHASES = [
   { key: 'repo',      label: 'Подготовка репозитория' },
   { key: 'study',     label: 'Изучение кодовой базы' },
   { key: 'implement', label: 'Реализация задач' },
-  { key: 'docs',      label: 'Обновление документации' },
   { key: 'tests',     label: 'Написание тестов' },
   { key: 'test_run',  label: 'Запуск тестов' },
+  { key: 'docs',      label: 'Обновление документации' },
   { key: 'commit',    label: 'Коммит и push' },
 ];
 

@@ -610,7 +610,7 @@ const CHECKPOINT_MESSAGES = {
   commit:    'Коммит и push',
 };
 
-const CHECKPOINT_PHASES = ['repo', 'study', 'implement', 'docs', 'tests', 'test_run', 'commit'];
+const CHECKPOINT_PHASES = ['repo', 'study', 'implement', 'tests', 'test_run', 'docs', 'commit'];
 
 function createCheckpointTracker(processId) {
   let currentPhase = null;
