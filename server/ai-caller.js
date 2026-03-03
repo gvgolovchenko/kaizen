@@ -160,6 +160,7 @@ export async function callClaudeCodeStreaming(modelId, systemPrompt, userPrompt,
     const tools = (opts.allowedTools || ['Read', 'Glob', 'Grep']).join(',');
     const args = [
       '-p',
+      '--verbose',
       '--output-format', 'stream-json',
       '--model', modelId,
       '--dangerously-skip-permissions',
