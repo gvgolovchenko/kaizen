@@ -190,7 +190,9 @@ export async function callClaudeCodeStreaming(modelId, systemPrompt, userPrompt,
       try {
         const event = JSON.parse(line);
         events.push(event);
-        if (opts.onEvent) opts.onEvent(event);
+        if (opts.onEvent) {
+          Promise.resolve(opts.onEvent(event)).catch(() => {});
+        }
 
         // Collect final text from result event
         if (event.type === 'result') {

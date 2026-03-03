@@ -618,55 +618,56 @@ function createCheckpointTracker(processId) {
   let writeCount = 0;
 
   return async function onEvent(event) {
-    // Handle content_block_start with tool_use (Claude stream-json format)
-    let tool = null;
-    let input = {};
+    try {
+      // Handle content_block_start with tool_use (Claude stream-json format)
+      let tool = null;
+      let input = {};
 
-    if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-      tool = event.content_block.name;
-      input = event.content_block.input || {};
-    } else if (event.type === 'assistant' && event.message?.content) {
-      // Alternative format: assistant message with tool_use blocks
-      const toolBlock = event.message.content.find(b => b.type === 'tool_use');
-      if (toolBlock) {
-        tool = toolBlock.name;
-        input = toolBlock.input || {};
+      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+        tool = event.content_block.name;
+        input = event.content_block.input || {};
+      } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+        const toolBlock = event.message.content.find(b => b.type === 'tool_use');
+        if (toolBlock) {
+          tool = toolBlock.name;
+          input = toolBlock.input || {};
+        }
       }
-    }
 
-    if (!tool) return;
-    toolCount++;
+      if (!tool) return;
+      toolCount++;
 
-    let detectedPhase = null;
+      let detectedPhase = null;
 
-    if (tool === 'Bash') {
-      const cmd = input.command || '';
-      if (/git\s+(checkout|pull|fetch|branch)/.test(cmd)) detectedPhase = 'repo';
-      else if (/git\s+(commit|push)/.test(cmd)) detectedPhase = 'commit';
-      else if (/(npm\s+test|vitest|jest|playwright|node\s+--test)/.test(cmd)) detectedPhase = 'test_run';
-    } else if (tool === 'Write' || tool === 'Edit') {
-      writeCount++;
-      const path = input.file_path || '';
-      if (/\.(test|spec)\./.test(path)) detectedPhase = 'tests';
-      else if (/docs\//.test(path)) detectedPhase = 'docs';
-      else if (!currentPhase || currentPhase === 'study') detectedPhase = 'implement';
-    } else if (['Read', 'Glob', 'Grep'].includes(tool) && !currentPhase) {
-      detectedPhase = 'study';
-    }
-
-    if (detectedPhase && detectedPhase !== currentPhase) {
-      const detectedIdx = CHECKPOINT_PHASES.indexOf(detectedPhase);
-      const currentIdx = currentPhase ? CHECKPOINT_PHASES.indexOf(currentPhase) : -1;
-      if (detectedIdx > currentIdx) {
-        currentPhase = detectedPhase;
-        await processLogs.create({
-          process_id: processId,
-          step: 'checkpoint',
-          message: CHECKPOINT_MESSAGES[detectedPhase],
-          data: { phase: detectedPhase, tool_count: toolCount, write_count: writeCount },
-        }).catch(() => {});
+      if (tool === 'Bash') {
+        const cmd = input.command || '';
+        if (/git\s+(checkout|pull|fetch|branch)/.test(cmd)) detectedPhase = 'repo';
+        else if (/git\s+(commit|push)/.test(cmd)) detectedPhase = 'commit';
+        else if (/(npm\s+test|vitest|jest|playwright|node\s+--test)/.test(cmd)) detectedPhase = 'test_run';
+      } else if (tool === 'Write' || tool === 'Edit') {
+        writeCount++;
+        const path = input.file_path || '';
+        if (/\.(test|spec)\./.test(path)) detectedPhase = 'tests';
+        else if (/docs\//.test(path)) detectedPhase = 'docs';
+        else if (!currentPhase || currentPhase === 'study') detectedPhase = 'implement';
+      } else if (['Read', 'Glob', 'Grep'].includes(tool) && !currentPhase) {
+        detectedPhase = 'study';
       }
-    }
+
+      if (detectedPhase && detectedPhase !== currentPhase) {
+        const detectedIdx = CHECKPOINT_PHASES.indexOf(detectedPhase);
+        const currentIdx = currentPhase ? CHECKPOINT_PHASES.indexOf(currentPhase) : -1;
+        if (detectedIdx > currentIdx) {
+          currentPhase = detectedPhase;
+          await processLogs.create({
+            process_id: processId,
+            step: 'checkpoint',
+            message: CHECKPOINT_MESSAGES[detectedPhase],
+            data: { phase: detectedPhase, tool_count: toolCount, write_count: writeCount },
+          }).catch(() => {});
+        }
+      }
+    } catch { /* checkpoint tracking must never crash the process */ }
   };
 }
 
