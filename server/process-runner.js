@@ -649,8 +649,8 @@ function createCheckpointTracker(processId) {
         const path = input.file_path || '';
         if (/\.(test|spec)\./.test(path)) detectedPhase = 'tests';
         else if (/docs\//.test(path)) detectedPhase = 'docs';
-        else if (!currentPhase || currentPhase === 'study') detectedPhase = 'implement';
-      } else if (['Read', 'Glob', 'Grep'].includes(tool) && !currentPhase) {
+        else if (!currentPhase || currentPhase === 'repo' || currentPhase === 'study') detectedPhase = 'implement';
+      } else if (['Read', 'Glob', 'Grep'].includes(tool) && (!currentPhase || currentPhase === 'repo')) {
         detectedPhase = 'study';
       }
 
