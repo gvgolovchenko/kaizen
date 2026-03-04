@@ -791,6 +791,7 @@ tr:hover td { background: var(--bg-hover); }
 /* ── Process badges ──────────────────────────────────── */
 
 .badge-process-pending { background: rgba(136,144,164,0.15); color: var(--text-dim); }
+.badge-process-queued { background: rgba(251,146,60,0.15); color: #fb923c; }
 .badge-process-running { background: rgba(251,191,36,0.15); color: var(--yellow); }
 .badge-process-completed { background: rgba(52,211,153,0.15); color: var(--green); }
 .badge-process-failed { background: rgba(248,113,113,0.15); color: var(--red); }
@@ -1018,3 +1019,163 @@ tr:hover td { background: var(--bg-hover); }
   0%, 100% { box-shadow: 0 0 0 0 rgba(129,140,248,0.4); }
   50% { box-shadow: 0 0 0 6px rgba(129,140,248,0); }
 }
+
+/* ── Queue stats widget ─────────────────────────────────── */
+
+.queue-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  align-items: center;
+}
+
+.queue-stats-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queue-stats-item .provider-name {
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.queue-stats-item .active-count {
+  color: var(--green);
+}
+
+.queue-stats-item .queued-count {
+  color: #fb923c;
+}
+
+.queue-position {
+  font-size: 0.75rem;
+  color: #fb923c;
+  margin-left: 4px;
+}
+
+/* ── Plan badges ──────────────────────────────────────────── */
+
+.badge-plan-draft { background: rgba(136,144,164,0.15); color: var(--text-dim); }
+.badge-plan-scheduled { background: rgba(96,165,250,0.15); color: var(--blue); }
+.badge-plan-active { background: rgba(251,191,36,0.15); color: var(--yellow); }
+.badge-plan-paused { background: rgba(136,144,164,0.15); color: var(--text-dim); }
+.badge-plan-completed { background: rgba(52,211,153,0.15); color: var(--green); }
+.badge-plan-failed { background: rgba(248,113,113,0.15); color: var(--red); }
+.badge-plan-cancelled { background: rgba(136,144,164,0.15); color: var(--text-dim); }
+
+/* ── Plan step cards ──────────────────────────────────────── */
+
+.plan-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-step-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.15s;
+}
+
+.plan-step-card:hover { border-color: var(--accent); }
+
+.plan-step-order {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.plan-step-card.step-completed .plan-step-order {
+  border-color: var(--green);
+  background: var(--green);
+  color: #111;
+}
+
+.plan-step-card.step-running .plan-step-order {
+  border-color: var(--yellow);
+  background: var(--yellow);
+  color: #111;
+}
+
+.plan-step-card.step-failed .plan-step-order {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+.plan-step-content { flex: 1; min-width: 0; }
+
+.plan-step-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.plan-step-meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ── Plan progress bar ───────────────────────────────────── */
+
+.plan-progress {
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.plan-progress-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+/* ── Plan edit form ──────────────────────────────────────── */
+
+.step-editor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--bg);
+}
+
+.step-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.step-editor-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.step-editor-fields .form-group { margin-bottom: 0; }

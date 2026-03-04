@@ -12,10 +12,29 @@ async function loadProcesses() {
     const qs = filter ? `?status=${filter}` : '';
     processesList = await api(`/processes${qs}`);
     renderProcesses();
+    loadQueueStats();
     updatePolling();
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+async function loadQueueStats() {
+  try {
+    const stats = await api('/queue/stats');
+    const el = document.getElementById('queueStats');
+    const hasAny = Object.values(stats).some(s => s.active > 0 || s.queued > 0);
+    if (!hasAny) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.innerHTML = Object.entries(stats)
+      .filter(([, s]) => s.active > 0 || s.queued > 0)
+      .map(([provider, s]) => `
+        <div class="queue-stats-item">
+          <span class="provider-name">${provider}</span>
+          <span class="active-count">${s.active}/${s.limit}</span>
+          ${s.queued > 0 ? `<span class="queued-count">(${s.queued} ждут)</span>` : ''}
+        </div>`).join('<span style="color:var(--border)">|</span>');
+  } catch {}
 }
 
 function renderProcesses() {
@@ -31,17 +50,19 @@ function renderProcesses() {
 
   tbody.innerHTML = processesList.map(p => {
     const isRoadmapDone = p.type === 'roadmap_from_doc' && p.status === 'completed';
+    const isQueued = p.status === 'queued';
     return `
     <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
       <td>${escapeHtml(p.product_name)}</td>
       <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
       <td>${escapeHtml(p.model_name)}</td>
-      <td><span class="badge badge-process-${p.status}">${p.status}</span></td>
+      <td><span class="badge badge-process-${p.status}">${p.status}</span>${isQueued ? `<span class="queue-position" data-id="${p.id}"></span>` : ''}</td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
       <td style="white-space:nowrap">${liveDuration(p)}</td>
       <td style="white-space:nowrap">${suggestionsInfo(p)}</td>
       <td style="white-space:nowrap">
         ${isRoadmapDone ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.location.href='/roadmap.html?process_id=${p.id}&product_id=${p.product_id}'">Дорожная карта</button>` : ''}
+        ${isQueued ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelProcess('${p.id}')">Отменить</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Уд.</button>
       </td>
     </tr>`;
@@ -50,6 +71,7 @@ function renderProcesses() {
 
 function liveDuration(p) {
   if (p.duration_ms) return formatDuration(p.duration_ms);
+  if (p.status === 'queued') return '<span style="color:#fb923c">в очереди</span>';
   if ((p.status === 'running' || p.status === 'pending') && p.started_at) {
     const elapsed = Date.now() - new Date(p.started_at).getTime();
     return `<span style="color:var(--yellow)">${formatDuration(elapsed)}…</span>`;
@@ -79,7 +101,7 @@ const POLL_FAST = 4000;   // при активных процессах
 const POLL_SLOW = 10000;  // фоновое обновление
 
 function updatePolling() {
-  const hasActive = processesList.some(p => p.status === 'pending' || p.status === 'running');
+  const hasActive = processesList.some(p => ['pending', 'queued', 'running'].includes(p.status));
   const interval = hasActive ? POLL_FAST : POLL_SLOW;
 
   if (pollingTimer) clearInterval(pollingTimer);
@@ -133,6 +155,18 @@ window.handleProcessRestart = async function (processId) {
     await api(`/processes/${processId}/restart`, { method: 'POST' });
     toast('Процесс перезапущен');
     closeModal('processDetailModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Cancel queued ────────────────────────────────────────
+
+window.cancelProcess = async function (id) {
+  try {
+    await api(`/processes/${id}/cancel`, { method: 'POST' });
+    toast('Процесс отменён');
     loadProcesses();
   } catch (err) {
     toast(err.message, 'error');

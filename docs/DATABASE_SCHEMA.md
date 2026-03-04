@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.4.0 (миграции 001–010)
+> Версия схемы: 1.6.0 (миграции 001–012)
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -11,8 +11,8 @@
 - **Префикс таблиц**: `kaizen_` (изоляция от других таблиц в схеме)
 - **Первичные ключи**: UUID (`gen_random_uuid()`)
 - **Временные метки**: `created_at` (auto), `updated_at` (trigger)
-- **Каскадное удаление**: продукт → задачи + релизы
-- **Таблицы**: 7 (products, issues, releases, release_issues, ai_models, processes, process_logs)
+- **Каскадное удаление**: продукт → задачи + релизы + процессы + планы; процессы → логи; планы → шаги
+- **Таблицы**: 9 (products, issues, releases, release_issues, ai_models, processes, process_logs, plans, plan_steps)
 
 ---
 
@@ -110,7 +110,9 @@ AI-процессы (фоновые задачи генерации).
 | product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
 | model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) |
 | type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / roadmap_from_doc / prepare_press_release |
-| status | VARCHAR(20) | YES | 'pending' | pending / running / completed / failed |
+| status | VARCHAR(20) | YES | 'pending' | pending / queued / running / completed / failed |
+| priority | INTEGER | YES | 0 | Приоритет в очереди (0=normal, 1=high, 2=urgent) |
+| plan_step_id | UUID | YES | NULL | FK → kaizen_plan_steps(id) ON DELETE SET NULL |
 | input_prompt | TEXT | YES | NULL | Входной промпт или JSON-параметры |
 | input_template_id | VARCHAR(50) | YES | NULL | ID шаблона промпта |
 | input_count | INTEGER | YES | 5 | Запрошенное количество результатов |
@@ -138,6 +140,49 @@ AI-процессы (фоновые задачи генерации).
 | data | JSONB | YES | NULL | Дополнительные данные |
 | created_at | TIMESTAMPTZ | YES | now() | Дата создания |
 
+### opii.kaizen_plans
+
+Планы автоматического запуска цепочек AI-процессов.
+
+| Поле | Тип | Null | Default | Описание |
+|------|-----|:----:|---------|----------|
+| id | UUID | NO | gen_random_uuid() | PK |
+| name | VARCHAR(255) | NO | — | Название плана |
+| description | TEXT | YES | NULL | Описание |
+| product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
+| status | VARCHAR(20) | NO | 'draft' | draft / scheduled / active / paused / completed / failed / cancelled |
+| on_failure | VARCHAR(20) | YES | 'stop' | stop / skip |
+| is_template | BOOLEAN | YES | false | Флаг шаблона |
+| scheduled_at | TIMESTAMPTZ | YES | NULL | Запланированное время запуска |
+| started_at | TIMESTAMPTZ | YES | NULL | Начало выполнения |
+| completed_at | TIMESTAMPTZ | YES | NULL | Завершение |
+| created_at | TIMESTAMPTZ | YES | now() | Дата создания |
+| updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
+
+### opii.kaizen_plan_steps
+
+Шаги планов — каждый создаёт AI-процесс при выполнении.
+
+| Поле | Тип | Null | Default | Описание |
+|------|-----|:----:|---------|----------|
+| id | UUID | NO | gen_random_uuid() | PK |
+| plan_id | UUID | NO | — | FK → kaizen_plans(id) ON DELETE CASCADE |
+| step_order | INTEGER | NO | 0 | Порядок выполнения |
+| name | VARCHAR(255) | YES | NULL | Название шага |
+| model_id | UUID | NO | — | FK → kaizen_ai_models(id) |
+| process_type | VARCHAR(50) | NO | 'improve' | Тип процесса |
+| input_prompt | TEXT | YES | NULL | Промпт |
+| input_template_id | VARCHAR(50) | YES | NULL | ID шаблона промпта |
+| input_count | INTEGER | YES | 5 | Количество результатов |
+| release_id | UUID | YES | NULL | FK → kaizen_releases(id) |
+| timeout_min | INTEGER | YES | 20 | Таймаут (мин) |
+| depends_on | UUID[] | YES | NULL | Массив step_id зависимостей |
+| status | VARCHAR(20) | NO | 'pending' | pending / running / completed / failed / skipped |
+| process_id | UUID | YES | NULL | FK → kaizen_processes(id) — созданный процесс |
+| error | TEXT | YES | NULL | Текст ошибки |
+| created_at | TIMESTAMPTZ | YES | now() | Дата создания |
+| updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
+
 ---
 
 ## Индексы
@@ -148,6 +193,10 @@ AI-процессы (фоновые задачи генерации).
 | idx_kaizen_issues_status | kaizen_issues | status |
 | idx_kaizen_releases_product | kaizen_releases | product_id |
 | idx_kaizen_releases_status | kaizen_releases | status |
+| idx_kaizen_processes_queued | kaizen_processes | status, priority DESC, created_at ASC (partial: status='queued') |
+| idx_kaizen_plans_status | kaizen_plans | status |
+| idx_kaizen_plans_scheduled | kaizen_plans | scheduled_at (partial: status='scheduled') |
+| idx_kaizen_plan_steps_plan | kaizen_plan_steps | plan_id, step_order |
 
 ---
 
@@ -159,6 +208,8 @@ AI-процессы (фоновые задачи генерации).
 | trg_kaizen_issues_updated | kaizen_issues | BEFORE UPDATE → updated_at = now() |
 | trg_kaizen_releases_updated | kaizen_releases | BEFORE UPDATE → updated_at = now() |
 | trg_kaizen_processes_updated | kaizen_processes | BEFORE UPDATE → updated_at = now() |
+| trg_kaizen_plans_updated | kaizen_plans | BEFORE UPDATE → updated_at = now() |
+| trg_kaizen_plan_steps_updated | kaizen_plan_steps | BEFORE UPDATE → updated_at = now() |
 
 Функция триггера: `opii.kaizen_update_timestamp()`
 
@@ -171,10 +222,13 @@ kaizen_products
     ├── 1:N → kaizen_issues (product_id, CASCADE)
     ├── 1:N → kaizen_releases (product_id, CASCADE)
     │                └── M:N → kaizen_issues (через kaizen_release_issues)
-    └── 1:N → kaizen_processes (product_id, CASCADE)
-                     └── 1:N → kaizen_process_logs (process_id, CASCADE)
+    ├── 1:N → kaizen_processes (product_id, CASCADE)
+    │                ├── 1:N → kaizen_process_logs (process_id, CASCADE)
+    │                └── N:1 → kaizen_plan_steps (plan_step_id, SET NULL)
+    └── 1:N → kaizen_plans (product_id, CASCADE)
+                     └── 1:N → kaizen_plan_steps (plan_id, CASCADE)
 
-kaizen_ai_models (независимая таблица, ссылается из processes)
+kaizen_ai_models (независимая таблица, ссылается из processes и plan_steps)
 ```
 
 ---
@@ -193,3 +247,5 @@ kaizen_ai_models (независимая таблица, ссылается из
 | 008 | 008_approved_indices.sql | Колонка approved_indices JSONB в processes |
 | 009 | 009_product_rivc_connect.sql | Колонки rc_system_id, rc_module_id в products |
 | 010 | 010_press_release.sql | Колонка press_release JSONB в releases |
+| 011 | 011_queue.sql | Статус queued, priority, plan_step_id в processes; частичный индекс |
+| 012 | 012_plans.sql | Таблицы kaizen_plans и kaizen_plan_steps, FK, индексы, триггеры |

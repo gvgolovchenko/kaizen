@@ -72,7 +72,7 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['status', 'result', 'error', 'started_at', 'completed_at', 'duration_ms', 'approved_count', 'approved_indices'].includes(key)) {
+    if (['status', 'result', 'error', 'started_at', 'completed_at', 'duration_ms', 'approved_count', 'approved_indices', 'priority', 'plan_step_id'].includes(key)) {
       sets.push(`${key} = $${i++}`);
       vals.push(key === 'result' ? JSON.stringify(value) : value);
     }
@@ -89,4 +89,43 @@ export async function update(id, fields) {
 export async function remove(id) {
   const { rowCount } = await pool.query(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
   return rowCount > 0;
+}
+
+/**
+ * Получить следующий queued-процесс для данного провайдера.
+ * Использует FOR UPDATE SKIP LOCKED для безопасного параллельного доступа.
+ */
+export async function getNextQueued(provider) {
+  const { rows } = await pool.query(`
+    SELECT p.id
+    FROM ${TABLE} p
+    JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+    WHERE p.status = 'queued' AND m.provider = $1
+    ORDER BY p.priority DESC, p.created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED`,
+    [provider]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Позиция процесса в очереди (1-based) или null если не в очереди.
+ */
+export async function getQueuePosition(processId) {
+  const proc = await getById(processId);
+  if (!proc || proc.status !== 'queued') return null;
+
+  const { rows } = await pool.query(`
+    SELECT COUNT(*) AS position
+    FROM ${TABLE} p2
+    JOIN opii.kaizen_ai_models m ON m.id = p2.model_id
+    JOIN opii.kaizen_ai_models m2 ON m2.id = $2
+    WHERE p2.status = 'queued'
+      AND m.provider = m2.provider
+      AND (p2.priority > $3 OR (p2.priority = $3 AND p2.created_at <= $4))
+      AND p2.id != $1`,
+    [processId, proc.model_id, proc.priority || 0, proc.created_at]
+  );
+  return parseInt(rows[0].position) + 1;
 }

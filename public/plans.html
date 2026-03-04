@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kaizen — Процессы</title>
+  <title>Kaizen — Планы</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -12,8 +12,8 @@
       <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
       <div class="nav-links">
         <a href="/">Продукты</a>
-        <a href="/processes.html" class="active">Процессы</a>
-        <a href="/plans.html">Планы</a>
+        <a href="/processes.html">Процессы</a>
+        <a href="/plans.html" class="active">Планы</a>
         <a href="/models.html">Модели ИИ</a>
       </div>
     </div>
@@ -21,52 +21,44 @@
 
   <div class="container">
     <header>
-      <h1>Процессы</h1>
+      <h1>Планы</h1>
       <div style="display:flex;gap:8px;align-items:center">
         <select id="filterStatus" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85rem">
           <option value="">Все статусы</option>
-          <option value="pending">Pending</option>
-          <option value="queued">Queued</option>
-          <option value="running">Running</option>
+          <option value="draft">Draft</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
         </select>
       </div>
     </header>
-
-    <div id="queueStats" class="queue-stats" style="display:none"></div>
 
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
             <th>Продукт</th>
-            <th>Тип</th>
-            <th>Модель</th>
+            <th>Название</th>
             <th>Статус</th>
+            <th>Шаги</th>
+            <th>Прогресс</th>
+            <th>Запланирован</th>
             <th>Создан</th>
-            <th>Длительность</th>
-            <th>Предложения</th>
             <th></th>
           </tr>
         </thead>
-        <tbody id="processesBody"></tbody>
+        <tbody id="plansBody"></tbody>
       </table>
     </div>
 
-    <div id="processesEmpty" class="empty" style="display:none">
-      <p>Нет процессов</p>
+    <div id="plansEmpty" class="empty" style="display:none">
+      <p>Нет планов</p>
     </div>
   </div>
 
-  <!-- Process Detail Modal -->
-  <div class="modal-overlay" id="processDetailModal">
-    <div class="modal" style="max-width:680px">
-      <h2 id="processDetailTitle">Процесс</h2>
-      <div id="processDetailContent"></div>
-    </div>
-  </div>
-
-  <script type="module" src="/js/processes.js"></script>
+  <script type="module" src="/js/plans.js"></script>
 </body>
 </html>

@@ -8,6 +8,7 @@ let product = null;
 let issues = [];
 let releases = [];
 let processesList = [];
+let plansList = [];
 let currentFilter = '';
 let processPollingTimer = null;
 
@@ -28,9 +29,13 @@ document.getElementById('productTabs').addEventListener('click', (e) => {
 function updateTabCounts() {
   document.getElementById('tabIssuesCount').textContent = `(${issues.length})`;
   document.getElementById('tabReleasesCount').textContent = `(${releases.length})`;
-  const active = processesList.filter(p => p.status === 'pending' || p.status === 'running').length;
+  const active = processesList.filter(p => ['pending', 'queued', 'running'].includes(p.status)).length;
   const procText = active > 0 ? `(${processesList.length} · ${active} акт.)` : `(${processesList.length})`;
   document.getElementById('tabProcessesCount').textContent = procText;
+  // Обновить счётчик планов если вкладка есть
+  if (typeof plansList !== 'undefined') {
+    document.getElementById('tabPlansCount').textContent = `(${plansList.length})`;
+  }
 }
 
 // ── Load data ──────────────────────────────────────────
@@ -84,7 +89,7 @@ async function loadProcesses() {
 }
 
 async function loadAll() {
-  await Promise.all([loadProduct(), loadIssues(), loadReleases(), loadProcesses()]);
+  await Promise.all([loadProduct(), loadIssues(), loadReleases(), loadProcesses(), loadPlans()]);
 }
 
 // ── Render product header ──────────────────────────────
@@ -309,16 +314,18 @@ function renderProcesses() {
 
   tbody.innerHTML = processesList.map(p => {
     const isRoadmapDone = p.type === 'roadmap_from_doc' && p.status === 'completed';
+    const isQueued = p.status === 'queued';
     return `
     <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
       <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
       <td>${escapeHtml(p.model_name)}</td>
-      <td><span class="badge badge-process-${p.status}">${p.status}</span></td>
+      <td><span class="badge badge-process-${p.status}">${p.status}</span>${isQueued ? `<span class="queue-position" data-id="${p.id}"></span>` : ''}</td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
       <td style="white-space:nowrap">${liveDuration(p)}</td>
       <td style="white-space:nowrap">${suggestionsInfo(p)}</td>
       <td style="white-space:nowrap">
         ${isRoadmapDone ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.location.href='/roadmap.html?process_id=${p.id}&product_id=${productId}'">Дорожная карта</button>` : ''}
+        ${isQueued ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelProcess('${p.id}')">Отменить</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Уд.</button>
       </td>
     </tr>`;
@@ -328,6 +335,7 @@ function renderProcesses() {
 
 function liveDuration(p) {
   if (p.duration_ms) return formatDuration(p.duration_ms);
+  if (p.status === 'queued') return '<span style="color:#fb923c">в очереди</span>';
   if ((p.status === 'running' || p.status === 'pending') && p.started_at) {
     const elapsed = Date.now() - new Date(p.started_at).getTime();
     return `<span style="color:var(--yellow)">${formatDuration(elapsed)}…</span>`;
@@ -363,7 +371,7 @@ const POLL_FAST = 4000;
 const POLL_SLOW = 10000;
 
 function updateProcessPolling() {
-  const hasActive = processesList.some(p => p.status === 'pending' || p.status === 'running');
+  const hasActive = processesList.some(p => ['pending', 'queued', 'running'].includes(p.status));
   const interval = hasActive ? POLL_FAST : POLL_SLOW;
 
   if (processPollingTimer) clearInterval(processPollingTimer);
@@ -609,6 +617,95 @@ window.deleteRelease = async function (id) {
   }
 };
 
+// ── Plans ───────────────────────────────────────────────
+
+async function loadPlans() {
+  try {
+    plansList = await api(`/products/${productId}/plans`);
+    renderPlans();
+    updateTabCounts();
+  } catch (err) {
+    // Тихо — таблица может не существовать до миграции
+    plansList = [];
+  }
+}
+
+function renderPlans() {
+  const tbody = document.getElementById('plansBody');
+  const empty = document.getElementById('plansEmpty');
+  if (!tbody) return;
+
+  if (plansList.length === 0) {
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  tbody.innerHTML = plansList.map(p => {
+    const completed = p.completed_steps || 0;
+    const total = p.step_count || 0;
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return `
+    <tr style="cursor:pointer" onclick="window.location.href='/plan-edit.html?id=${p.id}'">
+      <td>${escapeHtml(p.name)}${p.is_template ? ' <span class="badge badge-improvement">шаблон</span>' : ''}</td>
+      <td><span class="badge badge-plan-${p.status}">${p.status}</span></td>
+      <td>${total}</td>
+      <td>
+        ${total > 0 ? `<div style="display:flex;align-items:center;gap:8px">
+          <div class="plan-progress" style="width:60px">
+            <div class="plan-progress-fill" style="width:${pct}%"></div>
+          </div>
+          <span style="font-size:0.8rem;color:var(--text-dim)">${completed}/${total}</span>
+        </div>` : '—'}
+      </td>
+      <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
+      <td style="white-space:nowrap">
+        ${['draft', 'scheduled'].includes(p.status) ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); startPlanFromProduct('${p.id}')">Запустить</button>` : ''}
+        ${['active', 'scheduled'].includes(p.status) ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelPlanFromProduct('${p.id}')">Отменить</button>` : ''}
+        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deletePlanFromProduct('${p.id}')">Уд.</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+window.createNewPlan = function () {
+  window.location.href = `/plan-edit.html?product_id=${productId}`;
+};
+
+window.startPlanFromProduct = async function (id) {
+  try {
+    await api(`/plans/${id}/start`, { method: 'POST' });
+    toast('План запущен');
+    loadPlans();
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.cancelPlanFromProduct = async function (id) {
+  try {
+    await api(`/plans/${id}/cancel`, { method: 'POST' });
+    toast('План отменён');
+    loadPlans();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.deletePlanFromProduct = async function (id) {
+  const ok = await confirm('Удалить план?');
+  if (!ok) return;
+  try {
+    await api(`/plans/${id}`, { method: 'DELETE' });
+    toast('План удалён');
+    loadPlans();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
 // ── Improve (create process) ────────────────────────────
 
 window.showImproveModal = async function () {
@@ -726,6 +823,18 @@ window.handleProcessRestart = async function (processId) {
     await api(`/processes/${processId}/restart`, { method: 'POST' });
     toast('Процесс перезапущен');
     closeModal('processDetailModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Cancel queued process ────────────────────────────────
+
+window.cancelProcess = async function (id) {
+  try {
+    await api(`/processes/${id}/cancel`, { method: 'POST' });
+    toast('Процесс отменён');
     loadProcesses();
   } catch (err) {
     toast(err.message, 'error');

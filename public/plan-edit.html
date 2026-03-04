@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaizen — Редактор плана</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="nav-bar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
+      <div class="nav-links">
+        <a href="/">Продукты</a>
+        <a href="/processes.html">Процессы</a>
+        <a href="/plans.html" class="active">Планы</a>
+        <a href="/models.html">Модели ИИ</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container">
+    <a href="#" class="back-link" id="backLink">&larr; Назад</a>
+
+    <div class="product-header" id="planHeader">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h1 id="planTitle">Загрузка...</h1>
+        <span id="planStatus"></span>
+      </div>
+      <p class="desc" id="planDesc"></p>
+      <div class="product-meta" id="planMeta"></div>
+      <div style="margin-top:14px;display:flex;gap:8px" id="planActions"></div>
+    </div>
+
+    <!-- Plan form (for draft/scheduled) -->
+    <div id="planForm" style="display:none;margin-top:24px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="form-group">
+          <label>Название *</label>
+          <input type="text" id="planName" required>
+        </div>
+        <div class="form-group">
+          <label>При ошибке</label>
+          <select id="planOnFailure">
+            <option value="stop">Остановить план</option>
+            <option value="skip">Пропустить шаг</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Описание</label>
+        <textarea id="planDescription" rows="2"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="form-group">
+          <label>Запланировать на (необязательно)</label>
+          <input type="datetime-local" id="planScheduledAt">
+        </div>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="planIsTemplate" style="width:auto;margin-right:6px;accent-color:var(--accent)">
+            Шаблон
+          </label>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-primary btn-sm" onclick="savePlan()">Сохранить</button>
+      </div>
+    </div>
+
+    <!-- Steps -->
+    <div style="margin-top:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:1.1rem">Шаги</h2>
+        <button class="btn btn-primary btn-sm" id="addStepBtn" style="display:none" onclick="showAddStep()">+ Шаг</button>
+      </div>
+      <div id="stepsList" class="plan-steps-list"></div>
+      <div id="stepsEmpty" class="empty" style="display:none;padding:24px">
+        <p>Нет шагов. Добавьте первый шаг.</p>
+      </div>
+    </div>
+
+    <!-- Add/edit step form -->
+    <div id="stepFormContainer" style="display:none;margin-top:16px">
+      <div class="step-editor">
+        <div class="step-editor-header">
+          <h3 style="font-size:0.95rem" id="stepFormTitle">Новый шаг</h3>
+          <button class="btn btn-ghost btn-sm" onclick="hideStepForm()">Отмена</button>
+        </div>
+        <div class="step-editor-fields">
+          <div class="form-group">
+            <label>Название</label>
+            <input type="text" id="stepName" placeholder="Описание шага">
+          </div>
+          <div class="form-group">
+            <label>Модель ИИ *</label>
+            <select id="stepModel" required></select>
+          </div>
+          <div class="form-group">
+            <label>Тип процесса</label>
+            <select id="stepProcessType">
+              <option value="improve">Улучшение</option>
+              <option value="prepare_spec">Спецификация</option>
+              <option value="develop_release">Разработка</option>
+              <option value="roadmap_from_doc">Дорожная карта</option>
+              <option value="prepare_press_release">Пресс-релиз</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Таймаут (мин)</label>
+            <input type="number" id="stepTimeout" value="20" min="3" max="480">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Промпт (необязательно)</label>
+            <textarea id="stepPrompt" rows="2" placeholder="Промпт для AI..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Количество задач (1-10)</label>
+            <input type="number" id="stepCount" value="5" min="1" max="10">
+          </div>
+          <div class="form-group">
+            <label>Ждёт шаг</label>
+            <select id="stepDependsOn">
+              <option value="">Нет зависимости</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="hideStepForm()">Отмена</button>
+          <button class="btn btn-primary btn-sm" onclick="saveStep()">Сохранить шаг</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/plan-edit.js"></script>
+</body>
+</html>

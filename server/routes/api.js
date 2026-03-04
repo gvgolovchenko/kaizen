@@ -7,9 +7,15 @@ import * as processes from '../db/processes.js';
 import * as processLogs from '../db/process-logs.js';
 import { callAI } from '../ai-caller.js';
 import { parseJsonFromAI, maskApiKey, detectTestCommand } from '../utils.js';
-import { runProcess } from '../process-runner.js';
+import * as plans from '../db/plans.js';
+import * as planSteps from '../db/plan-steps.js';
 
 const router = Router();
+
+// Получаем queueManager из app.locals
+function getQueueManager(req) {
+  return req.app.locals.queueManager;
+}
 
 // ── Products ──────────────────────────────────────────────
 
@@ -128,11 +134,11 @@ router.post('/releases/:id/prepare-spec', async (req, res) => {
       release_id: release.id,
     });
 
-    // Fire-and-forget
+    // Ставим в очередь (или запускаем сразу если есть слот)
     const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
-    runProcess(proc.id, { timeoutMs });
+    const qResult = await getQueueManager(req).enqueue(proc.id, { timeoutMs });
 
-    res.status(201).json(proc);
+    res.status(201).json({ ...proc, queue: qResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -181,10 +187,10 @@ router.post('/releases/:id/develop', async (req, res) => {
       release_id:  release.id,
     });
 
-    // Fire-and-forget
-    runProcess(proc.id, { timeoutMs });
+    // Ставим в очередь (или запускаем сразу если есть слот)
+    const qResult = await getQueueManager(req).enqueue(proc.id, { timeoutMs });
 
-    res.status(201).json(proc);
+    res.status(201).json({ ...proc, queue: qResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -241,9 +247,9 @@ router.post('/releases/:id/prepare-press-release', async (req, res) => {
     });
 
     const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
-    runProcess(proc.id, { timeoutMs });
+    const qResult = await getQueueManager(req).enqueue(proc.id, { timeoutMs });
 
-    res.status(201).json(proc);
+    res.status(201).json({ ...proc, queue: qResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -495,11 +501,11 @@ router.post('/processes', async (req, res) => {
       input_count: Math.min(Math.max(parseInt(count) || 5, 1), 10),
     });
 
-    // Fire-and-forget — запускаем процесс без await
+    // Ставим в очередь (или запускаем сразу если есть слот)
     const timeoutMs = Math.min(Math.max(parseInt(timeout_min) || 20, 3), 60) * 60 * 1000;
-    runProcess(proc.id, { timeoutMs });
+    const qResult = await getQueueManager(req).enqueue(proc.id, { timeoutMs });
 
-    res.status(201).json(proc);
+    res.status(201).json({ ...proc, queue: qResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -565,8 +571,8 @@ router.post('/processes/:id/restart', async (req, res) => {
   try {
     const proc = await processes.getById(req.params.id);
     if (!proc) return res.status(404).json({ error: 'Process not found' });
-    if (proc.status !== 'completed' && proc.status !== 'failed') {
-      return res.status(400).json({ error: 'Process must be completed or failed to restart' });
+    if (!['completed', 'failed', 'queued'].includes(proc.status)) {
+      return res.status(400).json({ error: 'Process must be completed, failed, or queued to restart' });
     }
 
     const newProc = await processes.create({
@@ -580,9 +586,9 @@ router.post('/processes/:id/restart', async (req, res) => {
     });
 
     const timeoutMs = 20 * 60 * 1000;
-    runProcess(newProc.id, { timeoutMs });
+    const qResult = await getQueueManager(req).enqueue(newProc.id, { timeoutMs });
 
-    res.status(201).json(newProc);
+    res.status(201).json({ ...newProc, queue: qResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -695,6 +701,234 @@ router.get('/products/:id/processes', async (req, res) => {
   try {
     const rows = await processes.getByProduct(req.params.id);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Queue ─────────────────────────────────────────────────
+
+router.get('/queue/stats', async (req, res) => {
+  try {
+    const stats = await getQueueManager(req).getStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/processes/:id/cancel', async (req, res) => {
+  try {
+    const result = await getQueueManager(req).cancel(req.params.id);
+    res.json(result);
+  } catch (err) {
+    const code = err.message.includes('not found') ? 404
+      : err.message.includes('not queued') ? 400 : 500;
+    res.status(code).json({ error: err.message });
+  }
+});
+
+// ── Plans ─────────────────────────────────────────────────
+
+router.get('/plans', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const rows = await plans.getAll({ status });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/products/:id/plans', async (req, res) => {
+  try {
+    const rows = await plans.getByProduct(req.params.id);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/plans', async (req, res) => {
+  try {
+    const { name, description, product_id, on_failure, is_template, scheduled_at, steps } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (!product_id) return res.status(400).json({ error: 'product_id is required' });
+
+    const product = await products.getById(product_id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const plan = await plans.create({ name, description, product_id, on_failure, is_template, scheduled_at });
+
+    // Создать шаги если переданы
+    let createdSteps = [];
+    if (Array.isArray(steps) && steps.length > 0) {
+      createdSteps = await planSteps.bulkCreate(plan.id, steps);
+    }
+
+    // Если есть scheduled_at — перевести в scheduled
+    if (scheduled_at) {
+      await plans.updateStatus(plan.id, 'scheduled');
+      plan.status = 'scheduled';
+    }
+
+    res.status(201).json({ ...plan, steps: createdSteps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/plans/:id', async (req, res) => {
+  try {
+    const plan = await plans.getById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    const steps = await planSteps.getByPlan(plan.id);
+    res.json({ ...plan, steps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/plans/:id', async (req, res) => {
+  try {
+    const plan = await plans.update(req.params.id, req.body);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    res.json(plan);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/plans/:id', async (req, res) => {
+  try {
+    const ok = await plans.remove(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Plan not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/plans/:id/start', async (req, res) => {
+  try {
+    const plan = await plans.getById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    if (!['draft', 'scheduled'].includes(plan.status)) {
+      return res.status(400).json({ error: `Cannot start plan with status '${plan.status}'` });
+    }
+
+    const steps = await planSteps.getByPlan(plan.id);
+    if (steps.length === 0) return res.status(400).json({ error: 'Plan has no steps' });
+
+    await plans.updateStatus(plan.id, 'active', { started_at: new Date().toISOString() });
+
+    // Триггерить scheduler tick для немедленного запуска
+    const scheduler = req.app.locals.queueManager?.onProcessDone
+      ? null : null; // scheduler вызовется через tick
+    // Форсируем tick через import
+    const { Scheduler } = await import('../scheduler.js');
+    // На самом деле scheduler уже тикает каждые 30с, но можем форсировать
+    // через queueManager reference — не нужно, следующий tick подхватит
+
+    res.json({ ...plan, status: 'active', steps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/plans/:id/cancel', async (req, res) => {
+  try {
+    const plan = await plans.getById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    if (['completed', 'cancelled'].includes(plan.status)) {
+      return res.status(400).json({ error: `Plan is already ${plan.status}` });
+    }
+
+    // Отменить все queued процессы этого плана
+    const steps = await planSteps.getByPlan(plan.id);
+    const qm = getQueueManager(req);
+    for (const step of steps) {
+      if (step.status === 'pending') {
+        await planSteps.update(step.id, { status: 'skipped' });
+      }
+      if (step.process_id && step.status === 'running') {
+        try { await qm.cancel(step.process_id); } catch {}
+      }
+    }
+
+    await plans.updateStatus(plan.id, 'cancelled', { completed_at: new Date().toISOString() });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/plans/:id/clone', async (req, res) => {
+  try {
+    const source = await plans.getById(req.params.id);
+    if (!source) return res.status(404).json({ error: 'Plan not found' });
+
+    const { name, product_id } = req.body;
+    const newPlan = await plans.create({
+      name: name || `${source.name} (копия)`,
+      description: source.description,
+      product_id: product_id || source.product_id,
+      on_failure: source.on_failure,
+      is_template: false,
+    });
+
+    const sourceSteps = await planSteps.getByPlan(source.id);
+    const newSteps = await planSteps.bulkCreate(newPlan.id, sourceSteps.map(s => ({
+      step_order: s.step_order,
+      name: s.name,
+      model_id: s.model_id,
+      process_type: s.process_type,
+      input_prompt: s.input_prompt,
+      input_template_id: s.input_template_id,
+      input_count: s.input_count,
+      release_id: s.release_id,
+      timeout_min: s.timeout_min,
+      depends_on: s.depends_on,
+    })));
+
+    res.status(201).json({ ...newPlan, steps: newSteps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Plan Steps ────────────────────────────────────────────
+
+router.post('/plans/:id/steps', async (req, res) => {
+  try {
+    const plan = await plans.getById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    if (!['draft', 'scheduled'].includes(plan.status)) {
+      return res.status(400).json({ error: 'Can only add steps to draft/scheduled plans' });
+    }
+
+    const step = await planSteps.create({ ...req.body, plan_id: plan.id });
+    res.status(201).json(step);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/plans/:id/steps/:stepId', async (req, res) => {
+  try {
+    const step = await planSteps.update(req.params.stepId, req.body);
+    if (!step) return res.status(404).json({ error: 'Step not found' });
+    res.json(step);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/plans/:id/steps/:stepId', async (req, res) => {
+  try {
+    const ok = await planSteps.remove(req.params.stepId);
+    if (!ok) return res.status(404).json({ error: 'Step not found' });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

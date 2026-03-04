@@ -4,14 +4,27 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import apiRouter from './routes/api.js';
 import { pool } from './db/pool.js';
+import { QueueManager } from './queue-manager.js';
+import { Scheduler } from './scheduler.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3034;
 
-app.use(express.json());
+// Создаём QueueManager и Scheduler
+const queueManager = new QueueManager();
+const scheduler = new Scheduler(queueManager);
+
+// Связка: QueueManager уведомляет Scheduler о завершении процессов
+queueManager.onProcessDone = (processId, status) => {
+  scheduler.onProcessComplete(processId, status);
+};
+
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(join(__dirname, '..', 'public')));
 
+// Передаём queueManager в router через app.locals
+app.locals.queueManager = queueManager;
 app.use('/api', apiRouter);
 
 app.listen(PORT, async () => {
@@ -31,5 +44,14 @@ app.listen(PORT, async () => {
     }
   } catch (err) {
     console.error('Startup cleanup failed:', err.message);
+  }
+
+  // Восстановить очередь и запустить планировщик
+  try {
+    await queueManager.restoreFromDb();
+    scheduler.start();
+    console.log('QueueManager + Scheduler запущены');
+  } catch (err) {
+    console.error('QueueManager/Scheduler init failed:', err.message);
   }
 });

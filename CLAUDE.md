@@ -1,14 +1,16 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.5.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием) и формирует из них релизы с автоматическим управлением статусами.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.6.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
 Вариант Е-lite: Express.js + Vanilla JS + PostgreSQL. Без фреймворков на фронтенде, минимум зависимостей.
 
 ```
-[Браузер] → [Vanilla JS (4 страницы)] → [Express.js API (порт 3034)]
+[Браузер] → [Vanilla JS (7 страниц)] → [Express.js API (порт 3034)]
                                                 ├── [PostgreSQL (схема opii)]
+                                                ├── [QueueManager (контроль параллелизма)]
+                                                ├── [Scheduler (планировщик, tick 30с)]
                                                 └── [AI Process Runner (фоновые задачи)]
 ```
 
@@ -21,18 +23,22 @@ kaizen/
 ├── package.json                  # type: module, 3 зависимости
 ├── .env                          # DB credentials, PORT=3034
 ├── server/
-│   ├── index.js                  # Express-сервер (порт 3034), JSON + static
+│   ├── index.js                  # Express-сервер (порт 3034), JSON + static + init QueueManager/Scheduler
 │   ├── ai-caller.js              # Универсальный AI caller (6 провайдеров + streaming)
 │   ├── utils.js                  # parseJsonFromAI(), maskApiKey(), detectTestCommand()
 │   ├── process-runner.js         # Фоновый исполнитель AI-процессов
+│   ├── queue-manager.js          # QueueManager — контроль параллелизма по провайдерам
+│   ├── scheduler.js              # Scheduler — планировщик выполнения планов (tick 30с)
 │   ├── db/
 │   │   ├── pool.js               # pg Pool (Supavisor)
 │   │   ├── products.js           # getAll, getById, create, update, remove
 │   │   ├── issues.js             # getByProduct, getById, create, update, remove
 │   │   ├── releases.js           # getByProduct, getById, create, update, remove, publish, saveSpec, savePressRelease, updateDevInfo
 │   │   ├── ai-models.js          # getAll, getById, create, update, remove, updateStatus
-│   │   ├── processes.js          # getAll, getByProduct, getById, create, update, remove
-│   │   └── process-logs.js       # getByProcess, create
+│   │   ├── processes.js          # getAll, getByProduct, getById, create, update, remove, getNextQueued, getQueuePosition
+│   │   ├── process-logs.js       # getByProcess, create
+│   │   ├── plans.js              # getAll, getByProduct, getById, create, update, updateStatus, remove
+│   │   └── plan-steps.js         # getByPlan, getById, create, bulkCreate, update, remove, getReadySteps
 │   └── routes/
 │       └── api.js                # REST-эндпоинты
 ├── database/
@@ -47,20 +53,26 @@ kaizen/
 │       ├── 007_develop_release.sql
 │       ├── 008_approved_indices.sql
 │       ├── 009_product_rivc_connect.sql
-│       └── 010_press_release.sql
+│       ├── 010_press_release.sql
+│       ├── 011_queue.sql           # Статус queued, priority, plan_step_id
+│       └── 012_plans.sql           # Таблицы планов и шагов
 ├── public/
 │   ├── index.html                # Список продуктов (карточки)
-│   ├── product.html              # Детали: задачи + релизы + процессы
+│   ├── product.html              # Детали: задачи + релизы + процессы + планы
 │   ├── processes.html            # Все процессы (глобальная страница)
+│   ├── plans.html                # Все планы (глобальная страница)
+│   ├── plan-edit.html            # Редактор плана (создание/редактирование шагов)
 │   ├── models.html               # Реестр AI-моделей
 │   ├── roadmap.html              # Дорожная карта из документа
 │   ├── css/style.css             # Dark theme
 │   └── js/
 │       ├── app.js                # api(), toast(), confirm(), escapeHtml(), notifyStatusChanges(), modal helpers
 │       ├── products.js           # Логика index.html
-│       ├── product.js            # Логика product.html + процессы + improve
-│       ├── processes.js          # Логика processes.html
+│       ├── product.js            # Логика product.html + процессы + improve + планы
+│       ├── processes.js          # Логика processes.html + виджет очереди
 │       ├── process-detail.js     # Общая логика отображения деталей процесса
+│       ├── plans.js              # Логика plans.html
+│       ├── plan-edit.js          # Логика plan-edit.html (CRUD шагов)
 │       ├── roadmap.js            # Логика roadmap.html
 │       └── models.js             # Логика models.html
 └── docs/
@@ -97,10 +109,10 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 
 - **Схема**: `opii`
 - **Префикс**: `kaizen_` (изоляция в общей схеме)
-- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs
+- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps
 - **PK**: UUID (gen_random_uuid())
-- **Каскадное удаление**: products → issues + releases + processes; processes → process_logs
-- **Триггеры**: updated_at на products, issues, releases, processes
+- **Каскадное удаление**: products → issues + releases + processes + plans; processes → process_logs; plans → plan_steps
+- **Триггеры**: updated_at на products, issues, releases, processes, plans, plan_steps
 - **Подключение**: `DB_HOST:DB_PORT/DB_NAME` через pg Pool
 
 ## API
@@ -138,13 +150,27 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | GET | /api/improve-templates | 6 шаблонов промптов |
 | GET | /api/processes | Все процессы (?status=, ?product_id=) |
 | GET | /api/processes/:id | Детали процесса |
-| POST | /api/processes | Создать + запустить (fire-and-forget, timeout_min) |
+| POST | /api/processes | Создать + поставить в очередь (timeout_min) |
 | GET | /api/processes/:id/logs | Логи процесса |
 | POST | /api/processes/:id/approve | Утвердить предложения → создать issues (с approved_indices) |
 | POST | /api/processes/:id/approve-roadmap | Утвердить дорожную карту → создать релизы + issues |
 | POST | /api/processes/:id/restart | Перезапустить процесс (создаёт копию) |
+| POST | /api/processes/:id/cancel | Отменить queued-процесс |
 | DELETE | /api/processes/:id | Удалить процесс + логи |
 | GET | /api/products/:id/processes | Процессы конкретного продукта |
+| GET | /api/queue/stats | Статистика очереди по провайдерам |
+| GET | /api/plans | Список планов (?status=) |
+| GET | /api/products/:id/plans | Планы конкретного продукта |
+| POST | /api/plans | Создать план |
+| GET | /api/plans/:id | План с шагами |
+| PUT | /api/plans/:id | Обновить метаданные плана |
+| DELETE | /api/plans/:id | Удалить план |
+| POST | /api/plans/:id/start | Запустить план немедленно |
+| POST | /api/plans/:id/cancel | Отменить план |
+| POST | /api/plans/:id/clone | Клонировать план |
+| POST | /api/plans/:id/steps | Добавить шаг к плану |
+| PUT | /api/plans/:id/steps/:stepId | Обновить шаг |
+| DELETE | /api/plans/:id/steps/:stepId | Удалить шаг |
 
 ## Бизнес-логика
 
@@ -153,7 +179,9 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Удаление issue из релиза**: issue → `open`
 - **Удаление релиза**: все issues → `open`, затем удаление
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
-- **Асинхронные AI-процессы**: POST /processes создаёт запись + запускает фоновый runner (fire-and-forget). Статусы: pending → running → completed/failed. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend: polling 4с (активные) / 10с (покой), живая длительность для running-процессов.
+- **Очередь процессов (QueueManager)**: POST /processes ставит процесс в очередь. Контроль параллелизма по провайдерам: ollama:1, mlx:1, claude-code:2, anthropic:3, openai:3, google:3. Статусы: pending → queued → running → completed/failed. При завершении — автоматический запуск следующего queued-процесса (`FOR UPDATE SKIP LOCKED`). Восстановление состояния при перезапуске сервера. Frontend: badge «queued», позиция в очереди, кнопка отмены.
+- **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Планы с шагами (depends_on для зависимостей). Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), поиск ready шагов, запуск через QueueManager. Обратная связь: при завершении процесса → обновление шага → проверка следующих. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
+- **Асинхронные AI-процессы**: POST /processes создаёт запись + ставит в очередь QueueManager. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend: polling 4с (активные) / 10с (покой), живая длительность для running-процессов.
 - **Уведомления о статусах**: create/publish/remove релизов возвращают `status_changes`, фронтенд показывает toast-info с деталями
 - **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues, сохраняет approved_indices (повторное одобрение — disabled чекбоксы)
 - **Перезапуск процесса**: POST /processes/:id/restart → создаёт копию и запускает заново

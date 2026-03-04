@@ -13,6 +13,7 @@
       <div class="nav-links">
         <a href="/">Продукты</a>
         <a href="/processes.html">Процессы</a>
+        <a href="/plans.html">Планы</a>
         <a href="/models.html">Модели ИИ</a>
       </div>
     </div>
@@ -37,6 +38,7 @@
       <div class="tab active" data-tab="issues">Задачи <span class="tab-count" id="tabIssuesCount"></span></div>
       <div class="tab" data-tab="releases">Релизы <span class="tab-count" id="tabReleasesCount"></span></div>
       <div class="tab" data-tab="processes">Процессы <span class="tab-count" id="tabProcessesCount"></span></div>
+      <div class="tab" data-tab="plans">Планы <span class="tab-count" id="tabPlansCount"></span></div>
     </div>
 
     <!-- Panel: Issues -->
@@ -110,6 +112,34 @@
         </div>
         <div id="processesEmpty" class="empty" style="display:none">
           <p>Нет процессов</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Plans -->
+    <div class="tab-panel" id="panel-plans">
+      <div class="section">
+        <div class="section-header">
+          <div></div>
+          <button class="btn btn-primary btn-sm" onclick="createNewPlan()">+ Создать план</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Статус</th>
+                <th>Шаги</th>
+                <th>Прогресс</th>
+                <th>Создан</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="plansBody"></tbody>
+          </table>
+        </div>
+        <div id="plansEmpty" class="empty" style="display:none">
+          <p>Нет планов</p>
         </div>
       </div>
     </div>
