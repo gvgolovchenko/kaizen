@@ -1,0 +1,578 @@
+#!/usr/bin/env node
+
+/**
+ * Kaizen MCP Server
+ *
+ * MCP-сервер для управления системой непрерывного улучшения продуктов Kaizen.
+ * Оборачивает REST API (localhost:3034) в MCP-инструменты.
+ */
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+import * as api from './api-client.js';
+
+const server = new McpServer({
+  name: 'kaizen',
+  version: '1.0.0',
+  description: 'Kaizen (改善) — система непрерывного улучшения продуктов. Управление продуктами, задачами, релизами, AI-процессами и планами.',
+  instructions: `Kaizen MCP server предоставляет инструменты для полного цикла улучшения продуктов:
+
+1. Просмотр продуктов и их задач
+2. Запуск AI-процессов улучшения (improve, prepare_spec, develop_release, roadmap_from_doc, prepare_press_release)
+3. Утверждение AI-предложений → создание задач
+4. Формирование релизов из задач
+5. Генерация спецификаций и разработка релизов
+6. Управление планами (цепочки AI-процессов)
+
+Типичный конвейер:
+  improve → approve → create_release → prepare_spec → develop → publish
+
+Kaizen API работает на http://localhost:3034. Сервер должен быть запущен.`,
+});
+
+// ══════════════════════════════════════════════════════════════
+// PRODUCTS
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_list_products',
+  'Список всех продуктов с количеством открытых задач',
+  {},
+  async () => {
+    const products = await api.listProducts();
+    return { content: [{ type: 'text', text: JSON.stringify(products, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_get_product',
+  'Детальная информация о продукте: метаданные, открытые задачи, релизы, активные процессы',
+  { product_id: z.string().uuid().describe('UUID продукта') },
+  async ({ product_id }) => {
+    const [product, issues, releases, processes] = await Promise.all([
+      api.getProduct(product_id),
+      api.listIssues(product_id),
+      api.listReleases(product_id),
+      api.listProcesses({ product_id }),
+    ]);
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ product, issues, releases, active_processes: processes.filter(p => ['running', 'queued'].includes(p.status)) }, null, 2),
+      }],
+    };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// ISSUES
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_list_issues',
+  'Список задач продукта. Можно фильтровать по статусу: open, in_release, done, closed',
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    status: z.enum(['open', 'in_release', 'done', 'closed']).optional().describe('Фильтр по статусу'),
+  },
+  async ({ product_id, status }) => {
+    const issues = await api.listIssues(product_id, status);
+    return { content: [{ type: 'text', text: JSON.stringify(issues, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_create_issue',
+  'Создать задачу вручную (баг, улучшение или новая фича)',
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    title: z.string().describe('Заголовок задачи'),
+    description: z.string().optional().describe('Описание задачи'),
+    type: z.enum(['improvement', 'bug', 'feature']).default('improvement').describe('Тип задачи'),
+    priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium').describe('Приоритет'),
+  },
+  async (params) => {
+    const issue = await api.createIssue(params);
+    return { content: [{ type: 'text', text: JSON.stringify(issue, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// AI MODELS
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_list_models',
+  'Список зарегистрированных AI-моделей (ollama, mlx, claude-code, anthropic, openai, google)',
+  {},
+  async () => {
+    const models = await api.listModels();
+    return { content: [{ type: 'text', text: JSON.stringify(models, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// AI PROCESSES — Улучшение продукта
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_improve_product',
+  `Запустить AI-анализ продукта для генерации задач на улучшение.
+Шаблоны: general, ui, performance, security, competitors, dx.
+Или можно указать произвольный prompt.
+Возвращает process_id — используй kaizen_get_process для отслеживания.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    model_id: z.string().uuid().describe('UUID AI-модели'),
+    template_id: z.enum(['general', 'ui', 'performance', 'security', 'competitors', 'dx']).optional()
+      .describe('ID шаблона промпта (или используй prompt)'),
+    prompt: z.string().optional().describe('Произвольный промпт (вместо шаблона)'),
+    count: z.number().min(1).max(10).default(5).describe('Количество предложений (1-10)'),
+    timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут в минутах'),
+  },
+  async ({ product_id, model_id, template_id, prompt, count, timeout_min }) => {
+    const proc = await api.createProcess({
+      product_id, model_id, type: 'improve',
+      template_id, prompt, count, timeout_min,
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(proc, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_roadmap_from_doc',
+  `Парсить документ (BRD, ТЗ, ФТ) в дорожную карту: релизы + задачи.
+Результат — структура для утверждения через kaizen_approve_roadmap.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    model_id: z.string().uuid().describe('UUID AI-модели'),
+    document: z.string().describe('Текст документа для парсинга'),
+    timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут в минутах'),
+  },
+  async ({ product_id, model_id, document, timeout_min }) => {
+    const proc = await api.createProcess({
+      product_id, model_id, type: 'roadmap_from_doc',
+      prompt: document, timeout_min,
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(proc, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// PROCESS MANAGEMENT
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_get_process',
+  'Получить статус и результат AI-процесса. Для running-процессов показывает прогресс.',
+  { process_id: z.string().uuid().describe('UUID процесса') },
+  async ({ process_id }) => {
+    const [proc, logs] = await Promise.all([
+      api.getProcess(process_id),
+      api.getProcessLogs(process_id),
+    ]);
+    return { content: [{ type: 'text', text: JSON.stringify({ ...proc, logs }, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_list_processes',
+  'Список AI-процессов. Фильтрация по статусу и/или продукту.',
+  {
+    status: z.enum(['pending', 'queued', 'running', 'completed', 'failed']).optional(),
+    product_id: z.string().uuid().optional(),
+  },
+  async (params) => {
+    const procs = await api.listProcesses(params);
+    return { content: [{ type: 'text', text: JSON.stringify(procs, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_approve_suggestions',
+  `Утвердить предложения AI-процесса (improve) → создаёт задачи в продукте.
+indices — массив индексов предложений из result[] процесса (начиная с 0).
+Пример: [0, 2, 4] — утвердить 1-е, 3-е и 5-е предложения.`,
+  {
+    process_id: z.string().uuid().describe('UUID завершённого процесса'),
+    indices: z.array(z.number().int().min(0)).describe('Индексы предложений для утверждения'),
+  },
+  async ({ process_id, indices }) => {
+    const result = await api.approveSuggestions(process_id, indices);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_approve_roadmap',
+  `Утвердить дорожную карту из roadmap_from_doc процесса → создаёт релизы + задачи.
+releases — массив объектов: { release_index, issue_indices[], version?, name? }`,
+  {
+    process_id: z.string().uuid().describe('UUID завершённого roadmap_from_doc процесса'),
+    releases: z.array(z.object({
+      release_index: z.number().int().min(0).describe('Индекс релиза в roadmap'),
+      issue_indices: z.array(z.number().int().min(0)).describe('Индексы задач в релизе'),
+      version: z.string().optional(),
+      name: z.string().optional(),
+    })).describe('Массив релизов для утверждения'),
+  },
+  async ({ process_id, releases }) => {
+    const result = await api.approveRoadmap(process_id, releases);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// RELEASES
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_list_releases',
+  'Список релизов продукта',
+  { product_id: z.string().uuid().describe('UUID продукта') },
+  async ({ product_id }) => {
+    const rels = await api.listReleases(product_id);
+    return { content: [{ type: 'text', text: JSON.stringify(rels, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_create_release',
+  'Создать релиз из открытых задач. Задачи автоматически переходят в статус in_release.',
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    version: z.string().describe('Версия релиза (например, "2.1.0")'),
+    name: z.string().describe('Название релиза'),
+    description: z.string().optional().describe('Описание'),
+    issue_ids: z.array(z.string().uuid()).describe('Массив UUID задач для включения в релиз'),
+  },
+  async (params) => {
+    const release = await api.createRelease(params);
+    return { content: [{ type: 'text', text: JSON.stringify(release, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_get_release',
+  'Детали релиза с вложенными задачами, спецификацией и статусом разработки',
+  { release_id: z.string().uuid().describe('UUID релиза') },
+  async ({ release_id }) => {
+    const release = await api.getRelease(release_id);
+    return { content: [{ type: 'text', text: JSON.stringify(release, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_prepare_spec',
+  `Запустить AI-генерацию спецификации для релиза.
+Требуется: релиз в статусе draft с задачами.
+Возвращает process_id для отслеживания.`,
+  {
+    release_id: z.string().uuid().describe('UUID релиза'),
+    model_id: z.string().uuid().describe('UUID AI-модели'),
+    timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут в минутах'),
+  },
+  async ({ release_id, model_id, timeout_min }) => {
+    const result = await api.prepareSpec(release_id, { model_id, timeout_min });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_get_spec',
+  'Получить сгенерированную спецификацию релиза',
+  { release_id: z.string().uuid().describe('UUID релиза') },
+  async ({ release_id }) => {
+    const spec = await api.getSpec(release_id);
+    return { content: [{ type: 'text', text: JSON.stringify(spec, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_develop_release',
+  `Запустить автоматическую разработку релиза через claude-code.
+Требуется: спецификация (prepare_spec), claude-code модель, product.project_path.
+7 фаз: repo → study → implement → tests → test_run → docs → commit.`,
+  {
+    release_id: z.string().uuid().describe('UUID релиза'),
+    model_id: z.string().uuid().describe('UUID claude-code модели'),
+    git_branch: z.string().optional().describe('Название ветки (по умолчанию kaizen/release-{version})'),
+    test_command: z.string().optional().describe('Команда запуска тестов (авто-определение по tech_stack)'),
+    timeout_min: z.number().min(10).max(480).default(60).describe('Таймаут в минутах'),
+  },
+  async ({ release_id, model_id, git_branch, test_command, timeout_min }) => {
+    const result = await api.developRelease(release_id, { model_id, git_branch, test_command, timeout_min });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_publish_release',
+  'Опубликовать релиз. Все задачи → done, фиксируется released_at.',
+  { release_id: z.string().uuid().describe('UUID релиза') },
+  async ({ release_id }) => {
+    const result = await api.publishRelease(release_id);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_prepare_press_release',
+  `Сгенерировать пресс-релиз для опубликованного релиза.
+Каналы: social (ВК, Telegram), website, bitrix24, media.`,
+  {
+    release_id: z.string().uuid().describe('UUID опубликованного релиза'),
+    model_id: z.string().uuid().describe('UUID AI-модели'),
+    channels: z.array(z.enum(['social', 'website', 'bitrix24', 'media'])).describe('Каналы публикации'),
+    tone: z.string().optional().describe('Тональность (например, "профессиональный", "дружелюбный")'),
+    audiences: z.array(z.string()).optional().describe('Целевые аудитории'),
+    timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут в минутах'),
+  },
+  async ({ release_id, model_id, channels, tone, audiences, timeout_min }) => {
+    const result = await api.preparePressRelease(release_id, { model_id, channels, tone, audiences, timeout_min });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// QUEUE
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_queue_stats',
+  'Статистика очереди: активные и ожидающие процессы по провайдерам',
+  {},
+  async () => {
+    const stats = await api.getQueueStats();
+    return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// PLANS
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_list_plans',
+  'Список планов (цепочки AI-процессов). Фильтр по статусу: draft, scheduled, active, completed, failed, cancelled.',
+  {
+    status: z.enum(['draft', 'scheduled', 'active', 'paused', 'completed', 'failed', 'cancelled']).optional(),
+  },
+  async ({ status }) => {
+    const plans = await api.listPlans(status);
+    return { content: [{ type: 'text', text: JSON.stringify(plans, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_get_plan',
+  'Детали плана с шагами, статусами и зависимостями',
+  { plan_id: z.string().uuid().describe('UUID плана') },
+  async ({ plan_id }) => {
+    const plan = await api.getPlan(plan_id);
+    return { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_create_plan',
+  `Создать план (цепочку AI-процессов) с шагами.
+Каждый шаг: модель, тип процесса, промпт, зависимости (depends_on).
+Шаги выполняются автоматически планировщиком.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    name: z.string().describe('Название плана'),
+    description: z.string().optional(),
+    on_failure: z.enum(['stop', 'skip']).default('stop').describe('Поведение при ошибке шага'),
+    scheduled_at: z.string().optional().describe('ISO datetime для отложенного запуска'),
+    steps: z.array(z.object({
+      name: z.string().describe('Название шага'),
+      model_id: z.string().uuid().describe('UUID AI-модели'),
+      process_type: z.enum(['improve', 'prepare_spec', 'develop_release', 'roadmap_from_doc', 'prepare_press_release']),
+      input_prompt: z.string().optional(),
+      input_template_id: z.string().optional(),
+      input_count: z.number().optional(),
+      release_id: z.string().uuid().optional(),
+      timeout_min: z.number().optional().default(20),
+      depends_on: z.array(z.string().uuid()).optional().describe('UUID шагов, от которых зависит этот шаг'),
+    })).optional().describe('Массив шагов плана'),
+  },
+  async (params) => {
+    const plan = await api.createPlan(params);
+    return { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_start_plan',
+  'Запустить план (из draft/scheduled → active). Планировщик начнёт выполнение шагов.',
+  { plan_id: z.string().uuid().describe('UUID плана') },
+  async ({ plan_id }) => {
+    const result = await api.startPlan(plan_id);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_cancel_plan',
+  'Отменить план и все ожидающие шаги',
+  { plan_id: z.string().uuid().describe('UUID плана') },
+  async ({ plan_id }) => {
+    const result = await api.cancelPlan(plan_id);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// PIPELINE — Полный конвейер одной командой
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_run_pipeline',
+  `Запустить полный конвейер улучшения продукта одной командой.
+
+Этапы:
+1. AI-улучшение (improve) — генерация предложений
+2. Ожидание завершения процесса (polling)
+3. Автоматическое утверждение по правилам (priority/type)
+4. Создание релиза из утверждённых задач
+5. Генерация спецификации (prepare_spec)
+
+Возвращает промежуточные результаты каждого этапа.
+После конвейера можно запустить develop и publish отдельно.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    model_id: z.string().uuid().describe('UUID AI-модели'),
+    template_id: z.enum(['general', 'ui', 'performance', 'security', 'competitors', 'dx']).default('general')
+      .describe('Шаблон промпта'),
+    count: z.number().min(1).max(10).default(5).describe('Количество предложений'),
+    version: z.string().describe('Версия нового релиза (например, "2.1.0")'),
+    release_name: z.string().describe('Название релиза'),
+    auto_approve: z.enum(['all', 'high_and_critical', 'critical_only', 'none']).default('high_and_critical')
+      .describe('Правила автоматического утверждения'),
+    timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут на каждый этап'),
+  },
+  async ({ product_id, model_id, template_id, count, version, release_name, auto_approve, timeout_min }) => {
+    const stages = [];
+
+    // ── Этап 1: Запуск improve ──
+    const proc = await api.createProcess({
+      product_id, model_id, type: 'improve',
+      template_id, count, timeout_min,
+    });
+    stages.push({ stage: '1_improve_started', process_id: proc.id, status: proc.status });
+
+    // ── Этап 2: Ожидание завершения ──
+    let result;
+    const deadline = Date.now() + timeout_min * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 5000));
+      result = await api.getProcess(proc.id);
+      if (['completed', 'failed'].includes(result.status)) break;
+    }
+
+    if (result.status !== 'completed') {
+      stages.push({ stage: '2_improve_result', status: result.status, error: result.error || 'timeout' });
+      return { content: [{ type: 'text', text: JSON.stringify({ pipeline: 'failed', stages }, null, 2) }] };
+    }
+
+    const suggestions = result.result || [];
+    stages.push({ stage: '2_improve_completed', suggestions_count: suggestions.length });
+
+    // ── Этап 3: Автоматическое утверждение ──
+    let indicesToApprove = [];
+    if (auto_approve === 'all') {
+      indicesToApprove = suggestions.map((_, i) => i);
+    } else if (auto_approve === 'high_and_critical') {
+      indicesToApprove = suggestions.map((s, i) => ['high', 'critical'].includes(s.priority) ? i : null).filter(i => i !== null);
+    } else if (auto_approve === 'critical_only') {
+      indicesToApprove = suggestions.map((s, i) => s.priority === 'critical' ? i : null).filter(i => i !== null);
+    }
+
+    if (indicesToApprove.length === 0) {
+      stages.push({
+        stage: '3_approve',
+        approved: 0,
+        message: 'Нет предложений, соответствующих правилам утверждения',
+        suggestions: suggestions.map((s, i) => ({ index: i, title: s.title, priority: s.priority, type: s.type })),
+      });
+      return { content: [{ type: 'text', text: JSON.stringify({ pipeline: 'needs_manual_approval', stages }, null, 2) }] };
+    }
+
+    const approved = await api.approveSuggestions(proc.id, indicesToApprove);
+    stages.push({ stage: '3_approved', count: approved.count, issues: approved.created.map(i => ({ id: i.id, title: i.title })) });
+
+    // ── Этап 4: Создание релиза ──
+    const issueIds = approved.created.map(i => i.id);
+    const release = await api.createRelease({
+      product_id, version, name: release_name,
+      issue_ids: issueIds,
+    });
+    stages.push({ stage: '4_release_created', release_id: release.id, version, issues_count: issueIds.length });
+
+    // ── Этап 5: Генерация спецификации ──
+    const specProc = await api.prepareSpec(release.id, { model_id, timeout_min });
+    stages.push({ stage: '5_spec_started', process_id: specProc.id });
+
+    // Ожидаем спецификацию
+    let specResult;
+    const specDeadline = Date.now() + timeout_min * 60 * 1000;
+    while (Date.now() < specDeadline) {
+      await new Promise(r => setTimeout(r, 5000));
+      specResult = await api.getProcess(specProc.id);
+      if (['completed', 'failed'].includes(specResult.status)) break;
+    }
+
+    if (specResult.status === 'completed') {
+      stages.push({ stage: '5_spec_completed', release_id: release.id });
+    } else {
+      stages.push({ stage: '5_spec_result', status: specResult.status, error: specResult.error || 'timeout' });
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          pipeline: specResult.status === 'completed' ? 'success' : 'partial',
+          release_id: release.id,
+          stages,
+          next_steps: specResult.status === 'completed'
+            ? ['kaizen_develop_release — запустить разработку', 'kaizen_publish_release — опубликовать', 'kaizen_prepare_press_release — пресс-релиз']
+            : ['Проверить статус спецификации: kaizen_get_process'],
+        }, null, 2),
+      }],
+    };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// WAIT HELPER
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_wait_process',
+  'Дождаться завершения AI-процесса (polling каждые 5 сек). Возвращает финальный результат.',
+  {
+    process_id: z.string().uuid().describe('UUID процесса'),
+    timeout_min: z.number().min(1).max(60).default(20).describe('Максимальное время ожидания'),
+  },
+  async ({ process_id, timeout_min }) => {
+    const deadline = Date.now() + timeout_min * 60 * 1000;
+    let proc;
+    while (Date.now() < deadline) {
+      proc = await api.getProcess(process_id);
+      if (['completed', 'failed'].includes(proc.status)) break;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    const logs = await api.getProcessLogs(process_id);
+    return { content: [{ type: 'text', text: JSON.stringify({ ...proc, logs }, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// START SERVER
+// ══════════════════════════════════════════════════════════════
+
+const transport = new StdioServerTransport();
+await server.connect(transport);

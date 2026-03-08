@@ -1,0 +1,16 @@
+{
+  "name": "kaizen-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Kaizen — continuous product improvement system",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "kaizen-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  }
+}

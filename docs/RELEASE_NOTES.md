@@ -2,6 +2,52 @@
 
 ---
 
+## v1.7.0 — MCP-сервер для Claude Code (2026-03-08)
+
+**MCP-сервер с 27 инструментами для управления Kaizen через Claude Code. Полный конвейер улучшения продукта одной командой.**
+
+### MCP-сервер (Model Context Protocol)
+
+- 27 MCP-инструментов с префиксом `kaizen_` для программного управления системой
+- Stdio-транспорт (стандарт Claude Code MCP)
+- HTTP-клиент оборачивает существующий REST API — без дублирования логики
+- Подключение через `~/.claude/settings.json` → `mcpServers.kaizen`
+
+### Инструменты
+
+| Категория | Инструменты |
+|-----------|-------------|
+| Продукты | `list_products`, `get_product` |
+| Задачи | `list_issues`, `create_issue` |
+| Модели | `list_models` |
+| AI-процессы | `improve_product`, `roadmap_from_doc`, `get_process`, `list_processes`, `wait_process` |
+| Утверждение | `approve_suggestions`, `approve_roadmap` |
+| Релизы | `list_releases`, `create_release`, `get_release`, `prepare_spec`, `get_spec`, `develop_release`, `publish_release`, `prepare_press_release` |
+| Очередь | `queue_stats` |
+| Планы | `list_plans`, `get_plan`, `create_plan`, `start_plan`, `cancel_plan` |
+| Конвейер | `run_pipeline` |
+
+### kaizen_run_pipeline — полный конвейер
+
+Запускает полный цикл улучшения одной командой:
+1. AI-улучшение (improve) — генерация предложений
+2. Ожидание завершения (polling 5с)
+3. Автоматическое утверждение по правилам (`all`, `high_and_critical`, `critical_only`, `none`)
+4. Создание релиза из утверждённых задач
+5. Генерация спецификации (prepare_spec)
+
+### Новые файлы
+
+- `mcp-server/package.json` — пакет `kaizen-mcp-server`, зависимость `@modelcontextprotocol/sdk`
+- `mcp-server/index.js` — MCP-сервер с 27 инструментами, Zod-валидация параметров
+- `mcp-server/api-client.js` — HTTP-клиент ко всем эндпоинтам Kaizen API
+
+### Документация
+
+- `docs/ANALYSIS_REPORT.md` — глубокий анализ системы и сравнение с конкурентами
+
+---
+
 ## v1.6.0 — Очередь процессов и планировщик (2026-03-04)
 
 **QueueManager для контроля параллелизма AI-процессов по провайдерам + Scheduler для автоматического запуска цепочек процессов по расписанию.**
@@ -295,6 +341,7 @@
 
 ## Планируемые улучшения
 
+- Autopipeline (cron-триггеры, повторяющиеся конвейеры, правила утверждения)
 - Docker-деплой (Dockerfile + nginx)
 - Интеграция с Git (автотеги при публикации релиза)
 - Метрики продуктов (количество задач по типам, скорость релизов)
