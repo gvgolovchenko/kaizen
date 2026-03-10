@@ -41,6 +41,7 @@
       <div class="tab" data-tab="processes">Процессы <span class="tab-count" id="tabProcessesCount"></span></div>
       <div class="tab" data-tab="plans">Планы <span class="tab-count" id="tabPlansCount"></span></div>
       <div class="tab" data-tab="rc-tickets" id="tabRcTickets" style="display:none">Тикеты RC <span class="tab-count" id="tabRcTicketsCount"></span></div>
+      <div class="tab" data-tab="automation">Автоматизация</div>
     </div>
 
     <!-- Panel: Issues -->
@@ -183,6 +184,163 @@
         </div>
         <div id="plansEmpty" class="empty" style="display:none">
           <p>Нет планов</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+    <!-- Panel: Automation -->
+    <div class="tab-panel" id="panel-automation">
+      <div class="section">
+        <div class="section-header">
+          <h3 style="margin:0">Настройки автоматизации</h3>
+          <button class="btn btn-primary btn-sm" onclick="handleSaveAutomation()">Сохранить настройки</button>
+        </div>
+
+        <!-- RC Auto-Sync -->
+        <div style="margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
+              <input type="checkbox" id="autoRcSyncEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('rcSync', this.checked)">
+              RC Auto-Sync
+            </label>
+            <span style="font-size:0.8rem;color:var(--text-dim)">Автоматическая синхронизация тикетов из Rivc.Connect</span>
+          </div>
+          <div id="autoRcSyncSettings" style="display:none;padding-left:28px">
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Интервал (часы)</label>
+              <input type="number" id="autoRcSyncInterval" value="24" min="1" max="720" style="max-width:120px">
+              <div style="font-size:0.8rem;color:var(--text-dim)">1 = каждый час, 24 = раз в день, 168 = раз в неделю</div>
+            </div>
+            <div style="margin-bottom:10px">
+              <label style="display:flex;align-items:center;gap:8px;margin:0">
+                <input type="checkbox" id="autoImportEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('autoImport', this.checked)">
+                <span style="font-weight:500">Авто-импорт тикетов по правилам</span>
+              </label>
+            </div>
+            <div id="autoImportSettings" style="display:none;padding-left:28px">
+              <div style="font-size:0.85rem;margin-bottom:6px">Импортировать тикеты с приоритетом:</div>
+              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <input type="checkbox" id="autoImportCritical" style="width:auto;accent-color:var(--accent)" checked>
+                <span class="badge badge-critical">Critical</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <input type="checkbox" id="autoImportHigh" style="width:auto;accent-color:var(--accent)" checked>
+                <span class="badge badge-high">High</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <input type="checkbox" id="autoImportMedium" style="width:auto;accent-color:var(--accent)">
+                <span class="badge badge-medium">Medium</span>
+              </label>
+            </div>
+            <div id="autoRcSyncStatus" style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)"></div>
+          </div>
+        </div>
+
+        <!-- Auto Pipeline -->
+        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
+              <input type="checkbox" id="autoPipelineEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipeline', this.checked)">
+              Авто-конвейер
+            </label>
+            <span style="font-size:0.8rem;color:var(--text-dim)">Автоматический запуск pipeline (improve → release → spec → ...)</span>
+          </div>
+          <div id="autoPipelineSettings" style="display:none;padding-left:28px">
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Триггер запуска</label>
+              <select id="autoPipelineTrigger" onchange="togglePipelineTriggerFields()">
+                <option value="threshold">По накоплению задач (threshold)</option>
+                <option value="schedule">По расписанию (schedule)</option>
+                <option value="on_sync">После RC-синхронизации (on_sync)</option>
+              </select>
+            </div>
+            <div id="pipelineThresholdField" class="form-group" style="margin-bottom:10px">
+              <label>Порог задач для запуска</label>
+              <input type="number" id="autoPipelineThreshold" value="5" min="2" max="50" style="max-width:120px">
+              <div style="font-size:0.8rem;color:var(--text-dim)">Pipeline запустится когда открытых задач >= порога</div>
+            </div>
+            <div id="pipelineScheduleField" class="form-group" style="margin-bottom:10px;display:none">
+              <label>Интервал (часы)</label>
+              <input type="number" id="autoPipelineSchedule" value="168" min="1" max="720" style="max-width:120px">
+              <div style="font-size:0.8rem;color:var(--text-dim)">168 = раз в неделю, 24 = раз в день</div>
+            </div>
+
+            <h4 style="margin:16px 0 8px;font-size:0.9rem">Настройки конвейера</h4>
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Модель ИИ *</label>
+              <select id="autoPipelineModel"></select>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Шаблон</label>
+              <select id="autoPipelineTemplate">
+                <option value="general">Общий</option>
+                <option value="ui">UI/UX</option>
+                <option value="performance">Производительность</option>
+                <option value="security">Безопасность</option>
+                <option value="competitors">Конкуренты</option>
+                <option value="dx">Developer Experience</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Кол-во предложений (1–10)</label>
+              <input type="number" id="autoPipelineCount" value="5" min="1" max="10" style="max-width:120px">
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Правило утверждения</label>
+              <select id="autoPipelineApprove">
+                <option value="all">Все</option>
+                <option value="high_and_critical" selected>High + Critical</option>
+                <option value="critical_only">Только Critical</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Стратегия версий</label>
+              <select id="autoPipelineVersionStrategy">
+                <option value="auto_increment" selected>Авто-инкремент (minor bump)</option>
+              </select>
+            </div>
+
+            <h4 style="margin:16px 0 8px;font-size:0.9rem">Дополнительные этапы</h4>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <input type="checkbox" id="autoPipelineDevelop" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelineDevelop', this.checked)">
+              <span style="font-weight:500">Разработка (develop_release)</span>
+            </label>
+            <div id="autoPipelineDevelopSettings" style="display:none;padding-left:28px;margin-bottom:10px">
+              <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <input type="checkbox" id="autoPipelineAutoPublish" style="width:auto;accent-color:var(--accent)">
+                <span>Авто-публикация (если тесты пройдены)</span>
+              </label>
+              <div class="form-group" style="margin-top:6px">
+                <label>Команда тестов</label>
+                <input type="text" id="autoPipelineTestCmd" placeholder="npm test">
+              </div>
+            </div>
+
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <input type="checkbox" id="autoPipelinePressRelease" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelinePR', this.checked)">
+              <span style="font-weight:500">Пресс-релиз</span>
+            </label>
+            <div id="autoPipelinePRSettings" style="display:none;padding-left:28px;margin-bottom:10px">
+              <div class="form-group" style="margin-bottom:6px">
+                <label>Каналы</label>
+                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="social" style="width:auto;accent-color:var(--accent)" checked> Соцсети</label>
+                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="website" style="width:auto;accent-color:var(--accent)" checked> Сайт</label>
+                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="bitrix24" style="width:auto;accent-color:var(--accent)"> Битрикс24</label>
+                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="media" style="width:auto;accent-color:var(--accent)"> СМИ</label>
+              </div>
+              <div class="form-group">
+                <label>Тональность</label>
+                <select id="autoPipelinePrTone">
+                  <option value="official">Официальная</option>
+                  <option value="friendly">Дружелюбная</option>
+                  <option value="technical">Техническая</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="autoPipelineStatus" style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)"></div>
+          </div>
         </div>
       </div>
     </div>

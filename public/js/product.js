@@ -98,6 +98,8 @@ async function loadAll() {
     document.getElementById('tabRcTickets').style.display = '';
     loadRcTickets();
   }
+  // Load automation settings
+  loadAutomationSettings();
 }
 
 // ── Render product header ──────────────────────────────
@@ -1784,6 +1786,154 @@ function isFormReleaseProcess(proc) {
 
 // Expose closeModal globally for inline onclick handlers
 window.closeModal = closeModal;
+
+// ══════════════════════════════════════════════════════════
+//  Automation Settings
+// ══════════════════════════════════════════════════════════
+
+window.toggleAutoSection = function (section, enabled) {
+  const map = {
+    rcSync: 'autoRcSyncSettings',
+    autoImport: 'autoImportSettings',
+    pipeline: 'autoPipelineSettings',
+    pipelineDevelop: 'autoPipelineDevelopSettings',
+    pipelinePR: 'autoPipelinePRSettings',
+  };
+  const el = document.getElementById(map[section]);
+  if (el) el.style.display = enabled ? 'block' : 'none';
+};
+
+window.togglePipelineTriggerFields = function () {
+  const trigger = document.getElementById('autoPipelineTrigger').value;
+  document.getElementById('pipelineThresholdField').style.display = trigger === 'threshold' ? '' : 'none';
+  document.getElementById('pipelineScheduleField').style.display = trigger === 'schedule' ? '' : 'none';
+};
+
+function loadAutomationSettings() {
+  if (!product) return;
+  const auto = product.automation || {};
+
+  // RC Auto-Sync
+  const rcSync = auto.rc_auto_sync || {};
+  document.getElementById('autoRcSyncEnabled').checked = !!rcSync.enabled;
+  document.getElementById('autoRcSyncInterval').value = rcSync.interval_hours || 24;
+  toggleAutoSection('rcSync', !!rcSync.enabled);
+
+  const autoImport = rcSync.auto_import || {};
+  document.getElementById('autoImportEnabled').checked = !!autoImport.enabled;
+  toggleAutoSection('autoImport', !!autoImport.enabled);
+
+  const rules = autoImport.rules || ['critical', 'high'];
+  document.getElementById('autoImportCritical').checked = rules.includes('critical');
+  document.getElementById('autoImportHigh').checked = rules.includes('high');
+  document.getElementById('autoImportMedium').checked = rules.includes('medium');
+
+  // Last sync info
+  if (product.last_rc_sync_at) {
+    document.getElementById('autoRcSyncStatus').textContent =
+      `Последняя синхронизация: ${new Date(product.last_rc_sync_at).toLocaleString('ru')}`;
+  }
+
+  // Auto Pipeline
+  const pipeline = auto.auto_pipeline || {};
+  document.getElementById('autoPipelineEnabled').checked = !!pipeline.enabled;
+  toggleAutoSection('pipeline', !!pipeline.enabled);
+
+  document.getElementById('autoPipelineTrigger').value = pipeline.trigger || 'threshold';
+  document.getElementById('autoPipelineThreshold').value = pipeline.threshold_count || 5;
+  document.getElementById('autoPipelineSchedule').value = pipeline.schedule_hours || 168;
+  togglePipelineTriggerFields();
+
+  const pc = pipeline.pipeline_config || {};
+  // Load models for pipeline
+  loadAutomationModels(pc.model_id);
+
+  document.getElementById('autoPipelineTemplate').value = pc.template_id || 'general';
+  document.getElementById('autoPipelineCount').value = pc.count || 5;
+  document.getElementById('autoPipelineApprove').value = pc.auto_approve || 'high_and_critical';
+  document.getElementById('autoPipelineVersionStrategy').value = pc.version_strategy || 'auto_increment';
+
+  // Develop
+  const dev = pc.develop || {};
+  document.getElementById('autoPipelineDevelop').checked = !!dev.enabled;
+  toggleAutoSection('pipelineDevelop', !!dev.enabled);
+  document.getElementById('autoPipelineAutoPublish').checked = !!dev.auto_publish;
+  document.getElementById('autoPipelineTestCmd').value = dev.test_command || '';
+
+  // Press release
+  const pr = pc.press_release || {};
+  document.getElementById('autoPipelinePressRelease').checked = !!pr.enabled;
+  toggleAutoSection('pipelinePR', !!pr.enabled);
+  document.getElementById('autoPipelinePrTone').value = pr.tone || 'official';
+
+  const channels = pr.channels || ['social', 'website'];
+  document.querySelectorAll('.autoPrChannel').forEach(cb => {
+    cb.checked = channels.includes(cb.value);
+  });
+
+  // Last pipeline info
+  if (product.last_pipeline_at) {
+    document.getElementById('autoPipelineStatus').textContent =
+      `Последний запуск: ${new Date(product.last_pipeline_at).toLocaleString('ru')}`;
+  }
+}
+
+async function loadAutomationModels(selectedId) {
+  try {
+    const models = await api('/ai-models');
+    const sel = document.getElementById('autoPipelineModel');
+    sel.innerHTML = '<option value="">— Выберите модель —</option>' +
+      models.map(m => `<option value="${m.id}" ${m.id === selectedId ? 'selected' : ''}>${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+  } catch {}
+}
+
+window.handleSaveAutomation = async function () {
+  const automation = {
+    rc_auto_sync: {
+      enabled: document.getElementById('autoRcSyncEnabled').checked,
+      interval_hours: parseInt(document.getElementById('autoRcSyncInterval').value) || 24,
+      auto_import: {
+        enabled: document.getElementById('autoImportEnabled').checked,
+        rules: [
+          ...(document.getElementById('autoImportCritical').checked ? ['critical'] : []),
+          ...(document.getElementById('autoImportHigh').checked ? ['high'] : []),
+          ...(document.getElementById('autoImportMedium').checked ? ['medium'] : []),
+        ],
+      },
+    },
+    auto_pipeline: {
+      enabled: document.getElementById('autoPipelineEnabled').checked,
+      trigger: document.getElementById('autoPipelineTrigger').value,
+      threshold_count: parseInt(document.getElementById('autoPipelineThreshold').value) || 5,
+      schedule_hours: parseInt(document.getElementById('autoPipelineSchedule').value) || 168,
+      pipeline_config: {
+        model_id: document.getElementById('autoPipelineModel').value || null,
+        template_id: document.getElementById('autoPipelineTemplate').value,
+        count: parseInt(document.getElementById('autoPipelineCount').value) || 5,
+        auto_approve: document.getElementById('autoPipelineApprove').value,
+        version_strategy: document.getElementById('autoPipelineVersionStrategy').value,
+        develop: {
+          enabled: document.getElementById('autoPipelineDevelop').checked,
+          auto_publish: document.getElementById('autoPipelineAutoPublish').checked,
+          test_command: document.getElementById('autoPipelineTestCmd').value || null,
+        },
+        press_release: {
+          enabled: document.getElementById('autoPipelinePressRelease').checked,
+          channels: [...document.querySelectorAll('.autoPrChannel:checked')].map(cb => cb.value),
+          tone: document.getElementById('autoPipelinePrTone').value,
+        },
+      },
+    },
+  };
+
+  try {
+    const updated = await api(`/products/${productId}`, { method: 'PUT', body: { automation } });
+    product = updated;
+    toast('Настройки автоматизации сохранены');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
 
 // ── Init ───────────────────────────────────────────────
 

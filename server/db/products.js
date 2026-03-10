@@ -31,9 +31,14 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id'].includes(key)) {
-      sets.push(`${key} = $${i++}`);
-      vals.push(value);
+    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id', 'automation', 'last_rc_sync_at', 'last_pipeline_at'].includes(key)) {
+      if (key === 'automation') {
+        sets.push(`${key} = $${i++}::jsonb`);
+        vals.push(typeof value === 'string' ? value : JSON.stringify(value));
+      } else {
+        sets.push(`${key} = $${i++}`);
+        vals.push(value);
+      }
     }
   }
   if (sets.length === 0) return getById(id);
@@ -43,6 +48,18 @@ export async function update(id, fields) {
     vals
   );
   return rows[0] || null;
+}
+
+export async function getWithAutomation() {
+  const { rows } = await pool.query(`
+    SELECT p.*,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open') AS open_issues
+    FROM ${TABLE} p
+    WHERE p.automation IS NOT NULL AND p.automation != '{}'::jsonb
+      AND (p.automation->'rc_auto_sync'->>'enabled' = 'true' OR p.automation->'auto_pipeline'->>'enabled' = 'true')
+    ORDER BY p.created_at DESC
+  `);
+  return rows;
 }
 
 export async function remove(id) {

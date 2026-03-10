@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.8.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.9.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
@@ -121,7 +121,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 
 - **Схема**: `opii`
 - **Префикс**: `kaizen_` (изоляция в общей схеме)
-- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps, kaizen_rc_tickets
+- **Таблицы**: kaizen_products (+ automation JSONB, last_rc_sync_at, last_pipeline_at), kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps, kaizen_rc_tickets
 - **PK**: UUID (gen_random_uuid())
 - **Каскадное удаление**: products → issues + releases + processes + plans; processes → process_logs; plans → plan_steps
 - **Триггеры**: updated_at на products, issues, releases, processes, plans, plan_steps
@@ -168,6 +168,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | POST | /api/processes/:id/approve-roadmap | Утвердить дорожную карту → создать релизы + issues |
 | POST | /api/processes/:id/restart | Перезапустить процесс (создаёт копию) |
 | POST | /api/processes/:id/cancel | Отменить queued-процесс |
+| POST | /api/processes/:id/approve-auto | Автоматическое утверждение по правилу (all/high_and_critical/critical_only) |
 | POST | /api/processes/:id/approve-releases | Утвердить предложенные AI-релизы (form_release) |
 | DELETE | /api/processes/:id | Удалить процесс + логи |
 | GET | /api/products/:id/processes | Процессы конкретного продукта |
@@ -202,13 +203,14 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Удаление релиза**: все issues → `open`, затем удаление
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
 - **Очередь процессов (QueueManager)**: POST /processes ставит процесс в очередь. Контроль параллелизма по провайдерам: ollama:1, mlx:1, claude-code:2, anthropic:3, openai:3, google:3. Статусы: pending → queued → running → completed/failed. При завершении — автоматический запуск следующего queued-процесса (`FOR UPDATE SKIP LOCKED`). Восстановление состояния при перезапуске сервера. Frontend: badge «queued», позиция в очереди, кнопка отмены.
-- **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Планы с шагами (depends_on для зависимостей). Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), поиск ready шагов, запуск через QueueManager. Обратная связь: при завершении процесса → обновление шага → проверка следующих. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
+- **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Планы с шагами (depends_on для зависимостей). Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), поиск ready шагов, запуск через QueueManager. Каждые 2 мин — `_runAutomation()`: RC auto-sync по расписанию, auto-import по правилам приоритетов, авто-запуск pipeline (threshold/schedule/on_sync). Обратная связь: при завершении процесса → обновление шага → проверка следующих. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
+- **Автоматизация продуктов**: JSONB `automation` в products — per-product настройки rc_auto_sync (interval_hours, auto_import rules) и auto_pipeline (trigger: threshold/schedule/on_sync, pipeline_config с model_id, auto_approve, develop, press_release). UI: таб «Автоматизация» на странице продукта.
 - **Асинхронные AI-процессы**: POST /processes создаёт запись + ставит в очередь QueueManager. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend: polling 4с (активные) / 10с (покой), живая длительность для running-процессов.
 - **Уведомления о статусах**: create/publish/remove релизов возвращают `status_changes`, фронтенд показывает toast-info с деталями
 - **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues, сохраняет approved_indices (повторное одобрение — disabled чекбоксы)
 - **Перезапуск процесса**: POST /processes/:id/restart → создаёт копию и запускает заново
 - **Генерация спецификации**: POST /releases/:id/prepare-spec → AI-процесс (standalone или claude-code)
-- **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты. Стриминг NDJSON с промежуточными checkpoint-логами (7 фаз)
+- **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты. Стриминг NDJSON с промежуточными checkpoint-логами (7 фаз). Auto-publish: если `config.auto_publish === true` и тесты пройдены — автоматическая публикация
 - **Дорожная карта из документа**: POST /processes с type=roadmap_from_doc → парсит документ в релизы + задачи
 - **Пресс-релиз**: POST /releases/:id/prepare-press-release → AI генерирует PR-материалы для 4 каналов (соцсети, сайт, Б24, СМИ)
 - **Формирование релиза (AI)**: POST /processes с type=form_release → AI группирует открытые задачи в релизы. 4 стратегии (balanced, critical_first, by_topic, single). Авто-утверждение или ручной обзор предложения.
@@ -245,5 +247,5 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
   - Планы: `list_plans`, `get_plan`, `create_plan`, `start_plan`, `cancel_plan`
   - RC: `rc_test`, `rc_sync`, `rc_list_tickets`, `rc_import_tickets`
   - Формирование релиза: `form_release`, `approve_releases`
-  - **Конвейер**: `run_pipeline` — полный цикл (improve → approve → release → spec) одной командой
-- **kaizen_run_pipeline**: авто-утверждение по правилам (`all`, `high_and_critical`, `critical_only`, `none`), polling статусов, создание релиза + спецификации
+  - **Конвейер**: `run_pipeline` — полный сквозной цикл одной командой
+- **kaizen_run_pipeline**: 5 базовых этапов (improve → approve → release → spec) + 3 опциональных (develop → publish → press_release). Авто-утверждение по правилам, polling статусов, auto-publish при успешных тестах

@@ -55,3 +55,39 @@ export async function importBulk(rcTicketCacheIds) {
   }
   return results;
 }
+
+/**
+ * Auto-import new RC tickets matching priority rules.
+ * @param {string} productId
+ * @param {string[]} priorityRules - e.g. ['critical', 'high']
+ * @returns {{ imported: number, tickets: object[] }}
+ */
+export async function autoImportByRules(productId, priorityRules = []) {
+  if (!priorityRules.length) return { imported: 0, tickets: [] };
+
+  // Get all "new" tickets
+  const newTickets = await rcTickets.getByProduct(productId, 'new');
+
+  // Map Kaizen priority names back to RC priority IDs for filtering
+  const rcPriorityByKaizen = {};
+  for (const [rcId, kaizenName] of Object.entries(PRIORITY_MAP)) {
+    rcPriorityByKaizen[kaizenName] = Number(rcId);
+  }
+
+  const matching = newTickets.filter(t => {
+    const kaizenPriority = PRIORITY_MAP[t.rc_priority_id] || 'medium';
+    return priorityRules.includes(kaizenPriority);
+  });
+
+  const imported = [];
+  for (const ticket of matching) {
+    try {
+      const issue = await importTicket(ticket.id);
+      imported.push(issue);
+    } catch {
+      // skip already imported or other errors
+    }
+  }
+
+  return { imported: imported.length, tickets: imported };
+}

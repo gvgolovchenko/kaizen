@@ -573,6 +573,69 @@ router.post('/processes/:id/approve', async (req, res) => {
   }
 });
 
+router.post('/processes/:id/approve-auto', async (req, res) => {
+  try {
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    if (proc.status !== 'completed') {
+      return res.status(400).json({ error: 'Process is not completed' });
+    }
+
+    const suggestions = proc.result || [];
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      return res.status(400).json({ error: 'No suggestions in process result' });
+    }
+
+    const { rule } = req.body;
+    const validRules = ['all', 'high_and_critical', 'critical_only'];
+    if (!validRules.includes(rule)) {
+      return res.status(400).json({ error: `rule must be one of: ${validRules.join(', ')}` });
+    }
+
+    // Filter suggestions by rule
+    let indicesToApprove = [];
+    if (rule === 'all') {
+      indicesToApprove = suggestions.map((_, i) => i);
+    } else if (rule === 'high_and_critical') {
+      indicesToApprove = suggestions
+        .map((s, i) => ['high', 'critical'].includes(s.priority) ? i : null)
+        .filter(i => i !== null);
+    } else if (rule === 'critical_only') {
+      indicesToApprove = suggestions
+        .map((s, i) => s.priority === 'critical' ? i : null)
+        .filter(i => i !== null);
+    }
+
+    // Exclude already approved indices
+    const prevApproved = proc.approved_indices || [];
+    const newIndices = indicesToApprove.filter(i => !prevApproved.includes(i));
+
+    if (newIndices.length === 0) {
+      return res.json({ created: [], count: 0, message: 'No new suggestions match the rule' });
+    }
+
+    const selected = newIndices.map(i => suggestions[i]);
+    const created = [];
+    for (const item of selected) {
+      const issue = await issues.create({
+        product_id: proc.product_id,
+        title: String(item.title || '').slice(0, 200),
+        description: String(item.description || ''),
+        type: ['improvement', 'bug', 'feature'].includes(item.type) ? item.type : 'improvement',
+        priority: ['critical', 'high', 'medium', 'low'].includes(item.priority) ? item.priority : 'medium',
+      });
+      created.push(issue);
+    }
+
+    const allApproved = [...new Set([...prevApproved, ...newIndices])];
+    await processes.update(proc.id, { approved_count: allApproved.length, approved_indices: JSON.stringify(allApproved) });
+
+    res.status(201).json({ created, count: created.length, rule });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/processes/:id/restart', async (req, res) => {
   try {
     const proc = await processes.getById(req.params.id);

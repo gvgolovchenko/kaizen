@@ -432,15 +432,19 @@ server.tool(
   'kaizen_run_pipeline',
   `Запустить полный конвейер улучшения продукта одной командой.
 
-Этапы:
+Этапы (базовые, всегда выполняются):
 1. AI-улучшение (improve) — генерация предложений
 2. Ожидание завершения процесса (polling)
 3. Автоматическое утверждение по правилам (priority/type)
 4. Создание релиза из утверждённых задач
 5. Генерация спецификации (prepare_spec)
 
-Возвращает промежуточные результаты каждого этапа.
-После конвейера можно запустить develop и publish отдельно.`,
+Опциональные этапы (включаются параметрами):
+6. Разработка (develop_release) — Claude Code реализует задачи
+7. Публикация релиза (auto-publish если тесты пройдены)
+8. Пресс-релиз (prepare_press_release)
+
+Полный сквозной конвейер: improve → approve → release → spec → develop → publish → press_release`,
   {
     product_id: z.string().uuid().describe('UUID продукта'),
     model_id: z.string().uuid().describe('UUID AI-модели'),
@@ -452,9 +456,33 @@ server.tool(
     auto_approve: z.enum(['all', 'high_and_critical', 'critical_only', 'none']).default('high_and_critical')
       .describe('Правила автоматического утверждения'),
     timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут на каждый этап'),
+    // ── Опциональные этапы ──
+    develop: z.object({
+      enabled: z.boolean().default(false),
+      git_branch: z.string().optional().describe('Имя ветки (по умолчанию kaizen/release-{version})'),
+      test_command: z.string().optional().describe('Команда запуска тестов'),
+      auto_publish: z.boolean().default(false).describe('Автоматическая публикация после успешных тестов'),
+    }).optional().describe('Настройки этапа разработки (develop_release)'),
+    press_release: z.object({
+      enabled: z.boolean().default(false),
+      channels: z.array(z.string()).default(['social', 'website', 'bitrix24', 'media']).describe('Каналы пресс-релиза'),
+      tone: z.string().default('official').describe('Тон пресс-релиза'),
+    }).optional().describe('Настройки пресс-релиза'),
   },
-  async ({ product_id, model_id, template_id, count, version, release_name, auto_approve, timeout_min }) => {
+  async ({ product_id, model_id, template_id, count, version, release_name, auto_approve, timeout_min, develop, press_release }) => {
     const stages = [];
+
+    // ── Helper: poll process until done ──
+    async function waitForProcess(processId, stagePrefix) {
+      let result;
+      const deadline = Date.now() + timeout_min * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 5000));
+        result = await api.getProcess(processId);
+        if (['completed', 'failed'].includes(result.status)) break;
+      }
+      return result;
+    }
 
     // ── Этап 1: Запуск improve ──
     const proc = await api.createProcess({
@@ -464,13 +492,7 @@ server.tool(
     stages.push({ stage: '1_improve_started', process_id: proc.id, status: proc.status });
 
     // ── Этап 2: Ожидание завершения ──
-    let result;
-    const deadline = Date.now() + timeout_min * 60 * 1000;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 5000));
-      result = await api.getProcess(proc.id);
-      if (['completed', 'failed'].includes(result.status)) break;
-    }
+    const result = await waitForProcess(proc.id);
 
     if (result.status !== 'completed') {
       stages.push({ stage: '2_improve_result', status: result.status, error: result.error || 'timeout' });
@@ -515,31 +537,116 @@ server.tool(
     const specProc = await api.prepareSpec(release.id, { model_id, timeout_min });
     stages.push({ stage: '5_spec_started', process_id: specProc.id });
 
-    // Ожидаем спецификацию
-    let specResult;
-    const specDeadline = Date.now() + timeout_min * 60 * 1000;
-    while (Date.now() < specDeadline) {
-      await new Promise(r => setTimeout(r, 5000));
-      specResult = await api.getProcess(specProc.id);
-      if (['completed', 'failed'].includes(specResult.status)) break;
-    }
+    const specResult = await waitForProcess(specProc.id);
 
     if (specResult.status === 'completed') {
       stages.push({ stage: '5_spec_completed', release_id: release.id });
     } else {
       stages.push({ stage: '5_spec_result', status: specResult.status, error: specResult.error || 'timeout' });
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            pipeline: 'partial',
+            stopped_at: 'spec',
+            release_id: release.id,
+            stages,
+            next_steps: ['Проверить статус спецификации: kaizen_get_process'],
+          }, null, 2),
+        }],
+      };
+    }
+
+    // ── Этап 6: Разработка (опциональный) ──
+    if (develop?.enabled) {
+      const devConfig = {
+        git_branch: develop.git_branch,
+        test_command: develop.test_command,
+        auto_publish: develop.auto_publish || false,
+      };
+      const devProc = await api.developRelease(release.id, {
+        model_id,
+        timeout_min,
+        ...devConfig,
+      });
+      stages.push({ stage: '6_develop_started', process_id: devProc.id });
+
+      const devResult = await waitForProcess(devProc.id);
+
+      if (devResult.status === 'completed') {
+        const devData = devResult.result || {};
+        stages.push({
+          stage: '6_develop_completed',
+          branch: devData.branch,
+          tests_passed: devData.tests_passed,
+          commit: devData.commit_hash,
+        });
+
+        // ── Этап 7: Публикация (если auto_publish и тесты пройдены) ──
+        if (develop.auto_publish && devData.tests_passed) {
+          try {
+            await api.publishRelease(release.id);
+            stages.push({ stage: '7_published', release_id: release.id, version });
+          } catch (pubErr) {
+            stages.push({ stage: '7_publish_failed', error: pubErr.message });
+          }
+        } else if (!devData.tests_passed) {
+          stages.push({
+            stage: '7_publish_skipped',
+            reason: 'tests_failed',
+            message: 'Публикация пропущена — тесты не пройдены',
+          });
+        }
+
+        // ── Этап 8: Пресс-релиз (опциональный) ──
+        if (press_release?.enabled && devData.tests_passed) {
+          try {
+            const prProc = await api.preparePressRelease(release.id, {
+              model_id,
+              timeout_min,
+              channels: press_release.channels,
+              tone: press_release.tone,
+            });
+            stages.push({ stage: '8_press_release_started', process_id: prProc.id });
+
+            const prResult = await waitForProcess(prProc.id);
+            if (prResult.status === 'completed') {
+              stages.push({ stage: '8_press_release_completed' });
+            } else {
+              stages.push({ stage: '8_press_release_result', status: prResult.status, error: prResult.error || 'timeout' });
+            }
+          } catch (prErr) {
+            stages.push({ stage: '8_press_release_failed', error: prErr.message });
+          }
+        }
+      } else {
+        stages.push({ stage: '6_develop_result', status: devResult.status, error: devResult.error || 'timeout' });
+      }
+    }
+
+    // ── Определяем итоговый статус ──
+    const lastStage = stages[stages.length - 1];
+    const pipelineStatus = lastStage.stage.includes('failed') || lastStage.stage.includes('skipped')
+      ? 'partial'
+      : 'success';
+
+    const nextSteps = [];
+    if (!develop?.enabled) {
+      nextSteps.push('kaizen_develop_release — запустить разработку');
+      nextSteps.push('kaizen_publish_release — опубликовать');
+    }
+    if (!press_release?.enabled && pipelineStatus === 'success') {
+      nextSteps.push('kaizen_prepare_press_release — пресс-релиз');
     }
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
-          pipeline: specResult.status === 'completed' ? 'success' : 'partial',
+          pipeline: pipelineStatus,
           release_id: release.id,
           stages,
-          next_steps: specResult.status === 'completed'
-            ? ['kaizen_develop_release — запустить разработку', 'kaizen_publish_release — опубликовать', 'kaizen_prepare_press_release — пресс-релиз']
-            : ['Проверить статус спецификации: kaizen_get_process'],
+          ...(nextSteps.length > 0 ? { next_steps: nextSteps } : {}),
         }, null, 2),
       }],
     };

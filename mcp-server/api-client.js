@@ -101,3 +101,7 @@ export const rcIgnoreTicket = (ticketId) => request('POST', `/rc-tickets/${ticke
 // ── Form Release ──
 export const approveReleases = (processId, releases) =>
   request('POST', `/processes/${processId}/approve-releases`, { releases });
+
+// ── Auto-approve ──
+export const approveAuto = (processId, rule) =>
+  request('POST', `/processes/${processId}/approve-auto`, { rule });

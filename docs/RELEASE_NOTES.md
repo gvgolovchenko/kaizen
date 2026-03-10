@@ -2,6 +2,79 @@
 
 ---
 
+## v1.9.0 — Сквозной конвейер + Автоматизация продуктов (2026-03-10)
+
+**Полный сквозной конвейер (improve → publish → press_release одной командой) + per-product автоматизация с гибкими настройками.**
+
+### Сквозной конвейер (Этап 1 плана автоматизации)
+
+- `kaizen_run_pipeline` расширен до 8 этапов: 5 базовых + 3 опциональных
+  - Этап 6: `develop_release` — Claude Code реализует задачи (опциональный, `develop.enabled`)
+  - Этап 7: auto-publish — автоматическая публикация при успешных тестах (`develop.auto_publish`)
+  - Этап 8: `prepare_press_release` — генерация PR-материалов (опциональный, `press_release.enabled`)
+- Auto-publish в `process-runner.js`: после `develop_release`, если `tests_passed && config.auto_publish` → `releases.publish()` + лог `auto_published`
+
+### Endpoint approve-auto
+
+- `POST /api/processes/:id/approve-auto` — утверждение предложений по правилу:
+  - `all` — все предложения
+  - `high_and_critical` — только high и critical приоритет
+  - `critical_only` — только critical
+- Исключает уже утверждённые (через `approved_indices`)
+- Возвращает список созданных задач
+
+### Автоматизация продуктов (Этап 2 плана автоматизации)
+
+- JSONB-колонка `automation` в `kaizen_products` — per-product настройки
+- **RC Auto-Sync**: автоматическая синхронизация тикетов из Rivc.Connect по расписанию
+  - Настраиваемый интервал (1–720 часов)
+  - Auto-import по правилам приоритетов (critical, high, medium)
+- **Auto-Pipeline**: автоматический запуск полного конвейера
+  - Триггер `threshold` — при накоплении N открытых задач
+  - Триггер `schedule` — по расписанию (каждые N часов)
+  - Триггер `on_sync` — после RC-синхронизации при новых тикетах
+  - Настраиваемая конфигурация: модель, шаблон, правило утверждения, develop, press_release
+  - Авто-инкремент версий (minor bump от последней)
+- Scheduler расширен: `_runAutomation()` каждые 2 мин (4 тика по 30с)
+
+### UI: таб «Автоматизация»
+
+- Новый таб на странице продукта с полноценным интерфейсом настроек
+- Toggle-секции: RC Auto-Sync, Auto-Import, Auto-Pipeline
+- Выбор триггера, модели, шаблона, правил утверждения
+- Доп. этапы: develop (auto-publish, test command), press-release (каналы, тональность)
+- Сохранение в JSONB → восстановление при загрузке страницы
+
+### API (1 новый эндпоинт)
+
+- `POST /api/processes/:id/approve-auto` — автоматическое утверждение по правилу
+
+### MCP-сервер
+
+- `approveAuto()` метод в api-client.js
+- `kaizen_run_pipeline` расширен новыми параметрами: `develop`, `press_release`
+
+### База данных
+
+- Миграция `014_automation.sql`:
+  - Колонка `automation JSONB` в `kaizen_products`
+  - Колонка `last_rc_sync_at TIMESTAMPTZ` в `kaizen_products`
+  - Колонка `last_pipeline_at TIMESTAMPTZ` в `kaizen_products`
+
+### Изменённые файлы
+
+- `server/process-runner.js` — auto-publish после develop_release
+- `server/routes/api.js` — endpoint approve-auto
+- `server/scheduler.js` — _runAutomation(), _autoRcSync(), _autoPipeline(), _autoVersion()
+- `server/rc-sync.js` — autoImportByRules()
+- `server/db/products.js` — getWithAutomation(), automation в whitelist
+- `mcp-server/index.js` — расширен kaizen_run_pipeline (этапы 6-8)
+- `mcp-server/api-client.js` — approveAuto()
+- `public/product.html` — таб «Автоматизация», панель настроек
+- `public/js/product.js` — loadAutomationSettings(), handleSaveAutomation()
+
+---
+
 ## v1.8.0 — Интеграция с Rivc.Connect + AI-формирование релизов (2026-03-09)
 
 **Синхронизация тикетов из HelpDesk Rivc.Connect (MS SQL) и AI-формирование релизов из задач с 4 стратегиями группировки.**
@@ -407,8 +480,10 @@
 
 ## Планируемые улучшения
 
-- Autopipeline (cron-триггеры, повторяющиеся конвейеры, правила утверждения)
+- Условные переходы в планах (on_success, on_failure, on_condition)
+- Webhook-система при ключевых событиях (release published, pipeline failed)
+- Интеграция с Битрикс24 (автопост при публикации релиза)
+- AI-приоритизация очереди, авто-ретрай с анализом ошибок
+- Метрики и дашборд (время цикла, success rate)
 - Docker-деплой (Dockerfile + nginx)
-- Интеграция с Git (автотеги при публикации релиза)
-- Метрики продуктов (количество задач по типам, скорость релизов)
 - WebSocket для real-time обновлений процессов (вместо polling)

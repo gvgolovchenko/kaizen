@@ -2,8 +2,8 @@
 
 > Отслеживание продуктов, сбор задач на улучшение, формирование и публикация релизов.
 
-**Версия:** 1.7.0
-**Дата:** 2026-03-08
+**Версия:** 1.9.0
+**Дата:** 2026-03-10
 
 ---
 
@@ -18,7 +18,8 @@
 | AI-процессы | Реализован | Улучшение продукта, генерация спецификаций, разработка релизов, дорожная карта, пресс-релизы |
 | Очередь процессов | Реализован | QueueManager — контроль параллелизма по AI-провайдерам, приоритеты, отмена |
 | Планировщик | Реализован | Scheduler — планы с шагами, зависимости, расписание, автозапуск цепочек |
-| MCP-сервер | Реализован | 27 инструментов для Claude Code, полный конвейер (kaizen_run_pipeline) |
+| MCP-сервер | Реализован | 29 инструментов для Claude Code, сквозной конвейер (kaizen_run_pipeline) |
+| Автоматизация | Реализован | Per-product настройки: RC auto-sync, auto-import, auto-pipeline (threshold/schedule/on_sync) |
 | Уведомления | Реализован | Toast-уведомления о автоматических изменениях статусов при операциях с релизами |
 
 ## Технологический стек
@@ -57,6 +58,7 @@
 | [DEVELOP_RELEASE_FEATURE.md](docs/DEVELOP_RELEASE_FEATURE.md) | Фича: разработка релизов (claude-code) |
 | [ROADMAP_FROM_DOC_FEATURE.md](docs/ROADMAP_FROM_DOC_FEATURE.md) | Фича: дорожная карта из документа |
 | [ANALYSIS_REPORT.md](docs/ANALYSIS_REPORT.md) | Глубокий анализ и сравнение с конкурентами |
+| [FULL_AUTOMATION_PLAN.md](docs/FULL_AUTOMATION_PLAN.md) | План полной автоматизации (4 этапа) |
 
 ## Быстрый старт
 
@@ -78,6 +80,8 @@ node database/exec-sql.js --file database/migrations/009_product_rivc_connect.sq
 node database/exec-sql.js --file database/migrations/010_press_release.sql
 node database/exec-sql.js --file database/migrations/011_queue.sql
 node database/exec-sql.js --file database/migrations/012_plans.sql
+node database/exec-sql.js --file database/migrations/013_rc_tickets.sql
+node database/exec-sql.js --file database/migrations/014_automation.sql
 
 # Запуск (development)
 npm run dev
@@ -91,8 +95,8 @@ open http://localhost:3034
 | Этап | Статус |
 |------|--------|
 | Инициация и планирование | Готово |
-| Миграция БД (001–012) | Готово |
-| Backend API (50+ эндпоинтов) | Готово |
+| Миграция БД (001–014) | Готово |
+| Backend API (55+ эндпоинтов) | Готово |
 | Frontend (7 страниц) | Готово |
 | Модели ИИ + discover | Готово |
 | AI-процессы (improve, spec, develop, roadmap, press_release) | Готово |
@@ -100,6 +104,8 @@ open http://localhost:3034
 | Перезапуск процессов | Готово |
 | Очередь процессов (QueueManager) | Готово |
 | Планировщик (Scheduler) | Готово |
-| MCP-сервер (27 инструментов) | Готово |
+| MCP-сервер (29 инструментов) | Готово |
+| Сквозной конвейер (8 этапов) | Готово |
+| Автоматизация продуктов | Готово |
 | Документация | Готово |
 | Деплой (Docker) | Запланирован |

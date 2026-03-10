@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.6.0 (миграции 001–012)
+> Версия схемы: 1.9.0 (миграции 001–014)
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -12,7 +12,7 @@
 - **Первичные ключи**: UUID (`gen_random_uuid()`)
 - **Временные метки**: `created_at` (auto), `updated_at` (trigger)
 - **Каскадное удаление**: продукт → задачи + релизы + процессы + планы; процессы → логи; планы → шаги
-- **Таблицы**: 9 (products, issues, releases, release_issues, ai_models, processes, process_logs, plans, plan_steps)
+- **Таблицы**: 10 (products, issues, releases, release_issues, ai_models, processes, process_logs, plans, plan_steps, rc_tickets)
 
 ---
 
@@ -33,6 +33,9 @@
 | project_path | VARCHAR(500) | YES | NULL | Путь к проекту на сервере |
 | rc_system_id | INTEGER | YES | NULL | ID системы в Rivc.Connect |
 | rc_module_id | INTEGER | YES | NULL | ID модуля в Rivc.Connect |
+| automation | JSONB | YES | '{}' | Настройки автоматизации (rc_auto_sync, auto_pipeline) |
+| last_rc_sync_at | TIMESTAMPTZ | YES | NULL | Время последней авто-синхронизации RC |
+| last_pipeline_at | TIMESTAMPTZ | YES | NULL | Время последнего авто-запуска pipeline |
 | status | VARCHAR(20) | YES | 'active' | active / archived |
 | created_at | TIMESTAMPTZ | YES | now() | Дата создания |
 | updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
@@ -50,6 +53,7 @@
 | type | VARCHAR(20) | YES | 'improvement' | bug / improvement / feature |
 | priority | VARCHAR(20) | YES | 'medium' | critical / high / medium / low |
 | status | VARCHAR(20) | YES | 'open' | open / in_release / done / closed |
+| rc_ticket_id | INTEGER | YES | NULL | ID тикета Rivc.Connect (если импортирован) |
 | created_at | TIMESTAMPTZ | YES | now() | Дата создания |
 | updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
 
@@ -109,7 +113,7 @@ AI-процессы (фоновые задачи генерации).
 | id | UUID | NO | gen_random_uuid() | PK |
 | product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
 | model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) |
-| type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / roadmap_from_doc / prepare_press_release |
+| type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / roadmap_from_doc / prepare_press_release / form_release |
 | status | VARCHAR(20) | YES | 'pending' | pending / queued / running / completed / failed |
 | priority | INTEGER | YES | 0 | Приоритет в очереди (0=normal, 1=high, 2=urgent) |
 | plan_step_id | UUID | YES | NULL | FK → kaizen_plan_steps(id) ON DELETE SET NULL |
@@ -183,6 +187,38 @@ AI-процессы (фоновые задачи генерации).
 | created_at | TIMESTAMPTZ | YES | now() | Дата создания |
 | updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
 
+### opii.kaizen_rc_tickets
+
+Кэш тикетов из Rivc.Connect HelpDesk.
+
+| Поле | Тип | Null | Default | Описание |
+|------|-----|:----:|---------|----------|
+| id | UUID | NO | gen_random_uuid() | PK |
+| product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
+| rc_ticket_id | INTEGER | NO | — | ID тикета в Rivc.Connect |
+| rc_system_id | INTEGER | YES | NULL | ID системы RC |
+| rc_module_id | INTEGER | YES | NULL | ID модуля RC |
+| title | VARCHAR(500) | NO | — | Тема тикета |
+| description | TEXT | YES | NULL | Описание |
+| rc_status | VARCHAR(100) | YES | NULL | Статус в RC |
+| rc_status_id | INTEGER | YES | NULL | ID статуса |
+| rc_priority | VARCHAR(100) | YES | NULL | Приоритет в RC |
+| rc_priority_id | INTEGER | YES | NULL | ID приоритета |
+| rc_type | VARCHAR(100) | YES | NULL | Тип в RC |
+| rc_type_id | INTEGER | YES | NULL | ID типа |
+| rc_author | VARCHAR(255) | YES | NULL | Автор |
+| rc_author_email | VARCHAR(255) | YES | NULL | Email автора |
+| rc_created_at | TIMESTAMPTZ | YES | NULL | Дата создания в RC |
+| rc_updated_at | TIMESTAMPTZ | YES | NULL | Дата обновления в RC |
+| rc_deadline | TIMESTAMPTZ | YES | NULL | Дедлайн |
+| sync_status | VARCHAR(20) | YES | 'new' | new / imported / ignored |
+| issue_id | UUID | YES | NULL | FK → kaizen_issues(id) (если импортирован) |
+| raw_data | JSONB | YES | NULL | Полные данные тикета |
+| created_at | TIMESTAMPTZ | YES | now() | Дата кэширования |
+| updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
+
+**UNIQUE**: (rc_ticket_id, product_id)
+
 ---
 
 ## Индексы
@@ -225,8 +261,9 @@ kaizen_products
     ├── 1:N → kaizen_processes (product_id, CASCADE)
     │                ├── 1:N → kaizen_process_logs (process_id, CASCADE)
     │                └── N:1 → kaizen_plan_steps (plan_step_id, SET NULL)
-    └── 1:N → kaizen_plans (product_id, CASCADE)
-                     └── 1:N → kaizen_plan_steps (plan_id, CASCADE)
+    ├── 1:N → kaizen_plans (product_id, CASCADE)
+    │                └── 1:N → kaizen_plan_steps (plan_id, CASCADE)
+    └── 1:N → kaizen_rc_tickets (product_id, CASCADE)
 
 kaizen_ai_models (независимая таблица, ссылается из processes и plan_steps)
 ```
@@ -249,3 +286,5 @@ kaizen_ai_models (независимая таблица, ссылается из
 | 010 | 010_press_release.sql | Колонка press_release JSONB в releases |
 | 011 | 011_queue.sql | Статус queued, priority, plan_step_id в processes; частичный индекс |
 | 012 | 012_plans.sql | Таблицы kaizen_plans и kaizen_plan_steps, FK, индексы, триггеры |
+| 013 | 013_rc_tickets.sql | Таблица kaizen_rc_tickets, rc_ticket_id в issues, UNIQUE constraint |
+| 014 | 014_automation.sql | Колонки automation JSONB, last_rc_sync_at, last_pipeline_at в products |

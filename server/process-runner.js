@@ -1039,6 +1039,26 @@ ${issuesList}`;
     dev_commit: resultObj.commit_hash,
     dev_status: resultObj.tests_passed ? 'done' : 'failed',
   });
+
+  // 13. Auto-publish if tests passed and auto_publish is enabled
+  if (resultObj.tests_passed && config.auto_publish) {
+    try {
+      await releases.publish(release.id);
+      await processLogs.create({
+        process_id: processId,
+        step: 'auto_published',
+        message: `Релиз ${release.version} автоматически опубликован (тесты пройдены)`,
+        data: { release_id: release.id, version: release.version },
+      });
+    } catch (pubErr) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'auto_publish_failed',
+        message: `Ошибка авто-публикации: ${pubErr.message}`,
+        data: { error: pubErr.message },
+      });
+    }
+  }
 }
 
 /**
