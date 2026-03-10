@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.9.0 (миграции 001–014)
+> Версия схемы: 1.10.0 (миграции 001–014)
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -33,7 +33,7 @@
 | project_path | VARCHAR(500) | YES | NULL | Путь к проекту на сервере |
 | rc_system_id | INTEGER | YES | NULL | ID системы в Rivc.Connect |
 | rc_module_id | INTEGER | YES | NULL | ID модуля в Rivc.Connect |
-| automation | JSONB | YES | '{}' | Настройки автоматизации (rc_auto_sync, auto_pipeline) |
+| automation | JSONB | YES | '{}' | Настройки автоматизации (rc_auto_sync, auto_pipeline, notifications) |
 | last_rc_sync_at | TIMESTAMPTZ | YES | NULL | Время последней авто-синхронизации RC |
 | last_pipeline_at | TIMESTAMPTZ | YES | NULL | Время последнего авто-запуска pipeline |
 | status | VARCHAR(20) | YES | 'active' | active / archived |
@@ -288,3 +288,42 @@ kaizen_ai_models (независимая таблица, ссылается из
 | 012 | 012_plans.sql | Таблицы kaizen_plans и kaizen_plan_steps, FK, индексы, триггеры |
 | 013 | 013_rc_tickets.sql | Таблица kaizen_rc_tickets, rc_ticket_id в issues, UNIQUE constraint |
 | 014 | 014_automation.sql | Колонки automation JSONB, last_rc_sync_at, last_pipeline_at в products |
+
+---
+
+## Структура JSONB-полей
+
+### automation (kaizen_products)
+
+```json
+{
+  "rc_auto_sync": {
+    "enabled": true,
+    "interval_hours": 24,
+    "auto_import": { "enabled": true, "rules": ["critical", "high"] }
+  },
+  "auto_pipeline": {
+    "enabled": true,
+    "trigger": "threshold|schedule|on_sync",
+    "threshold_count": 5,
+    "schedule_hours": 168,
+    "preset": "analysis|full_cycle|custom",
+    "pipeline_config": {
+      "model_id": "uuid",
+      "template_id": "general",
+      "count": 5,
+      "auto_approve": "high_and_critical",
+      "version_strategy": "auto_increment",
+      "improve": { "model_id": "uuid (опционально)" },
+      "spec": { "model_id": "uuid (опционально)" },
+      "develop": { "enabled": false, "auto_publish": false, "test_command": null, "model_id": "uuid (опционально)" },
+      "press_release": { "enabled": false, "channels": ["social","website"], "tone": "official", "model_id": "uuid (опционально)" }
+    }
+  },
+  "notifications": {
+    "enabled": true,
+    "bitrix24_user_id": 9,
+    "events": ["pipeline_completed", "pipeline_failed", "release_published", "develop_completed", "develop_failed", "rc_sync_done", "improve_completed"]
+  }
+}
+```

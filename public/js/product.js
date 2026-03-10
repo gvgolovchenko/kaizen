@@ -1798,6 +1798,7 @@ window.toggleAutoSection = function (section, enabled) {
     pipeline: 'autoPipelineSettings',
     pipelineDevelop: 'autoPipelineDevelopSettings',
     pipelinePR: 'autoPipelinePRSettings',
+    notify: 'autoNotifySettings',
   };
   const el = document.getElementById(map[section]);
   if (el) el.style.display = enabled ? 'block' : 'none';
@@ -1845,8 +1846,15 @@ function loadAutomationSettings() {
   togglePipelineTriggerFields();
 
   const pc = pipeline.pipeline_config || {};
-  // Load models for pipeline
-  loadAutomationModels(pc.model_id);
+  const preset = pipeline.preset || 'analysis';
+  document.getElementById('autoPipelinePreset').value = preset;
+
+  // Load models for all per-stage selects
+  const improveModelId = pc.improve?.model_id || pc.model_id || '';
+  const specModelId = pc.spec?.model_id || '';
+  const developModelId = pc.develop?.model_id || '';
+  const prModelId = pc.press_release?.model_id || '';
+  loadAutomationModels({ improve: improveModelId, spec: specModelId, develop: developModelId, press_release: prModelId });
 
   document.getElementById('autoPipelineTemplate').value = pc.template_id || 'general';
   document.getElementById('autoPipelineCount').value = pc.count || 5;
@@ -1871,24 +1879,93 @@ function loadAutomationSettings() {
     cb.checked = channels.includes(cb.value);
   });
 
+  // Apply preset visibility
+  togglePresetFields();
+
   // Last pipeline info
   if (product.last_pipeline_at) {
     document.getElementById('autoPipelineStatus').textContent =
       `Последний запуск: ${new Date(product.last_pipeline_at).toLocaleString('ru')}`;
   }
+
+  // Notifications
+  const notif = auto.notifications || {};
+  document.getElementById('autoNotifyEnabled').checked = !!notif.enabled;
+  toggleAutoSection('notify', !!notif.enabled);
+  document.getElementById('autoNotifyUserId').value = notif.bitrix24_user_id || 9;
+  const notifEvents = notif.events || ['pipeline_completed', 'pipeline_failed', 'release_published', 'develop_completed', 'develop_failed'];
+  document.querySelectorAll('.autoNotifyEvent').forEach(cb => {
+    cb.checked = notifEvents.includes(cb.value);
+  });
 }
 
-async function loadAutomationModels(selectedId) {
+async function loadAutomationModels(selected = {}) {
   try {
     const models = await api('/ai-models');
-    const sel = document.getElementById('autoPipelineModel');
-    sel.innerHTML = '<option value="">— Выберите модель —</option>' +
-      models.map(m => `<option value="${m.id}" ${m.id === selectedId ? 'selected' : ''}>${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    const selects = {
+      improve: document.getElementById('autoPipelineModelImprove'),
+      spec: document.getElementById('autoPipelineModelSpec'),
+      develop: document.getElementById('autoPipelineModelDevelop'),
+      press_release: document.getElementById('autoPipelineModelPR'),
+    };
+
+    const makeOptions = (sel, selectedId, placeholder) => {
+      sel.innerHTML = `<option value="">${placeholder}</option>` +
+        models.map(m => `<option value="${m.id}" ${m.id === selectedId ? 'selected' : ''}>${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    };
+
+    makeOptions(selects.improve, selected.improve, '— Выберите модель —');
+    makeOptions(selects.spec, selected.spec, '— Как у Improve —');
+    makeOptions(selects.develop, selected.develop, '— Как у Improve —');
+    makeOptions(selects.press_release, selected.press_release, '— Как у Improve —');
   } catch {}
 }
 
+window.togglePresetFields = function () {
+  const preset = document.getElementById('autoPipelinePreset').value;
+  const developBlock = document.getElementById('pipelineDevelopBlock');
+  const prBlock = document.getElementById('pipelinePRBlock');
+  const descEl = document.getElementById('presetDescription');
+
+  const descriptions = {
+    analysis: 'Анализ продукта: генерация предложений, утверждение, релиз, спецификация',
+    full_cycle: 'Полный цикл: от анализа до публикации и пресс-релиза',
+    custom: 'Вы выбираете какие этапы включить',
+  };
+  descEl.textContent = descriptions[preset] || '';
+
+  if (preset === 'analysis') {
+    developBlock.style.display = 'none';
+    prBlock.style.display = 'none';
+  } else if (preset === 'full_cycle') {
+    developBlock.style.display = '';
+    prBlock.style.display = '';
+    // Force enable develop and press_release for full_cycle
+    document.getElementById('autoPipelineDevelop').checked = true;
+    document.getElementById('autoPipelinePressRelease').checked = true;
+    toggleAutoSection('pipelineDevelop', true);
+    toggleAutoSection('pipelinePR', true);
+  } else {
+    developBlock.style.display = '';
+    prBlock.style.display = '';
+  }
+};
+
 window.handleSaveAutomation = async function () {
+  const preset = document.getElementById('autoPipelinePreset').value;
+  const improveModelId = document.getElementById('autoPipelineModelImprove').value || null;
+  const specModelId = document.getElementById('autoPipelineModelSpec').value || null;
+  const developModelId = document.getElementById('autoPipelineModelDevelop').value || null;
+  const prModelId = document.getElementById('autoPipelineModelPR').value || null;
+
+  const notifyEvents = [...document.querySelectorAll('.autoNotifyEvent:checked')].map(cb => cb.value);
+
   const automation = {
+    notifications: {
+      enabled: document.getElementById('autoNotifyEnabled').checked,
+      bitrix24_user_id: parseInt(document.getElementById('autoNotifyUserId').value) || 9,
+      events: notifyEvents,
+    },
     rc_auto_sync: {
       enabled: document.getElementById('autoRcSyncEnabled').checked,
       interval_hours: parseInt(document.getElementById('autoRcSyncInterval').value) || 24,
@@ -1903,22 +1980,27 @@ window.handleSaveAutomation = async function () {
     },
     auto_pipeline: {
       enabled: document.getElementById('autoPipelineEnabled').checked,
+      preset,
       trigger: document.getElementById('autoPipelineTrigger').value,
       threshold_count: parseInt(document.getElementById('autoPipelineThreshold').value) || 5,
       schedule_hours: parseInt(document.getElementById('autoPipelineSchedule').value) || 168,
       pipeline_config: {
-        model_id: document.getElementById('autoPipelineModel').value || null,
+        model_id: improveModelId, // backward compat
+        improve: { model_id: improveModelId },
+        spec: specModelId ? { model_id: specModelId } : {},
         template_id: document.getElementById('autoPipelineTemplate').value,
         count: parseInt(document.getElementById('autoPipelineCount').value) || 5,
         auto_approve: document.getElementById('autoPipelineApprove').value,
         version_strategy: document.getElementById('autoPipelineVersionStrategy').value,
         develop: {
-          enabled: document.getElementById('autoPipelineDevelop').checked,
+          enabled: preset === 'full_cycle' || document.getElementById('autoPipelineDevelop').checked,
+          ...(developModelId ? { model_id: developModelId } : {}),
           auto_publish: document.getElementById('autoPipelineAutoPublish').checked,
           test_command: document.getElementById('autoPipelineTestCmd').value || null,
         },
         press_release: {
-          enabled: document.getElementById('autoPipelinePressRelease').checked,
+          enabled: preset === 'full_cycle' || document.getElementById('autoPipelinePressRelease').checked,
+          ...(prModelId ? { model_id: prModelId } : {}),
           channels: [...document.querySelectorAll('.autoPrChannel:checked')].map(cb => cb.value),
           tone: document.getElementById('autoPipelinePrTone').value,
         },
@@ -1930,6 +2012,28 @@ window.handleSaveAutomation = async function () {
     const updated = await api(`/products/${productId}`, { method: 'PUT', body: { automation } });
     product = updated;
     toast('Настройки автоматизации сохранены');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.testNotification = async function () {
+  try {
+    await api('/notify', {
+      method: 'POST',
+      body: {
+        event: 'pipeline_completed',
+        data: {
+          product: product?.name || 'Тестовый продукт',
+          version: '0.0.0-test',
+          release_id: '',
+          stages_count: 5,
+          preset: 'analysis',
+        },
+        product_id: productId,
+      },
+    });
+    toast('Тестовое уведомление отправлено');
   } catch (err) {
     toast(err.message, 'error');
   }

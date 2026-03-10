@@ -105,3 +105,7 @@ export const approveReleases = (processId, releases) =>
 // ── Auto-approve ──
 export const approveAuto = (processId, rule) =>
   request('POST', `/processes/${processId}/approve-auto`, { rule });
+
+// ── Notifications ──
+export const sendNotify = (event, data, product_id) =>
+  request('POST', '/notify', { event, data, product_id });

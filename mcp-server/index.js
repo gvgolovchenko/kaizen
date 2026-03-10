@@ -432,6 +432,18 @@ server.tool(
   'kaizen_run_pipeline',
   `Запустить полный конвейер улучшения продукта одной командой.
 
+Пресеты:
+- "analysis" — этапы 1-5 (improve → approve → release → spec)
+- "full_cycle" — этапы 1-8 (+ develop → publish → press_release)
+- "custom" — выбор этапов вручную через параметры develop/press_release
+
+Multi-model: каждый AI-этап может использовать свою модель.
+- model_id — глобальный fallback для всех этапов
+- improve.model_id — модель для генерации предложений
+- spec.model_id — модель для спецификации
+- develop.model_id — модель для разработки (только claude-code)
+- press_release.model_id — модель для пресс-релиза
+
 Этапы (базовые, всегда выполняются):
 1. AI-улучшение (improve) — генерация предложений
 2. Ожидание завершения процесса (polling)
@@ -439,7 +451,7 @@ server.tool(
 4. Создание релиза из утверждённых задач
 5. Генерация спецификации (prepare_spec)
 
-Опциональные этапы (включаются параметрами):
+Опциональные этапы (включаются пресетом или параметрами):
 6. Разработка (develop_release) — Claude Code реализует задачи
 7. Публикация релиза (auto-publish если тесты пройдены)
 8. Пресс-релиз (prepare_press_release)
@@ -447,7 +459,9 @@ server.tool(
 Полный сквозной конвейер: improve → approve → release → spec → develop → publish → press_release`,
   {
     product_id: z.string().uuid().describe('UUID продукта'),
-    model_id: z.string().uuid().describe('UUID AI-модели'),
+    model_id: z.string().uuid().describe('UUID AI-модели (глобальный fallback для всех этапов)'),
+    preset: z.enum(['analysis', 'full_cycle', 'custom']).default('custom')
+      .describe('Пресет: analysis (1-5), full_cycle (1-8), custom (ручной выбор)'),
     template_id: z.enum(['general', 'ui', 'performance', 'security', 'competitors', 'dx']).default('general')
       .describe('Шаблон промпта'),
     count: z.number().min(1).max(10).default(5).describe('Количество предложений'),
@@ -456,24 +470,53 @@ server.tool(
     auto_approve: z.enum(['all', 'high_and_critical', 'critical_only', 'none']).default('high_and_critical')
       .describe('Правила автоматического утверждения'),
     timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут на каждый этап'),
+    // ── Per-stage model overrides ──
+    improve: z.object({
+      model_id: z.string().uuid().optional().describe('UUID модели для improve (override)'),
+    }).optional().describe('Настройки этапа improve'),
+    spec: z.object({
+      model_id: z.string().uuid().optional().describe('UUID модели для спецификации (override)'),
+    }).optional().describe('Настройки этапа спецификации'),
     // ── Опциональные этапы ──
     develop: z.object({
       enabled: z.boolean().default(false),
+      model_id: z.string().uuid().optional().describe('UUID модели для разработки (override, только claude-code)'),
       git_branch: z.string().optional().describe('Имя ветки (по умолчанию kaizen/release-{version})'),
       test_command: z.string().optional().describe('Команда запуска тестов'),
       auto_publish: z.boolean().default(false).describe('Автоматическая публикация после успешных тестов'),
     }).optional().describe('Настройки этапа разработки (develop_release)'),
     press_release: z.object({
       enabled: z.boolean().default(false),
+      model_id: z.string().uuid().optional().describe('UUID модели для пресс-релиза (override)'),
       channels: z.array(z.string()).default(['social', 'website', 'bitrix24', 'media']).describe('Каналы пресс-релиза'),
       tone: z.string().default('official').describe('Тон пресс-релиза'),
     }).optional().describe('Настройки пресс-релиза'),
   },
-  async ({ product_id, model_id, template_id, count, version, release_name, auto_approve, timeout_min, develop, press_release }) => {
+  async ({ product_id, model_id, preset, template_id, count, version, release_name, auto_approve, timeout_min, improve: improveOpts, spec: specOpts, develop, press_release }) => {
     const stages = [];
 
+    // ── Resolve preset → effective config ──
+    const effectiveDevelop = preset === 'full_cycle'
+      ? { enabled: true, auto_publish: true, ...(develop || {}) }
+      : (develop || {});
+    const effectivePressRelease = preset === 'full_cycle'
+      ? { enabled: true, ...(press_release || {}) }
+      : (press_release || {});
+
+    // ── Per-stage model resolution (override → global fallback) ──
+    const improveModelId = improveOpts?.model_id || model_id;
+    const specModelId = specOpts?.model_id || model_id;
+    const developModelId = effectiveDevelop.model_id || model_id;
+    const prModelId = effectivePressRelease.model_id || model_id;
+
+    stages.push({ stage: '0_config', preset, models: {
+      improve: improveModelId, spec: specModelId,
+      develop: effectiveDevelop.enabled ? developModelId : 'n/a',
+      press_release: effectivePressRelease.enabled ? prModelId : 'n/a',
+    }});
+
     // ── Helper: poll process until done ──
-    async function waitForProcess(processId, stagePrefix) {
+    async function waitForProcess(processId) {
       let result;
       const deadline = Date.now() + timeout_min * 60 * 1000;
       while (Date.now() < deadline) {
@@ -486,10 +529,10 @@ server.tool(
 
     // ── Этап 1: Запуск improve ──
     const proc = await api.createProcess({
-      product_id, model_id, type: 'improve',
+      product_id, model_id: improveModelId, type: 'improve',
       template_id, count, timeout_min,
     });
-    stages.push({ stage: '1_improve_started', process_id: proc.id, status: proc.status });
+    stages.push({ stage: '1_improve_started', process_id: proc.id, status: proc.status, model_id: improveModelId });
 
     // ── Этап 2: Ожидание завершения ──
     const result = await waitForProcess(proc.id);
@@ -534,8 +577,8 @@ server.tool(
     stages.push({ stage: '4_release_created', release_id: release.id, version, issues_count: issueIds.length });
 
     // ── Этап 5: Генерация спецификации ──
-    const specProc = await api.prepareSpec(release.id, { model_id, timeout_min });
-    stages.push({ stage: '5_spec_started', process_id: specProc.id });
+    const specProc = await api.prepareSpec(release.id, { model_id: specModelId, timeout_min });
+    stages.push({ stage: '5_spec_started', process_id: specProc.id, model_id: specModelId });
 
     const specResult = await waitForProcess(specProc.id);
 
@@ -558,18 +601,18 @@ server.tool(
     }
 
     // ── Этап 6: Разработка (опциональный) ──
-    if (develop?.enabled) {
+    if (effectiveDevelop.enabled) {
       const devConfig = {
-        git_branch: develop.git_branch,
-        test_command: develop.test_command,
-        auto_publish: develop.auto_publish || false,
+        git_branch: effectiveDevelop.git_branch,
+        test_command: effectiveDevelop.test_command,
+        auto_publish: effectiveDevelop.auto_publish || false,
       };
       const devProc = await api.developRelease(release.id, {
-        model_id,
+        model_id: developModelId,
         timeout_min,
         ...devConfig,
       });
-      stages.push({ stage: '6_develop_started', process_id: devProc.id });
+      stages.push({ stage: '6_develop_started', process_id: devProc.id, model_id: developModelId });
 
       const devResult = await waitForProcess(devProc.id);
 
@@ -583,7 +626,7 @@ server.tool(
         });
 
         // ── Этап 7: Публикация (если auto_publish и тесты пройдены) ──
-        if (develop.auto_publish && devData.tests_passed) {
+        if (effectiveDevelop.auto_publish && devData.tests_passed) {
           try {
             await api.publishRelease(release.id);
             stages.push({ stage: '7_published', release_id: release.id, version });
@@ -599,15 +642,15 @@ server.tool(
         }
 
         // ── Этап 8: Пресс-релиз (опциональный) ──
-        if (press_release?.enabled && devData.tests_passed) {
+        if (effectivePressRelease.enabled && devData.tests_passed) {
           try {
             const prProc = await api.preparePressRelease(release.id, {
-              model_id,
+              model_id: prModelId,
               timeout_min,
-              channels: press_release.channels,
-              tone: press_release.tone,
+              channels: effectivePressRelease.channels || ['social', 'website', 'bitrix24', 'media'],
+              tone: effectivePressRelease.tone || 'official',
             });
-            stages.push({ stage: '8_press_release_started', process_id: prProc.id });
+            stages.push({ stage: '8_press_release_started', process_id: prProc.id, model_id: prModelId });
 
             const prResult = await waitForProcess(prProc.id);
             if (prResult.status === 'completed') {
@@ -631,19 +674,32 @@ server.tool(
       : 'success';
 
     const nextSteps = [];
-    if (!develop?.enabled) {
+    if (!effectiveDevelop.enabled) {
       nextSteps.push('kaizen_develop_release — запустить разработку');
       nextSteps.push('kaizen_publish_release — опубликовать');
     }
-    if (!press_release?.enabled && pipelineStatus === 'success') {
+    if (!effectivePressRelease.enabled && pipelineStatus === 'success') {
       nextSteps.push('kaizen_prepare_press_release — пресс-релиз');
     }
+
+    // ── Notify via Б24 ──
+    try {
+      const notifyEvent = pipelineStatus === 'success' ? 'pipeline_completed' : 'pipeline_failed';
+      const notifyData = pipelineStatus === 'success'
+        ? { product: product_id, version, release_id: release.id, stages_count: stages.length, preset }
+        : { product: product_id, version, stopped_at: stages[stages.length - 1]?.stage, error: stages[stages.length - 1]?.error };
+      // Fetch product name for notification
+      const prod = await api.getProduct(product_id);
+      if (prod) notifyData.product = prod.name;
+      await api.sendNotify(notifyEvent, notifyData, product_id);
+    } catch {}
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           pipeline: pipelineStatus,
+          preset,
           release_id: release.id,
           stages,
           ...(nextSteps.length > 0 ? { next_steps: nextSteps } : {}),

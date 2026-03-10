@@ -2,6 +2,76 @@
 
 ---
 
+## v1.10.0 — Пресеты конвейера + Мульти-модель + Уведомления в Б24 (2026-03-10)
+
+**Пресеты и per-stage модели для конвейера + уведомления через бота АФИИНА в Битрикс24 при ключевых событиях.**
+
+### Пресеты конвейера (Presets)
+
+- `kaizen_run_pipeline` принимает параметр `preset`:
+  - `analysis` — этапы 1-5 (improve → approve → release → spec)
+  - `full_cycle` — этапы 1-8 (improve → ... → develop → publish → press_release)
+  - `custom` — ручной выбор этапов (как раньше)
+- UI: селектор пресетов в табе автоматизации
+- Карточки этапов с номерами для наглядности
+
+### Per-stage модели (Multi-model Pipeline)
+
+- Каждый этап конвейера может использовать свою AI-модель:
+  - `improve.model_id` — модель для генерации предложений
+  - `spec.model_id` — модель для генерации спецификации
+  - `develop.model_id` — модель для разработки
+  - `press_release.model_id` — модель для пресс-релиза
+- Глобальный `model_id` используется как fallback, если per-stage не задан
+- Scheduler `_triggerPipeline()` поддерживает preset и per-stage model config
+- UI: per-stage выбор моделей (дропдауны) в табе автоматизации
+
+### Уведомления через АФИИНА в Битрикс24
+
+- Новый модуль `server/notifier.js` — отправка сообщений через `im.message.add` от бота АФИИНА (ID 1624)
+- 7 типов событий:
+  - `pipeline_completed` — конвейер успешно завершён
+  - `pipeline_failed` — конвейер завершился с ошибкой
+  - `release_published` — релиз опубликован
+  - `develop_completed` — разработка завершена
+  - `develop_failed` — разработка провалилась
+  - `rc_sync_done` — RC-синхронизация завершена
+  - `improve_completed` — AI-улучшение завершено
+- BB-code форматирование сообщений для Битрикс24
+- Per-product настройки: `automation.notifications` (enabled, bitrix24_user_id, events[])
+- `.env`: `BITRIX24_WEBHOOK_URL`, `BITRIX24_NOTIFY_USER_ID=9`
+
+### API (1 новый эндпоинт)
+
+- `POST /api/notify` — отправка уведомления в Б24
+
+### Интеграция уведомлений
+
+- `server/process-runner.js` — уведомления при develop_completed, develop_failed, release_published
+- `server/scheduler.js` — уведомления при rc_sync_done, pipeline_completed, pipeline_failed
+- `mcp-server/index.js` — уведомления при завершении pipeline
+
+### UI
+
+- Селектор пресетов конвейера (analysis / full_cycle / custom)
+- Per-stage дропдауны выбора AI-модели для каждого этапа
+- Секция «Уведомления в Б24» в табе автоматизации:
+  - Чекбоксы для каждого типа событий
+  - Поле bitrix24_user_id
+  - Кнопка тестирования уведомлений
+
+### Изменённые файлы
+
+- `server/notifier.js` — **новый** модуль уведомлений (im.message.add, BB-code)
+- `server/process-runner.js` — интеграция notifier (develop/publish)
+- `server/scheduler.js` — интеграция notifier (RC sync, pipeline), поддержка preset + per-stage models
+- `server/routes/api.js` — endpoint POST /api/notify
+- `mcp-server/index.js` — preset параметр, per-stage model_id, уведомления при pipeline
+- `public/product.html` — UI пресетов, per-stage модели, секция уведомлений
+- `public/js/product.js` — логика пресетов, per-stage моделей, уведомлений
+
+---
+
 ## v1.9.0 — Сквозной конвейер + Автоматизация продуктов (2026-03-10)
 
 **Полный сквозной конвейер (improve → publish → press_release одной командой) + per-product автоматизация с гибкими настройками.**
@@ -481,8 +551,6 @@
 ## Планируемые улучшения
 
 - Условные переходы в планах (on_success, on_failure, on_condition)
-- Webhook-система при ключевых событиях (release published, pipeline failed)
-- Интеграция с Битрикс24 (автопост при публикации релиза)
 - AI-приоритизация очереди, авто-ретрай с анализом ошибок
 - Метрики и дашборд (время цикла, success rate)
 - Docker-деплой (Dockerfile + nginx)

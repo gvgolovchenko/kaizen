@@ -1135,4 +1135,24 @@ router.post('/rc-tickets/:id/ignore', async (req, res) => {
   }
 });
 
+// ── Notifications ──────────────────────────────────────────
+
+router.post('/notify', async (req, res) => {
+  try {
+    const { event, data, product_id } = req.body;
+    if (!event || !data) return res.status(400).json({ error: 'event and data required' });
+
+    const { notify, getNotifyOpts } = await import('../notifier.js');
+    let opts = {};
+    if (product_id) {
+      const product = await products.getById(product_id);
+      if (product) opts = getNotifyOpts(product);
+    }
+    await notify(event, data, opts);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

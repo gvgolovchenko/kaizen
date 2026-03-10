@@ -4,6 +4,7 @@ import * as processes from './db/processes.js';
 import * as products from './db/products.js';
 import * as releases from './db/releases.js';
 import * as rcSync from './rc-sync.js';
+import { notify, getNotifyOpts } from './notifier.js';
 
 /**
  * Scheduler — планировщик выполнения планов и автоматизации.
@@ -195,11 +196,22 @@ export class Scheduler {
       await products.update(product.id, { last_rc_sync_at: new Date().toISOString() });
 
       // Auto-import по правилам
+      let importedCount = 0;
       if (config.auto_import?.enabled && config.auto_import.rules?.length > 0) {
         const importResult = await rcSync.autoImportByRules(product.id, config.auto_import.rules);
-        if (importResult.imported > 0) {
-          console.log(`Automation: auto-imported ${importResult.imported} RC tickets (rules: ${config.auto_import.rules.join(', ')})`);
+        importedCount = importResult.imported;
+        if (importedCount > 0) {
+          console.log(`Automation: auto-imported ${importedCount} RC tickets (rules: ${config.auto_import.rules.join(', ')})`);
         }
+      }
+
+      // Notify: RC sync done
+      if (syncResult.new > 0 || importedCount > 0) {
+        notify('rc_sync_done', {
+          product: product.name, product_id: product.id,
+          new_count: syncResult.new, updated_count: syncResult.updated,
+          imported_count: importedCount,
+        }, getNotifyOpts(product)).catch(() => {});
       }
 
       // Если триггер auto_pipeline = "on_sync" и были новые тикеты
@@ -244,34 +256,60 @@ export class Scheduler {
 
   /**
    * Фактический запуск конвейера для продукта.
+   * Поддержка per-stage model_id и пресетов.
    */
   async _triggerPipeline(product, config) {
     const pipelineConfig = config.pipeline_config || {};
+    const preset = config.preset || 'custom';
 
-    if (!pipelineConfig.model_id) {
+    // Глобальный model_id (fallback) — может быть на верхнем уровне или в improve
+    const globalModelId = pipelineConfig.model_id
+      || pipelineConfig.improve?.model_id;
+
+    if (!globalModelId) {
       console.error(`Automation: no model_id configured for "${product.name}" pipeline`);
       return;
+    }
+
+    // Per-stage model resolution
+    const improveModelId = pipelineConfig.improve?.model_id || globalModelId;
+    const specModelId = pipelineConfig.spec?.model_id || globalModelId;
+
+    // Resolve develop/press_release based on preset
+    let developConfig = pipelineConfig.develop || {};
+    let pressReleaseConfig = pipelineConfig.press_release || {};
+
+    if (preset === 'full_cycle') {
+      developConfig = { enabled: true, auto_publish: true, ...developConfig };
+      pressReleaseConfig = { enabled: true, ...pressReleaseConfig };
     }
 
     // Auto-increment version
     const version = await this._autoVersion(product.id, pipelineConfig.version_strategy);
 
-    console.log(`Automation: triggering pipeline for "${product.name}" v${version}`);
+    console.log(`Automation: triggering pipeline for "${product.name}" v${version} (preset: ${preset})`);
 
     // Создаём improve-процесс (первый этап pipeline)
     const proc = await processes.create({
       product_id: product.id,
-      model_id: pipelineConfig.model_id,
+      model_id: improveModelId,
       type: 'improve',
       input_template_id: pipelineConfig.template_id || 'general',
       input_count: pipelineConfig.count || 5,
       input_prompt: JSON.stringify({
         _auto_pipeline: true,
+        preset,
         version,
         release_name: `Авто-релиз ${version}`,
         auto_approve: pipelineConfig.auto_approve || 'high_and_critical',
-        develop: pipelineConfig.develop || {},
-        press_release: pipelineConfig.press_release || {},
+        models: {
+          improve: improveModelId,
+          spec: specModelId,
+          develop: developConfig.model_id || globalModelId,
+          press_release: pressReleaseConfig.model_id || globalModelId,
+        },
+        develop: developConfig,
+        press_release: pressReleaseConfig,
       }),
     });
 

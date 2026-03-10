@@ -1,6 +1,6 @@
 # Kaizen — Основные функции
 
-> Версия 1.9.0 | 2026-03-10
+> Версия 1.10.0 | 2026-03-10
 
 ---
 
@@ -104,6 +104,8 @@ Kaizen (改善) — веб-приложение для непрерывного 
 - HTTP-клиент к REST API Kaizen (не дублирует логику, оборачивает существующие эндпоинты)
 - Сквозной конвейер одной командой (`kaizen_run_pipeline`): improve → утверждение → релиз → спецификация → [разработка → публикация → пресс-релиз]
 - 5 базовых + 3 опциональных этапа конвейера
+- **Пресеты конвейера**: `analysis` (этапы 1-5), `full_cycle` (этапы 1-8), `custom` (ручной выбор)
+- **Per-stage модели**: `improve.model_id`, `spec.model_id`, `develop.model_id`, `press_release.model_id` с глобальным `model_id` как fallback
 - Настраиваемые правила утверждения: all, high_and_critical, critical_only, none
 - Auto-publish: автоматическая публикация при успешных тестах
 - Инструмент ожидания: `kaizen_wait_process` с polling
@@ -142,8 +144,23 @@ Kaizen (改善) — веб-приложение для непрерывного 
 
 - Расширенный `kaizen_run_pipeline`: 5 базовых + 3 опциональных этапа
 - Полный цикл одной командой: improve → approve → release → spec → develop → publish → press_release
+- **Пресеты**: `analysis` (этапы 1-5), `full_cycle` (этапы 1-8), `custom` (ручной выбор этапов)
+- **Per-stage модели**: каждый этап может использовать свою AI-модель (`improve.model_id`, `spec.model_id`, `develop.model_id`, `press_release.model_id`) с глобальным `model_id` как fallback
 - Auto-publish: при `auto_publish: true` и успешных тестах — автоматическая публикация
 - Endpoint `POST /processes/:id/approve-auto` — утверждение по правилу (all, high_and_critical, critical_only)
+- UI: селектор пресетов, per-stage выбор моделей в табе автоматизации, карточки этапов с номерами
+
+### 17. Уведомления (Б24)
+
+- Модуль `server/notifier.js` — отправка уведомлений через бота АФИИНА (ID 1624) в Битрикс24
+- Метод `im.message.add` через webhook URL
+- 7 типов событий: `pipeline_completed`, `pipeline_failed`, `release_published`, `develop_completed`, `develop_failed`, `rc_sync_done`, `improve_completed`
+- BB-code форматирование сообщений для Битрикс24
+- Endpoint `POST /api/notify` для отправки уведомлений
+- Интеграция в: `process-runner.js` (develop/publish), `scheduler.js` (RC sync), `mcp-server` (pipeline)
+- Per-product настройки уведомлений в JSONB `automation.notifications`: `enabled`, `bitrix24_user_id`, `events[]`
+- UI: секция «Уведомления в Б24» в табе автоматизации — чекбоксы событий и кнопка тестирования
+- `.env`: `BITRIX24_WEBHOOK_URL`, `BITRIX24_NOTIFY_USER_ID=9`
 
 ---
 
@@ -158,6 +175,7 @@ Kaizen (改善) — веб-приложение для непрерывного 
 7. **MCP-интеграция** — Claude Code управляет продуктами через 29 инструментов, сквозной конвейер одной командой
 8. **Сквозной конвейер** — improve → утверждение → релиз → спецификация → разработка → публикация → пресс-релиз — всё автоматически
 9. **Автоматизация продуктов** — RC auto-sync, auto-import, auto-pipeline с гибкими per-product настройками — 0 ручного труда
+10. **Уведомления в Б24** — автоматические уведомления через бота АФИИНА при ключевых событиях (публикация, ошибки, завершение pipeline)
 
 ---
 
@@ -238,11 +256,19 @@ Kaizen (改善) — веб-приложение для непрерывного 
 - Миграция 014: automation JSONB, last_rc_sync_at, last_pipeline_at
 - 1 новый API-эндпоинт, расширен Scheduler, rc-sync
 
-### Этап 10: Планируется
+### Этап 10: Пресеты + Мульти-модель + Уведомления (v1.10.0) — Готово
+
+- Пресеты конвейера: `analysis` (этапы 1-5), `full_cycle` (этапы 1-8), `custom` (ручной)
+- Per-stage модели: каждый этап конвейера может использовать свою AI-модель
+- Уведомления через бота АФИИНА (ID 1624) в Битрикс24 — 7 типов событий
+- Модуль `server/notifier.js` — BB-code сообщения через `im.message.add`
+- Endpoint `POST /api/notify`
+- Per-product настройки уведомлений (automation.notifications)
+- UI: селектор пресетов, per-stage модели, секция уведомлений с тестовой кнопкой
+
+### Этап 11: Планируется
 
 - Условные переходы в планах (on_success, on_failure, on_condition)
-- Webhook-система при ключевых событиях
-- Интеграция с Битрикс24 (автопост при публикации)
 - Docker-деплой
 - Метрики и дашборд (время цикла, success rate)
 - WebSocket для real-time обновлений процессов

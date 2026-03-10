@@ -266,34 +266,70 @@
               <div style="font-size:0.8rem;color:var(--text-dim)">168 = раз в неделю, 24 = раз в день</div>
             </div>
 
+            <h4 style="margin:16px 0 8px;font-size:0.9rem">Пресет конвейера</h4>
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Пресет</label>
+              <select id="autoPipelinePreset" onchange="togglePresetFields()">
+                <option value="analysis">Анализ (этапы 1-5: improve → spec)</option>
+                <option value="full_cycle">Полный цикл (этапы 1-8: improve → press_release)</option>
+                <option value="custom">Пользовательский (выбор этапов)</option>
+              </select>
+              <div style="font-size:0.8rem;color:var(--text-dim);margin-top:4px" id="presetDescription">
+                Анализ продукта: генерация предложений, утверждение, релиз, спецификация
+              </div>
+            </div>
+
             <h4 style="margin:16px 0 8px;font-size:0.9rem">Настройки конвейера</h4>
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Модель ИИ *</label>
-              <select id="autoPipelineModel"></select>
+
+            <!-- Этап 1: Improve -->
+            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+              <div style="font-weight:500;margin-bottom:8px">1. Improve — генерация предложений</div>
+              <div class="form-group" style="margin-bottom:8px">
+                <label>Модель ИИ *</label>
+                <select id="autoPipelineModelImprove" class="autoModelSelect"></select>
+              </div>
+              <div class="form-group" style="margin-bottom:8px">
+                <label>Шаблон</label>
+                <select id="autoPipelineTemplate">
+                  <option value="general">Общий</option>
+                  <option value="ui">UI/UX</option>
+                  <option value="performance">Производительность</option>
+                  <option value="security">Безопасность</option>
+                  <option value="competitors">Конкуренты</option>
+                  <option value="dx">Developer Experience</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label>Кол-во предложений (1–10)</label>
+                <input type="number" id="autoPipelineCount" value="5" min="1" max="10" style="max-width:120px">
+              </div>
             </div>
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Шаблон</label>
-              <select id="autoPipelineTemplate">
-                <option value="general">Общий</option>
-                <option value="ui">UI/UX</option>
-                <option value="performance">Производительность</option>
-                <option value="security">Безопасность</option>
-                <option value="competitors">Конкуренты</option>
-                <option value="dx">Developer Experience</option>
-              </select>
+
+            <!-- Этапы 2-3: Approve -->
+            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+              <div style="font-weight:500;margin-bottom:8px">2-3. Approve — утверждение</div>
+              <div class="form-group" style="margin-bottom:0">
+                <label>Правило утверждения</label>
+                <select id="autoPipelineApprove">
+                  <option value="all">Все</option>
+                  <option value="high_and_critical" selected>High + Critical</option>
+                  <option value="critical_only">Только Critical</option>
+                </select>
+              </div>
             </div>
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Кол-во предложений (1–10)</label>
-              <input type="number" id="autoPipelineCount" value="5" min="1" max="10" style="max-width:120px">
+
+            <!-- Этап 5: Spec -->
+            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+              <div style="font-weight:500;margin-bottom:8px">5. Spec — генерация спецификации</div>
+              <div class="form-group" style="margin-bottom:0">
+                <label>Модель ИИ</label>
+                <select id="autoPipelineModelSpec" class="autoModelSelect">
+                  <option value="">— Как у Improve —</option>
+                </select>
+                <div style="font-size:0.8rem;color:var(--text-dim)">Если не выбрана — используется модель из Improve</div>
+              </div>
             </div>
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Правило утверждения</label>
-              <select id="autoPipelineApprove">
-                <option value="all">Все</option>
-                <option value="high_and_critical" selected>High + Critical</option>
-                <option value="critical_only">Только Critical</option>
-              </select>
-            </div>
+
             <div class="form-group" style="margin-bottom:10px">
               <label>Стратегия версий</label>
               <select id="autoPipelineVersionStrategy">
@@ -301,45 +337,115 @@
               </select>
             </div>
 
-            <h4 style="margin:16px 0 8px;font-size:0.9rem">Дополнительные этапы</h4>
-            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <input type="checkbox" id="autoPipelineDevelop" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelineDevelop', this.checked)">
-              <span style="font-weight:500">Разработка (develop_release)</span>
-            </label>
-            <div id="autoPipelineDevelopSettings" style="display:none;padding-left:28px;margin-bottom:10px">
-              <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                <input type="checkbox" id="autoPipelineAutoPublish" style="width:auto;accent-color:var(--accent)">
-                <span>Авто-публикация (если тесты пройдены)</span>
-              </label>
-              <div class="form-group" style="margin-top:6px">
-                <label>Команда тестов</label>
-                <input type="text" id="autoPipelineTestCmd" placeholder="npm test">
+            <!-- Этапы 6-7: Develop (условный) -->
+            <div id="pipelineDevelopBlock">
+              <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <input type="checkbox" id="autoPipelineDevelop" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelineDevelop', this.checked)">
+                  <span style="font-weight:500">6-7. Develop — разработка + публикация</span>
+                </div>
+                <div id="autoPipelineDevelopSettings" style="display:none;padding-left:8px">
+                  <div class="form-group" style="margin-bottom:8px">
+                    <label>Модель ИИ</label>
+                    <select id="autoPipelineModelDevelop" class="autoModelSelect">
+                      <option value="">— Как у Improve —</option>
+                    </select>
+                    <div style="font-size:0.8rem;color:var(--text-dim)">Только claude-code провайдер</div>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <input type="checkbox" id="autoPipelineAutoPublish" style="width:auto;accent-color:var(--accent)">
+                    <span>Авто-публикация (если тесты пройдены)</span>
+                  </label>
+                  <div class="form-group" style="margin-top:6px;margin-bottom:0">
+                    <label>Команда тестов</label>
+                    <input type="text" id="autoPipelineTestCmd" placeholder="npm test">
+                  </div>
+                </div>
               </div>
             </div>
 
-            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <input type="checkbox" id="autoPipelinePressRelease" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelinePR', this.checked)">
-              <span style="font-weight:500">Пресс-релиз</span>
-            </label>
-            <div id="autoPipelinePRSettings" style="display:none;padding-left:28px;margin-bottom:10px">
-              <div class="form-group" style="margin-bottom:6px">
-                <label>Каналы</label>
-                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="social" style="width:auto;accent-color:var(--accent)" checked> Соцсети</label>
-                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="website" style="width:auto;accent-color:var(--accent)" checked> Сайт</label>
-                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="bitrix24" style="width:auto;accent-color:var(--accent)"> Битрикс24</label>
-                <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="media" style="width:auto;accent-color:var(--accent)"> СМИ</label>
-              </div>
-              <div class="form-group">
-                <label>Тональность</label>
-                <select id="autoPipelinePrTone">
-                  <option value="official">Официальная</option>
-                  <option value="friendly">Дружелюбная</option>
-                  <option value="technical">Техническая</option>
-                </select>
+            <!-- Этап 8: Press Release (условный) -->
+            <div id="pipelinePRBlock">
+              <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <input type="checkbox" id="autoPipelinePressRelease" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelinePR', this.checked)">
+                  <span style="font-weight:500">8. Press Release — пресс-релиз</span>
+                </div>
+                <div id="autoPipelinePRSettings" style="display:none;padding-left:8px">
+                  <div class="form-group" style="margin-bottom:8px">
+                    <label>Модель ИИ</label>
+                    <select id="autoPipelineModelPR" class="autoModelSelect">
+                      <option value="">— Как у Improve —</option>
+                    </select>
+                  </div>
+                  <div class="form-group" style="margin-bottom:6px">
+                    <label>Каналы</label>
+                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="social" style="width:auto;accent-color:var(--accent)" checked> Соцсети</label>
+                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="website" style="width:auto;accent-color:var(--accent)" checked> Сайт</label>
+                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="bitrix24" style="width:auto;accent-color:var(--accent)"> Битрикс24</label>
+                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="media" style="width:auto;accent-color:var(--accent)"> СМИ</label>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0">
+                    <label>Тональность</label>
+                    <select id="autoPipelinePrTone">
+                      <option value="official">Официальная</option>
+                      <option value="friendly">Дружелюбная</option>
+                      <option value="technical">Техническая</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div id="autoPipelineStatus" style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)"></div>
+          </div>
+        </div>
+
+        <!-- Notifications -->
+        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
+              <input type="checkbox" id="autoNotifyEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('notify', this.checked)">
+              Уведомления в Б24
+            </label>
+            <span style="font-size:0.8rem;color:var(--text-dim)">Сообщения от АФИИНЫ при ключевых событиях</span>
+          </div>
+          <div id="autoNotifySettings" style="display:none;padding-left:28px">
+            <div class="form-group" style="margin-bottom:10px">
+              <label>ID пользователя Б24</label>
+              <input type="number" id="autoNotifyUserId" value="9" min="1" style="max-width:120px">
+              <div style="font-size:0.8rem;color:var(--text-dim)">Кому отправлять уведомления</div>
+            </div>
+            <div style="font-size:0.85rem;margin-bottom:8px;font-weight:500">Типы событий:</div>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="pipeline_completed" style="width:auto;accent-color:var(--accent)" checked>
+              Конвейер завершён
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="pipeline_failed" style="width:auto;accent-color:var(--accent)" checked>
+              Конвейер остановлен (ошибка)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="release_published" style="width:auto;accent-color:var(--accent)" checked>
+              Релиз опубликован
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="develop_completed" style="width:auto;accent-color:var(--accent)" checked>
+              Разработка завершена
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="develop_failed" style="width:auto;accent-color:var(--accent)" checked>
+              Разработка не удалась
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="rc_sync_done" style="width:auto;accent-color:var(--accent)">
+              RC-синхронизация завершена
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <input type="checkbox" class="autoNotifyEvent" value="improve_completed" style="width:auto;accent-color:var(--accent)">
+              AI-улучшение завершено
+            </label>
+            <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="testNotification()">Тест уведомления</button>
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.9.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.10.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
@@ -30,6 +30,7 @@ kaizen/
 │   ├── ai-caller.js              # Универсальный AI caller (6 провайдеров + streaming)
 │   ├── utils.js                  # parseJsonFromAI(), maskApiKey(), detectTestCommand()
 │   ├── process-runner.js         # Фоновый исполнитель AI-процессов
+│   ├── notifier.js               # Уведомления в Б24 через бота АФИИНА (im.message.add)
 │   ├── queue-manager.js          # QueueManager — контроль параллелизма по провайдерам
 │   ├── scheduler.js              # Scheduler — планировщик выполнения планов (tick 30с)
 │   ├── db/
@@ -194,6 +195,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | POST | /api/plans/:id/steps | Добавить шаг к плану |
 | PUT | /api/plans/:id/steps/:stepId | Обновить шаг |
 | DELETE | /api/plans/:id/steps/:stepId | Удалить шаг |
+| POST | /api/notify | Отправить уведомление в Б24 (event_type, product_id, data) |
 
 ## Бизнес-логика
 
@@ -204,7 +206,8 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
 - **Очередь процессов (QueueManager)**: POST /processes ставит процесс в очередь. Контроль параллелизма по провайдерам: ollama:1, mlx:1, claude-code:2, anthropic:3, openai:3, google:3. Статусы: pending → queued → running → completed/failed. При завершении — автоматический запуск следующего queued-процесса (`FOR UPDATE SKIP LOCKED`). Восстановление состояния при перезапуске сервера. Frontend: badge «queued», позиция в очереди, кнопка отмены.
 - **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Планы с шагами (depends_on для зависимостей). Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), поиск ready шагов, запуск через QueueManager. Каждые 2 мин — `_runAutomation()`: RC auto-sync по расписанию, auto-import по правилам приоритетов, авто-запуск pipeline (threshold/schedule/on_sync). Обратная связь: при завершении процесса → обновление шага → проверка следующих. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
-- **Автоматизация продуктов**: JSONB `automation` в products — per-product настройки rc_auto_sync (interval_hours, auto_import rules) и auto_pipeline (trigger: threshold/schedule/on_sync, pipeline_config с model_id, auto_approve, develop, press_release). UI: таб «Автоматизация» на странице продукта.
+- **Автоматизация продуктов**: JSONB `automation` в products — per-product настройки rc_auto_sync (interval_hours, auto_import rules), auto_pipeline (trigger: threshold/schedule/on_sync, preset: analysis/full_cycle/custom, per-stage model_id, pipeline_config) и notifications (enabled, bitrix24_user_id, events[]). UI: таб «Автоматизация» на странице продукта.
+- **Уведомления в Б24**: модуль `notifier.js` отправляет сообщения через бота АФИИНА (ID 1624) методом `im.message.add`. 7 типов событий (pipeline_completed/failed, release_published, develop_completed/failed, rc_sync_done, improve_completed). BB-code форматирование. Интегрирован в process-runner, scheduler, mcp-server.
 - **Асинхронные AI-процессы**: POST /processes создаёт запись + ставит в очередь QueueManager. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend: polling 4с (активные) / 10с (покой), живая длительность для running-процессов.
 - **Уведомления о статусах**: create/publish/remove релизов возвращают `status_changes`, фронтенд показывает toast-info с деталями
 - **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues, сохраняет approved_indices (повторное одобрение — disabled чекбоксы)
@@ -248,4 +251,4 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
   - RC: `rc_test`, `rc_sync`, `rc_list_tickets`, `rc_import_tickets`
   - Формирование релиза: `form_release`, `approve_releases`
   - **Конвейер**: `run_pipeline` — полный сквозной цикл одной командой
-- **kaizen_run_pipeline**: 5 базовых этапов (improve → approve → release → spec) + 3 опциональных (develop → publish → press_release). Авто-утверждение по правилам, polling статусов, auto-publish при успешных тестах
+- **kaizen_run_pipeline**: 5 базовых этапов (improve → approve → release → spec) + 3 опциональных (develop → publish → press_release). Пресеты: analysis (1-5), full_cycle (1-8), custom. Per-stage model_id (improve/spec/develop/press_release) с глобальным fallback. Авто-утверждение по правилам, polling статусов, auto-publish при успешных тестах

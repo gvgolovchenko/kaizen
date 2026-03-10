@@ -7,6 +7,7 @@ import * as aiModels from './db/ai-models.js';
 import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
 import { parseJsonFromAI, detectTestCommand } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
+import { notify, getNotifyOpts } from './notifier.js';
 
 /**
  * Watchdog wrapper — guarantees a Promise settles within timeoutMs.
@@ -245,6 +246,14 @@ ${fileContext ? `\nНиже приведён контекст проекта (ф
     // Reset dev_status on failure for develop_release processes
     if (proc?.type === 'develop_release' && proc?.release_id) {
       await releases.updateDevInfo(proc.release_id, { dev_status: 'failed' }).catch(() => {});
+      // Notify: develop failed
+      if (product) {
+        notify('develop_failed', {
+          product: product.name,
+          version: proc.release_id,
+          error: err.message,
+        }, getNotifyOpts(product)).catch(() => {});
+      }
     }
 
     console.error(`Process ${processId} failed:`, err.message);
@@ -1050,6 +1059,11 @@ ${issuesList}`;
         message: `Релиз ${release.version} автоматически опубликован (тесты пройдены)`,
         data: { release_id: release.id, version: release.version },
       });
+      // Notify: release published
+      notify('release_published', {
+        product: product.name, version: release.version,
+        issues_count: release.issues?.length || 0, product_id: product.id,
+      }, getNotifyOpts(product)).catch(() => {});
     } catch (pubErr) {
       await processLogs.create({
         process_id: processId,
@@ -1058,6 +1072,19 @@ ${issuesList}`;
         data: { error: pubErr.message },
       });
     }
+  }
+
+  // 14. Notify: develop completed/failed
+  if (resultObj.tests_passed) {
+    notify('develop_completed', {
+      product: product.name, version: release.version,
+      branch: resultObj.branch, tests_passed: true, commit: resultObj.commit_hash,
+    }, getNotifyOpts(product)).catch(() => {});
+  } else {
+    notify('develop_failed', {
+      product: product.name, version: release.version,
+      error: 'тесты не пройдены',
+    }, getNotifyOpts(product)).catch(() => {});
   }
 }
 
