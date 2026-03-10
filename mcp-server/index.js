@@ -571,6 +571,136 @@ server.tool(
 );
 
 // ══════════════════════════════════════════════════════════════
+// RIVC.CONNECT
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_rc_test',
+  'Проверить подключение к Rivc.Connect HelpDesk (MS SQL)',
+  {},
+  async () => {
+    const result = await api.rcTest();
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_rc_sync',
+  'Загрузить тикеты-бэклог из Rivc.Connect для продукта (ручная синхронизация)',
+  { product_id: z.string().describe('UUID продукта Kaizen') },
+  async ({ product_id }) => {
+    const stats = await api.rcSync(product_id);
+    return { content: [{ type: 'text', text: `Синхронизация завершена: ${stats.new} новых, ${stats.updated} обновлённых (всего ${stats.total})` }] };
+  }
+);
+
+server.tool(
+  'kaizen_rc_list_tickets',
+  'Список кэшированных тикетов RC для продукта',
+  {
+    product_id: z.string().describe('UUID продукта Kaizen'),
+    sync_status: z.enum(['new', 'imported', 'ignored']).optional().describe('Фильтр по статусу синхронизации'),
+  },
+  async ({ product_id, sync_status }) => {
+    const tickets = await api.rcListTickets(product_id, sync_status);
+    return { content: [{ type: 'text', text: JSON.stringify(tickets, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_rc_import_tickets',
+  'Импортировать тикеты RC → задачи Kaizen',
+  { ticket_ids: z.array(z.string()).describe('Массив UUID кэшированных тикетов из kaizen_rc_tickets') },
+  async ({ ticket_ids }) => {
+    const issues = await api.rcImportBulk(ticket_ids);
+    return { content: [{ type: 'text', text: `Импортировано ${issues.length} задач:\n${issues.map(i => `- ${i.title} (${i.type}, ${i.priority})`).join('\n')}` }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// FORM RELEASE (AI)
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_form_release',
+  'AI-формирование релизов из открытых задач продукта. Стратегии: balanced, critical_first, by_topic, single.',
+  {
+    product_id: z.string().describe('UUID продукта'),
+    model_id: z.string().describe('UUID AI-модели'),
+    strategy: z.enum(['balanced', 'critical_first', 'by_topic', 'single']).default('balanced').describe('Стратегия группировки'),
+    max_releases: z.number().min(1).max(10).default(3).describe('Максимум релизов'),
+    auto_approve: z.boolean().default(false).describe('Авто-утверждение (создать релизы без ручного обзора)'),
+    timeout_min: z.number().min(3).max(60).default(20).optional(),
+  },
+  async ({ product_id, model_id, strategy, max_releases, auto_approve, timeout_min }) => {
+    const proc = await api.createProcess({
+      product_id,
+      model_id,
+      type: 'form_release',
+      prompt: '',
+      config: { strategy, max_releases, auto_approve },
+      timeout_min: timeout_min || 20,
+    });
+
+    // Poll until completed
+    let result;
+    const maxWait = (timeout_min || 20) * 60 * 1000;
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      await new Promise(r => setTimeout(r, 5000));
+      result = await api.getProcess(proc.id);
+      if (result.status === 'completed' || result.status === 'failed') break;
+    }
+
+    if (!result || result.status !== 'completed') {
+      return { content: [{ type: 'text', text: `Процесс ${proc.id} не завершён (статус: ${result?.status || 'unknown'}). Используйте kaizen_wait_process для ожидания.` }] };
+    }
+
+    const r = result.result;
+    let text = `Формирование релиза завершено (process_id: ${proc.id})\n\n`;
+    if (r.auto_approved) {
+      text += `Авто-утверждение: создано ${r.created_releases?.length || 0} релизов\n`;
+      (r.created_releases || []).forEach(cr => {
+        text += `  - ${cr.version} — ${cr.name} (${cr.issues} задач)\n`;
+      });
+    } else {
+      text += `Предложение: ${r.releases?.length || 0} релизов\n`;
+      (r.releases || []).forEach(rel => {
+        text += `\n### ${rel.version} — ${rel.name} [${rel.priority}]\n`;
+        text += `${rel.description}\n`;
+        (rel.issues || []).forEach(iss => {
+          text += `  - ${iss.title} (${iss.type}, ${iss.priority}) [id: ${iss.id}]\n`;
+        });
+        if (rel.rationale) text += `Обоснование: ${rel.rationale}\n`;
+      });
+      if (r.unassigned?.length) text += `\nНе включены: ${r.unassigned.length} задач\n`;
+      text += `\nИспользуйте kaizen_approve_releases для утверждения.`;
+    }
+    if (r.summary) text += `\n\n${r.summary}`;
+
+    return { content: [{ type: 'text', text }] };
+  }
+);
+
+server.tool(
+  'kaizen_approve_releases',
+  'Утвердить предложенные ИИ релизы (после kaizen_form_release)',
+  {
+    process_id: z.string().describe('UUID процесса form_release'),
+    releases: z.array(z.object({
+      version: z.string(),
+      name: z.string(),
+      description: z.string().optional(),
+      issue_ids: z.array(z.string()).describe('UUID задач для включения в релиз'),
+    })).describe('Массив релизов для создания'),
+  },
+  async ({ process_id, releases }) => {
+    const result = await api.approveReleases(process_id, releases);
+    return { content: [{ type: 'text', text: `Утверждено: создано ${result.created_releases} релизов, ${result.total_issues} задач включено.\n${result.releases.map(r => `  - ${r.version} — ${r.name} (${r.issues} задач)`).join('\n')}` }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
 // START SERVER
 // ══════════════════════════════════════════════════════════════
 

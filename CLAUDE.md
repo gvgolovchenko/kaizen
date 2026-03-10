@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.7.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.8.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
@@ -41,12 +41,15 @@ kaizen/
 │   │   ├── processes.js          # getAll, getByProduct, getById, create, update, remove, getNextQueued, getQueuePosition
 │   │   ├── process-logs.js       # getByProcess, create
 │   │   ├── plans.js              # getAll, getByProduct, getById, create, update, updateStatus, remove
-│   │   └── plan-steps.js         # getByPlan, getById, create, bulkCreate, update, remove, getReadySteps
+│   │   ├── plan-steps.js         # getByPlan, getById, create, bulkCreate, update, remove, getReadySteps
+│   │   └── rc-tickets.js         # getByProduct, getById, getByRcTicketId, upsert, updateSyncStatus, countByProduct
+│   ├── rc-client.js              # MS SQL клиент для Rivc.Connect HelpDesk
+│   ├── rc-sync.js                # Синхронизация и импорт тикетов RC → Kaizen
 │   └── routes/
 │       └── api.js                # REST-эндпоинты
 ├── mcp-server/
 │   ├── package.json              # MCP-сервер: @modelcontextprotocol/sdk
-│   ├── index.js                  # 27 MCP-инструментов (kaizen_*) + полный конвейер
+│   ├── index.js                  # 29 MCP-инструментов (kaizen_*) + полный конвейер
 │   └── api-client.js             # HTTP-клиент к REST API (localhost:3034)
 ├── database/
 │   ├── exec-sql.js               # Утилита миграций
@@ -62,7 +65,8 @@ kaizen/
 │       ├── 009_product_rivc_connect.sql
 │       ├── 010_press_release.sql
 │       ├── 011_queue.sql           # Статус queued, priority, plan_step_id
-│       └── 012_plans.sql           # Таблицы планов и шагов
+│       ├── 012_plans.sql           # Таблицы планов и шагов
+│       └── 013_rc_tickets.sql      # RC-тикеты кэш + rc_ticket_id в issues
 ├── public/
 │   ├── index.html                # Список продуктов (карточки)
 │   ├── product.html              # Детали: задачи + релизы + процессы + планы
@@ -117,7 +121,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 
 - **Схема**: `opii`
 - **Префикс**: `kaizen_` (изоляция в общей схеме)
-- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps
+- **Таблицы**: kaizen_products, kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps, kaizen_rc_tickets
 - **PK**: UUID (gen_random_uuid())
 - **Каскадное удаление**: products → issues + releases + processes + plans; processes → process_logs; plans → plan_steps
 - **Триггеры**: updated_at на products, issues, releases, processes, plans, plan_steps
@@ -164,8 +168,18 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | POST | /api/processes/:id/approve-roadmap | Утвердить дорожную карту → создать релизы + issues |
 | POST | /api/processes/:id/restart | Перезапустить процесс (создаёт копию) |
 | POST | /api/processes/:id/cancel | Отменить queued-процесс |
+| POST | /api/processes/:id/approve-releases | Утвердить предложенные AI-релизы (form_release) |
 | DELETE | /api/processes/:id | Удалить процесс + логи |
 | GET | /api/products/:id/processes | Процессы конкретного продукта |
+| GET | /api/rc/test | Проверить подключение к Rivc.Connect |
+| GET | /api/rc/systems | Список систем RC |
+| GET | /api/rc/systems/:id/modules | Модули системы RC |
+| POST | /api/products/:id/rc-sync | Синхронизировать тикеты из RC |
+| GET | /api/products/:id/rc-tickets | Кэшированные RC-тикеты продукта |
+| GET | /api/rc-tickets/:id | Детали RC-тикета |
+| POST | /api/rc-tickets/:id/import | Импортировать тикет → задача |
+| POST | /api/rc-tickets/import-bulk | Массовый импорт тикетов |
+| POST | /api/rc-tickets/:id/ignore | Игнорировать тикет |
 | GET | /api/queue/stats | Статистика очереди по провайдерам |
 | GET | /api/plans | Список планов (?status=) |
 | GET | /api/products/:id/plans | Планы конкретного продукта |
@@ -197,6 +211,8 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты. Стриминг NDJSON с промежуточными checkpoint-логами (7 фаз)
 - **Дорожная карта из документа**: POST /processes с type=roadmap_from_doc → парсит документ в релизы + задачи
 - **Пресс-релиз**: POST /releases/:id/prepare-press-release → AI генерирует PR-материалы для 4 каналов (соцсети, сайт, Б24, СМИ)
+- **Формирование релиза (AI)**: POST /processes с type=form_release → AI группирует открытые задачи в релизы. 4 стратегии (balanced, critical_first, by_topic, single). Авто-утверждение или ручной обзор предложения.
+- **Интеграция с Rivc.Connect**: MS SQL клиент → синхронизация тикетов HelpDesk → кэш в kaizen_rc_tickets → ручной импорт в задачи (kaizen_issues) с сохранением rc_ticket_id
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
 - **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google
 - **claude-code провайдер**: два режима вызова CLI `claude`:
@@ -218,7 +234,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Транспорт**: stdio (стандарт Claude Code)
 - **API-клиент**: HTTP к `http://localhost:3034/api` (env `KAIZEN_API_URL`)
 - **Подключение**: `~/.claude/settings.json` → `mcpServers.kaizen`
-- **27 инструментов** с префиксом `kaizen_`:
+- **29 инструментов** с префиксом `kaizen_`:
   - Продукты: `list_products`, `get_product`
   - Задачи: `list_issues`, `create_issue`
   - Модели: `list_models`
@@ -227,5 +243,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
   - Релизы: `list_releases`, `create_release`, `get_release`, `prepare_spec`, `get_spec`, `develop_release`, `publish_release`, `prepare_press_release`
   - Очередь: `queue_stats`
   - Планы: `list_plans`, `get_plan`, `create_plan`, `start_plan`, `cancel_plan`
+  - RC: `rc_test`, `rc_sync`, `rc_list_tickets`, `rc_import_tickets`
+  - Формирование релиза: `form_release`, `approve_releases`
   - **Конвейер**: `run_pipeline` — полный цикл (improve → approve → release → spec) одной командой
 - **kaizen_run_pipeline**: авто-утверждение по правилам (`all`, `high_and_critical`, `critical_only`, `none`), polling статусов, создание релиза + спецификации

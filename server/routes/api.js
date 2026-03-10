@@ -9,6 +9,9 @@ import { callAI } from '../ai-caller.js';
 import { parseJsonFromAI, maskApiKey, detectTestCommand } from '../utils.js';
 import * as plans from '../db/plans.js';
 import * as planSteps from '../db/plan-steps.js';
+import * as rcClient from '../rc-client.js';
+import * as rcTickets from '../db/rc-tickets.js';
+import * as rcSync from '../rc-sync.js';
 
 const router = Router();
 
@@ -474,7 +477,7 @@ router.get('/processes/:id', async (req, res) => {
 
 router.post('/processes', async (req, res) => {
   try {
-    const { product_id, model_id, type, prompt, template_id, count, timeout_min } = req.body;
+    const { product_id, model_id, type, prompt, template_id, count, timeout_min, config } = req.body;
 
     if (!product_id) return res.status(400).json({ error: 'product_id is required' });
     if (!model_id) return res.status(400).json({ error: 'model_id is required' });
@@ -488,15 +491,18 @@ router.post('/processes', async (req, res) => {
     if (type === 'roadmap_from_doc' && !prompt) {
       return res.status(400).json({ error: 'prompt (document text) is required for roadmap_from_doc' });
     }
-    if (type !== 'roadmap_from_doc' && !prompt && !template_id) {
+    if (type !== 'roadmap_from_doc' && type !== 'form_release' && !prompt && !template_id) {
       return res.status(400).json({ error: 'prompt or template_id is required' });
     }
+
+    // For form_release, store config as JSON in input_prompt
+    const inputPrompt = type === 'form_release' ? JSON.stringify(config || {}) : (prompt || null);
 
     const proc = await processes.create({
       product_id,
       model_id,
       type: type || 'improve',
-      input_prompt: prompt || null,
+      input_prompt: inputPrompt,
       input_template_id: template_id || null,
       input_count: Math.min(Math.max(parseInt(count) || 5, 1), 10),
     });
@@ -684,6 +690,49 @@ router.post('/processes/:id/approve-roadmap', async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+router.post('/processes/:id/approve-releases', async (req, res) => {
+  try {
+    const proc = await processes.getById(req.params.id);
+    if (!proc) return res.status(404).json({ error: 'Process not found' });
+    if (proc.type !== 'form_release') return res.status(400).json({ error: 'Wrong process type' });
+    if (proc.status !== 'completed') return res.status(400).json({ error: 'Process not completed' });
+    if (proc.result?.auto_approved) return res.status(400).json({ error: 'Already auto-approved' });
+
+    const { releases: releasesToCreate } = req.body;
+    if (!Array.isArray(releasesToCreate) || releasesToCreate.length === 0) {
+      return res.status(400).json({ error: 'releases array is required' });
+    }
+
+    const createdReleases = [];
+    let totalIssues = 0;
+
+    for (const rel of releasesToCreate) {
+      const issueIds = rel.issue_ids || [];
+      if (issueIds.length === 0) continue;
+
+      const created = await releases.create({
+        product_id: proc.product_id,
+        version: rel.version,
+        name: rel.name,
+        description: rel.description || null,
+        issue_ids: issueIds,
+      });
+      totalIssues += issueIds.length;
+      createdReleases.push({ id: created.id, version: created.version, name: created.name, issues: issueIds.length });
+    }
+
+    await processes.update(proc.id, { approved_count: totalIssues });
+
+    res.status(201).json({
+      created_releases: createdReleases.length,
+      total_issues: totalIssues,
+      releases: createdReleases,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -929,6 +978,95 @@ router.delete('/plans/:id/steps/:stepId', async (req, res) => {
     const ok = await planSteps.remove(req.params.stepId);
     if (!ok) return res.status(404).json({ error: 'Step not found' });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Rivc.Connect ─────────────────────────────────────────
+
+router.get('/rc/test', async (req, res) => {
+  try {
+    const result = await rcClient.testConnection();
+    res.json(result);
+  } catch (err) {
+    res.status(503).json({ connected: false, error: err.message });
+  }
+});
+
+router.get('/rc/systems', async (req, res) => {
+  try {
+    const systems = await rcClient.getSystems();
+    res.json(systems);
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
+});
+
+router.get('/rc/systems/:id/modules', async (req, res) => {
+  try {
+    const modules = await rcClient.getModules(parseInt(req.params.id));
+    res.json(modules);
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
+});
+
+router.post('/products/:id/rc-sync', async (req, res) => {
+  try {
+    const stats = await rcSync.syncTickets(req.params.id);
+    res.json(stats);
+  } catch (err) {
+    res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
+  }
+});
+
+router.get('/products/:id/rc-tickets', async (req, res) => {
+  try {
+    const rows = await rcTickets.getByProduct(req.params.id, req.query.sync_status);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/rc-tickets/:id', async (req, res) => {
+  try {
+    const ticket = await rcTickets.getById(req.params.id);
+    if (!ticket) return res.status(404).json({ error: 'RC ticket not found' });
+    res.json(ticket);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/rc-tickets/:id/import', async (req, res) => {
+  try {
+    const issue = await rcSync.importTicket(req.params.id);
+    res.status(201).json(issue);
+  } catch (err) {
+    res.status(err.message.includes('not found') ? 404 : 400).json({ error: err.message });
+  }
+});
+
+router.post('/rc-tickets/import-bulk', async (req, res) => {
+  try {
+    const { ticket_ids } = req.body;
+    if (!ticket_ids || !ticket_ids.length) {
+      return res.status(400).json({ error: 'ticket_ids required' });
+    }
+    const issues = await rcSync.importBulk(ticket_ids);
+    res.status(201).json(issues);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/rc-tickets/:id/ignore', async (req, res) => {
+  try {
+    const ticket = await rcTickets.updateSyncStatus(req.params.id, 'ignored');
+    if (!ticket) return res.status(404).json({ error: 'RC ticket not found' });
+    res.json(ticket);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

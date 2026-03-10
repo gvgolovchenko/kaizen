@@ -29,6 +29,7 @@
       <div style="margin-top: 14px; display:flex; gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="showEditProductModal()">Редактировать</button>
         <button class="btn btn-primary btn-sm" onclick="showImproveModal()">Улучшение продукта</button>
+        <button class="btn btn-primary btn-sm" onclick="showFormReleaseModal()" id="formReleaseBtn" style="display:none">Сформировать релиз (AI)</button>
         <button class="btn btn-ghost btn-sm" onclick="showRoadmapModal()">Дорожная карта из документа</button>
       </div>
     </div>
@@ -39,6 +40,7 @@
       <div class="tab" data-tab="releases">Релизы <span class="tab-count" id="tabReleasesCount"></span></div>
       <div class="tab" data-tab="processes">Процессы <span class="tab-count" id="tabProcessesCount"></span></div>
       <div class="tab" data-tab="plans">Планы <span class="tab-count" id="tabPlansCount"></span></div>
+      <div class="tab" data-tab="rc-tickets" id="tabRcTickets" style="display:none">Тикеты RC <span class="tab-count" id="tabRcTicketsCount"></span></div>
     </div>
 
     <!-- Panel: Issues -->
@@ -112,6 +114,47 @@
         </div>
         <div id="processesEmpty" class="empty" style="display:none">
           <p>Нет процессов</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: RC Tickets -->
+    <div class="tab-panel" id="panel-rc-tickets">
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div class="filters" id="rcTicketFilters">
+              <button class="btn btn-ghost btn-sm active" data-sync-status="">Все</button>
+              <button class="btn btn-ghost btn-sm" data-sync-status="new">Новые</button>
+              <button class="btn btn-ghost btn-sm" data-sync-status="imported">Импортированные</button>
+              <button class="btn btn-ghost btn-sm" data-sync-status="ignored">Игнорированные</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="handleRcSync()" id="rcSyncBtn">Синхронизировать</button>
+            <button class="btn btn-primary btn-sm" onclick="handleRcImportSelected()" id="rcImportBtn" style="display:none">Импортировать выбранные (<span id="rcSelectedCount">0</span>)</button>
+            <button class="btn btn-ghost btn-sm" onclick="handleRcIgnoreSelected()" id="rcIgnoreBtn" style="display:none">Игнорировать выбранные</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:36px"><input type="checkbox" id="rcSelectAll" onchange="handleRcSelectAll(this.checked)"></th>
+                <th>#ID</th>
+                <th>Тема</th>
+                <th>Тип</th>
+                <th>Статус RC</th>
+                <th>Приоритет</th>
+                <th>Дата</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody id="rcTicketsBody"></tbody>
+          </table>
+        </div>
+        <div id="rcTicketsEmpty" class="empty" style="display:none">
+          <p>Нет тикетов. Нажмите «Синхронизировать» для загрузки из Rivc.Connect.</p>
         </div>
       </div>
     </div>
@@ -492,6 +535,71 @@
         <button type="button" class="btn btn-ghost" onclick="closeModal('pressReleaseViewModal')">Закрыть</button>
         <button type="button" class="btn btn-ghost" onclick="handleCopyPressReleaseChannel()">Скопировать канал</button>
         <button type="button" class="btn btn-primary" onclick="handleDownloadPressRelease()">Скачать .md</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form Release Modal (settings) -->
+  <div class="modal-overlay" id="formReleaseModal">
+    <div class="modal" style="max-width:520px">
+      <h2>Формирование релиза (AI)</h2>
+      <div style="margin-bottom:14px;font-size:0.9rem;color:var(--text-dim)">
+        Открытых задач: <b id="frOpenCount">0</b>
+      </div>
+      <div class="form-group">
+        <label>Стратегия группировки</label>
+        <select id="frStrategy">
+          <option value="balanced">Сбалансированная</option>
+          <option value="critical_first">Критичное — первым</option>
+          <option value="by_topic">По темам</option>
+          <option value="single">Всё в один релиз</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Макс. релизов (1–10)</label>
+        <input type="number" id="frMaxReleases" value="3" min="1" max="10">
+      </div>
+      <div class="form-group">
+        <label>Модель ИИ *</label>
+        <select id="frModel" required></select>
+      </div>
+      <div class="form-group">
+        <label>Таймаут (минуты, 3–60)</label>
+        <input type="number" id="frTimeout" value="20" min="3" max="60">
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="frAutoApprove" style="width:auto;accent-color:var(--accent)">
+          Авто-утверждение (создать релизы без ручного обзора)
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('formReleaseModal')">Отмена</button>
+        <button type="button" class="btn btn-primary" onclick="handleFormReleaseStart()">Запустить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form Release Review Modal -->
+  <div class="modal-overlay" id="formReleaseReviewModal">
+    <div class="modal" style="max-width:780px">
+      <h2 id="frReviewTitle">Предложение ИИ</h2>
+      <div id="frReviewContent"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('formReleaseReviewModal')">Закрыть</button>
+        <button type="button" class="btn btn-primary" id="frApproveBtn" onclick="handleFormReleaseApprove()">Утвердить и создать релизы</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RC Ticket Detail Modal -->
+  <div class="modal-overlay" id="rcTicketDetailModal">
+    <div class="modal" style="max-width:640px">
+      <h2 id="rcTicketDetailTitle">Тикет RC</h2>
+      <div id="rcTicketDetailContent"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('rcTicketDetailModal')">Закрыть</button>
+        <button type="button" class="btn btn-primary" id="rcTicketImportBtn" onclick="handleRcImportSingle()">Импортировать</button>
       </div>
     </div>
   </div>

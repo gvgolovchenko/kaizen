@@ -86,3 +86,18 @@ export const createPlan = (body) => request('POST', '/plans', body);
 export const startPlan = (id) => request('POST', `/plans/${id}/start`);
 export const cancelPlan = (id) => request('POST', `/plans/${id}/cancel`);
 export const clonePlan = (id, body) => request('POST', `/plans/${id}/clone`, body);
+
+// ── Rivc.Connect ──
+export const rcTest = () => request('GET', '/rc/test');
+export const rcSystems = () => request('GET', '/rc/systems');
+export const rcModules = (systemId) => request('GET', `/rc/systems/${systemId}/modules`);
+export const rcSync = (productId) => request('POST', `/products/${productId}/rc-sync`);
+export const rcListTickets = (productId, syncStatus) =>
+  request('GET', `/products/${productId}/rc-tickets${syncStatus ? `?sync_status=${syncStatus}` : ''}`);
+export const rcImportTicket = (ticketId) => request('POST', `/rc-tickets/${ticketId}/import`);
+export const rcImportBulk = (ticketIds) => request('POST', '/rc-tickets/import-bulk', { ticket_ids: ticketIds });
+export const rcIgnoreTicket = (ticketId) => request('POST', `/rc-tickets/${ticketId}/ignore`);
+
+// ── Form Release ──
+export const approveReleases = (processId, releases) =>
+  request('POST', `/processes/${processId}/approve-releases`, { releases });

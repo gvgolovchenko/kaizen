@@ -9,6 +9,9 @@ let issues = [];
 let releases = [];
 let processesList = [];
 let plansList = [];
+let rcTicketsList = [];
+let rcCurrentFilter = '';
+let rcSelectedIds = new Set();
 let currentFilter = '';
 let processPollingTimer = null;
 
@@ -90,6 +93,11 @@ async function loadProcesses() {
 
 async function loadAll() {
   await Promise.all([loadProduct(), loadIssues(), loadReleases(), loadProcesses(), loadPlans()]);
+  // Show RC tab if product has rc_system_id
+  if (product && product.rc_system_id) {
+    document.getElementById('tabRcTickets').style.display = '';
+    loadRcTickets();
+  }
 }
 
 // ── Render product header ──────────────────────────────
@@ -142,6 +150,7 @@ function renderIssues() {
     </tr>
   `).join('');
   updateTabCounts();
+  updateFormReleaseButton();
 }
 
 // ── Dev status helpers ──────────────────────────────────
@@ -359,6 +368,13 @@ function suggestionsInfo(p) {
   }
   if (p.type === 'prepare_press_release' && p.result && p.result.channels) {
     return `${p.result.channels.length} кан.`;
+  }
+  if (p.type === 'form_release' && p.result && p.result.releases) {
+    const r = p.result;
+    const info = `${r.releases.length} р.`;
+    if (r.auto_approved) return `${info} (авто)`;
+    if (p.approved_count) return `${p.approved_count} созд. (${info})`;
+    return info;
   }
   const total = p.result ? p.result.length : 0;
   if (!total) return '—';
@@ -780,6 +796,13 @@ window.showProcessDetail = async function (id) {
   const cachedProc = processesList.find(p => p.id === id);
   if (cachedProc && cachedProc.type === 'roadmap_from_doc') {
     window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
+    return;
+  }
+
+  // form_release completed — show review modal
+  if (cachedProc && isFormReleaseProcess(cachedProc)) {
+    const proc = await api(`/processes/${id}`);
+    showFormReleaseReview(proc);
     return;
   }
 
@@ -1390,6 +1413,374 @@ window.handleDownloadPressRelease = function () {
   URL.revokeObjectURL(url);
   toast('Файл скачан');
 };
+
+// ── RC Tickets ──────────────────────────────────────────
+
+async function loadRcTickets() {
+  try {
+    const path = rcCurrentFilter
+      ? `/products/${productId}/rc-tickets?sync_status=${rcCurrentFilter}`
+      : `/products/${productId}/rc-tickets`;
+    rcTicketsList = await api(path);
+    renderRcTickets();
+  } catch (err) {
+    // Silently handle — tab may not be active
+  }
+}
+
+function renderRcTickets() {
+  const body = document.getElementById('rcTicketsBody');
+  const empty = document.getElementById('rcTicketsEmpty');
+
+  if (rcTicketsList.length === 0) {
+    body.innerHTML = '';
+    empty.style.display = '';
+    document.getElementById('tabRcTicketsCount').textContent = '(0)';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const newCount = rcTicketsList.filter(t => t.sync_status === 'new').length;
+  document.getElementById('tabRcTicketsCount').textContent = newCount > 0 ? `(${newCount})` : `(${rcTicketsList.length})`;
+
+  body.innerHTML = rcTicketsList.map(t => {
+    const checked = rcSelectedIds.has(t.id) ? 'checked' : '';
+    const disabled = t.sync_status !== 'new' ? 'disabled' : '';
+    const statusBadge = t.sync_status === 'imported'
+      ? '<span class="badge badge-done">импортирован</span>'
+      : t.sync_status === 'ignored'
+        ? '<span class="badge badge-closed">игнорирован</span>'
+        : '<span class="badge badge-open">новый</span>';
+    const priorityClass = t.rc_priority_id === 4 ? 'priority-critical'
+      : t.rc_priority_id === 3 ? 'priority-high' : '';
+    return `<tr class="rc-ticket-row" onclick="showRcTicketDetail('${t.id}')" style="cursor:pointer">
+      <td onclick="event.stopPropagation()"><input type="checkbox" ${checked} ${disabled} onchange="handleRcCheckbox('${t.id}', this.checked)"></td>
+      <td style="font-family:monospace;font-size:0.85rem">${t.rc_ticket_id}</td>
+      <td>${escapeHtml(t.title || '')}</td>
+      <td>${escapeHtml(t.rc_type || '')}</td>
+      <td>${escapeHtml(t.rc_status || '')}</td>
+      <td class="${priorityClass}">${escapeHtml(t.rc_priority || '')}</td>
+      <td>${t.rc_created_at ? formatDate(t.rc_created_at) : ''}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join('');
+
+  updateRcActionButtons();
+}
+
+function updateRcActionButtons() {
+  const count = rcSelectedIds.size;
+  document.getElementById('rcImportBtn').style.display = count > 0 ? '' : 'none';
+  document.getElementById('rcIgnoreBtn').style.display = count > 0 ? '' : 'none';
+  document.getElementById('rcSelectedCount').textContent = count;
+}
+
+window.handleRcCheckbox = function (id, checked) {
+  if (checked) rcSelectedIds.add(id);
+  else rcSelectedIds.delete(id);
+  updateRcActionButtons();
+};
+
+window.handleRcSelectAll = function (checked) {
+  rcSelectedIds.clear();
+  if (checked) {
+    rcTicketsList.filter(t => t.sync_status === 'new').forEach(t => rcSelectedIds.add(t.id));
+  }
+  renderRcTickets();
+};
+
+window.handleRcSync = async function () {
+  const btn = document.getElementById('rcSyncBtn');
+  btn.disabled = true;
+  btn.textContent = 'Загрузка...';
+  try {
+    const stats = await api(`/products/${productId}/rc-sync`, { method: 'POST' });
+    toast(`Синхронизация: ${stats.new} новых, ${stats.updated} обновлённых (всего ${stats.total})`);
+    rcSelectedIds.clear();
+    await loadRcTickets();
+  } catch (err) {
+    toast(err.message || 'Ошибка подключения к Rivc.Connect', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Синхронизировать';
+  }
+};
+
+window.handleRcImportSelected = async function () {
+  if (rcSelectedIds.size === 0) return;
+  try {
+    const ids = Array.from(rcSelectedIds);
+    const created = await api('/rc-tickets/import-bulk', {
+      method: 'POST',
+      body: { ticket_ids: ids },
+    });
+    toast(`Импортировано ${created.length} задач`);
+    rcSelectedIds.clear();
+    await Promise.all([loadRcTickets(), loadIssues()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.handleRcIgnoreSelected = async function () {
+  if (rcSelectedIds.size === 0) return;
+  try {
+    for (const id of rcSelectedIds) {
+      await api(`/rc-tickets/${id}/ignore`, { method: 'POST' });
+    }
+    toast(`${rcSelectedIds.size} тикетов помечены как игнорированные`);
+    rcSelectedIds.clear();
+    await loadRcTickets();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.showRcTicketDetail = async function (id) {
+  const ticket = rcTicketsList.find(t => t.id === id);
+  if (!ticket) return;
+
+  document.getElementById('rcTicketDetailTitle').textContent = `Тикет #${ticket.rc_ticket_id}`;
+
+  const html = `
+    <div style="margin-bottom:16px">
+      <h3 style="margin:0 0 8px">${escapeHtml(ticket.title || '')}</h3>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:0.85rem;color:var(--text-dim);margin-bottom:12px">
+        <span>Тип: <b>${escapeHtml(ticket.rc_type || '—')}</b></span>
+        <span>Приоритет: <b>${escapeHtml(ticket.rc_priority || '—')}</b></span>
+        <span>Статус RC: <b>${escapeHtml(ticket.rc_status || '—')}</b></span>
+        <span>Автор: <b>${escapeHtml(ticket.rc_author || '—')}</b></span>
+      </div>
+      ${ticket.rc_created_at ? `<div style="font-size:0.85rem;color:var(--text-dim)">Создан: ${formatDate(ticket.rc_created_at)}</div>` : ''}
+    </div>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;max-height:40vh;overflow-y:auto;white-space:pre-wrap;font-size:0.9rem;line-height:1.5">
+      ${ticket.description || 'Нет описания'}
+    </div>
+    ${ticket.issue_id ? `<div style="margin-top:12px;font-size:0.9rem">Импортирован как задача Kaizen</div>` : ''}
+  `;
+  document.getElementById('rcTicketDetailContent').innerHTML = html;
+
+  const importBtn = document.getElementById('rcTicketImportBtn');
+  importBtn.style.display = ticket.sync_status === 'new' ? '' : 'none';
+  window._rcDetailTicketId = id;
+
+  openModal('rcTicketDetailModal');
+};
+
+window.handleRcImportSingle = async function () {
+  const id = window._rcDetailTicketId;
+  if (!id) return;
+  try {
+    const issue = await api(`/rc-tickets/${id}/import`, { method: 'POST' });
+    toast(`Тикет импортирован как задача: ${issue.title}`);
+    closeModal('rcTicketDetailModal');
+    await Promise.all([loadRcTickets(), loadIssues()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// RC ticket filters
+document.getElementById('rcTicketFilters')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  document.querySelectorAll('#rcTicketFilters button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  rcCurrentFilter = btn.dataset.syncStatus;
+  rcSelectedIds.clear();
+  loadRcTickets();
+});
+
+// ── Form Release (AI) ────────────────────────────────────
+
+let formReleaseProcessId = null;
+let formReleaseResult = null;
+let formReleasePollingTimer = null;
+
+function updateFormReleaseButton() {
+  const openCount = issues.filter(i => i.status === 'open').length;
+  const btn = document.getElementById('formReleaseBtn');
+  btn.style.display = openCount >= 2 ? '' : 'none';
+}
+
+window.showFormReleaseModal = async function () {
+  const openCount = issues.filter(i => i.status === 'open').length;
+  document.getElementById('frOpenCount').textContent = openCount;
+  document.getElementById('frStrategy').value = openCount < 5 ? 'single' : 'balanced';
+  document.getElementById('frMaxReleases').value = '3';
+  document.getElementById('frTimeout').value = '20';
+  document.getElementById('frAutoApprove').checked = false;
+
+  try {
+    const models = await api('/ai-models');
+    const sel = document.getElementById('frModel');
+    sel.innerHTML = models.length === 0
+      ? '<option value="">Нет моделей</option>'
+      : models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+
+  openModal('formReleaseModal');
+};
+
+window.handleFormReleaseStart = async function () {
+  const modelId = document.getElementById('frModel').value;
+  const strategy = document.getElementById('frStrategy').value;
+  const maxReleases = parseInt(document.getElementById('frMaxReleases').value) || 3;
+  const timeoutMin = parseInt(document.getElementById('frTimeout').value) || 20;
+  const autoApprove = document.getElementById('frAutoApprove').checked;
+
+  if (!modelId) return toast('Выберите модель', 'error');
+
+  try {
+    const proc = await api('/processes', {
+      method: 'POST',
+      body: {
+        product_id: productId,
+        model_id: modelId,
+        type: 'form_release',
+        prompt: '',
+        config: { strategy, max_releases: maxReleases, auto_approve: autoApprove },
+        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
+      },
+    });
+
+    formReleaseProcessId = proc.id;
+    toast(autoApprove ? 'Процесс запущен (авто-утверждение)' : 'Процесс запущен');
+    closeModal('formReleaseModal');
+    loadProcesses();
+
+    // If not auto-approve, poll and show review modal when done
+    if (!autoApprove) {
+      pollFormRelease(proc.id);
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+function pollFormRelease(processId) {
+  if (formReleasePollingTimer) clearInterval(formReleasePollingTimer);
+  formReleasePollingTimer = setInterval(async () => {
+    try {
+      const proc = await api(`/processes/${processId}`);
+      if (proc.status === 'completed') {
+        clearInterval(formReleasePollingTimer);
+        formReleasePollingTimer = null;
+        if (proc.result && !proc.result.auto_approved) {
+          showFormReleaseReview(proc);
+        } else {
+          // Auto-approved — just reload
+          loadReleases();
+          loadIssues();
+        }
+      } else if (proc.status === 'failed') {
+        clearInterval(formReleasePollingTimer);
+        formReleasePollingTimer = null;
+        toast('Процесс формирования релиза завершился с ошибкой', 'error');
+      }
+    } catch {
+      // ignore polling errors
+    }
+  }, 4000);
+}
+
+function showFormReleaseReview(proc) {
+  formReleaseProcessId = proc.id;
+  formReleaseResult = proc.result;
+
+  const result = proc.result;
+  const releasesArr = result.releases || [];
+  const unassigned = result.unassigned || [];
+
+  const totalIssues = releasesArr.reduce((s, r) => s + (r.issues?.length || 0), 0);
+  document.getElementById('frReviewTitle').textContent =
+    `Предложение ИИ: ${releasesArr.length} релиз(ов) из ${totalIssues} задач`;
+
+  let html = '';
+  releasesArr.forEach((rel, idx) => {
+    const priorityBadge = rel.priority
+      ? `<span class="badge badge-${rel.priority}">${rel.priority.toUpperCase()}</span>`
+      : '';
+    html += `
+    <div style="border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0">Релиз ${idx + 1}: ${escapeHtml(rel.version)} — ${escapeHtml(rel.name)}</h3>
+        ${priorityBadge}
+      </div>
+      ${rel.description ? `<p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:10px">${escapeHtml(rel.description)}</p>` : ''}
+      <div style="margin-bottom:8px">
+        ${(rel.issues || []).map(iss => `
+          <label class="checkbox-item" style="margin-bottom:4px">
+            <input type="checkbox" checked data-release-idx="${idx}" data-issue-id="${iss.id}">
+            <span class="badge badge-${iss.type || 'improvement'}">${iss.type || 'improvement'}</span>
+            <span class="badge badge-${iss.priority || 'medium'}">${iss.priority || 'medium'}</span>
+            ${escapeHtml(iss.title)}
+          </label>
+        `).join('')}
+      </div>
+      ${rel.rationale ? `<div style="font-size:0.8rem;color:var(--text-dim);font-style:italic">Почему: ${escapeHtml(rel.rationale)}</div>` : ''}
+    </div>`;
+  });
+
+  if (unassigned.length > 0) {
+    html += `<div style="padding:12px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;font-size:0.85rem;color:var(--text-dim)">
+      Не включены: ${unassigned.length} задач(а)
+    </div>`;
+  }
+
+  if (result.summary) {
+    html += `<div style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)">${escapeHtml(result.summary)}</div>`;
+  }
+
+  document.getElementById('frReviewContent').innerHTML = html;
+
+  // Show/hide approve button based on whether already approved
+  document.getElementById('frApproveBtn').style.display = proc.approved_count ? 'none' : '';
+
+  openModal('formReleaseReviewModal');
+}
+
+window.handleFormReleaseApprove = async function () {
+  if (!formReleaseProcessId || !formReleaseResult) return;
+
+  // Collect checked issues per release
+  const releasesArr = formReleaseResult.releases || [];
+  const toCreate = [];
+
+  releasesArr.forEach((rel, idx) => {
+    const checkboxes = document.querySelectorAll(`#frReviewContent input[data-release-idx="${idx}"]:checked`);
+    const issueIds = Array.from(checkboxes).map(cb => cb.dataset.issueId);
+    if (issueIds.length > 0) {
+      toCreate.push({
+        version: rel.version,
+        name: rel.name,
+        description: rel.description || null,
+        issue_ids: issueIds,
+      });
+    }
+  });
+
+  if (toCreate.length === 0) return toast('Нет задач для создания релизов', 'error');
+
+  try {
+    const result = await api(`/processes/${formReleaseProcessId}/approve-releases`, {
+      method: 'POST',
+      body: { releases: toCreate },
+    });
+    toast(`Создано ${result.created_releases} релиз(ов), ${result.total_issues} задач`);
+    closeModal('formReleaseReviewModal');
+    await Promise.all([loadReleases(), loadIssues(), loadProcesses()]);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// Show review for completed form_release when clicking on process
+function isFormReleaseProcess(proc) {
+  return proc.type === 'form_release' && proc.status === 'completed' && proc.result && !proc.result.auto_approved;
+}
 
 // Expose closeModal globally for inline onclick handlers
 window.closeModal = closeModal;

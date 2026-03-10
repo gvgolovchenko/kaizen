@@ -2,6 +2,7 @@ import * as processes from './db/processes.js';
 import * as processLogs from './db/process-logs.js';
 import * as products from './db/products.js';
 import * as releases from './db/releases.js';
+import * as issues from './db/issues.js';
 import * as aiModels from './db/ai-models.js';
 import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
 import { parseJsonFromAI, detectTestCommand } from './utils.js';
@@ -76,6 +77,10 @@ export async function runProcess(processId, options = {}) {
     }
     if (proc.type === 'prepare_press_release') {
       await runPreparePressRelease(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'form_release') {
+      await runFormRelease(processId, proc, product, model, startTime, timeoutMs);
       return;
     }
 
@@ -589,6 +594,202 @@ ${docText}
   });
 
   // 10. Save result
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+}
+
+/**
+ * Run a form_release process — AI groups open issues into releases.
+ */
+async function runFormRelease(processId, proc, product, model, startTime, timeoutMs) {
+  // 1. Parse config
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+  const maxReleases = Math.min(Math.max(parseInt(config.max_releases) || 3, 1), 10);
+  const strategy = config.strategy || 'balanced';
+  const autoApprove = config.auto_approve === true;
+
+  // 2. Load open issues
+  const openIssues = await issues.getByProduct(product.id, 'open');
+  if (openIssues.length < 2) throw new Error('Недостаточно открытых задач (минимум 2)');
+
+  // 3. Get last published release version for incrementing
+  const publishedReleases = await releases.getPublishedByProduct(product.id, 1);
+  const lastVersion = publishedReleases.length > 0 ? publishedReleases[0].version : '0.0.0';
+
+  // 4. Build issues context (compact)
+  const issuesContext = openIssues.map((iss, i) => ({
+    index: i,
+    title: iss.title,
+    description: (iss.description || '').slice(0, 300),
+    type: iss.type,
+    priority: iss.priority,
+    rc_ticket_id: iss.rc_ticket_id || null,
+    created_at: iss.created_at,
+  }));
+
+  // 5. Build strategy description
+  const strategyDescriptions = {
+    critical_first: 'Первый релиз — все критичные и высокоприоритетные баги. Остальные задачи — в последующие релизы.',
+    by_topic: 'Группируй задачи по функциональным областям (UI, безопасность, API, данные и т.д.).',
+    balanced: 'Сбалансированные релизы по объёму и приоритету. В каждом релизе — микс типов задач.',
+    single: 'Объедини все задачи в один релиз.',
+  };
+
+  const systemPrompt = `Ты — опытный Product Manager. Проанализируй список задач продукта и предложи оптимальное распределение по релизам.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
+
+Стратегия группировки: ${strategy}
+${strategyDescriptions[strategy] || strategyDescriptions.balanced}
+
+Максимум релизов: ${maxReleases}
+Последняя версия: ${lastVersion}
+
+ВАЖНО: Верни ответ ТОЛЬКО как JSON без markdown. Не используй <think> блоки.
+
+Формат:
+{
+  "releases": [
+    {
+      "version": "семантическая версия (инкремент от ${lastVersion})",
+      "name": "Краткое название (2-4 слова)",
+      "description": "Release notes — что входит и зачем",
+      "issue_indices": [0, 2, 5],
+      "priority": "high|medium|low",
+      "rationale": "Почему эти задачи сгруппированы вместе"
+    }
+  ],
+  "unassigned": [6, 7],
+  "summary": "Краткое описание распределения (2-3 предложения)"
+}
+
+Правила:
+- Критичные баги — в первый релиз
+- Связанные по функциональности задачи — вместе
+- Размер релиза: 3–10 задач (оптимально 5–7)
+- Если задача не подходит ни к одному релизу — в unassigned
+- issue_indices — это индексы из массива задач (0-based)
+- Каждая задача может быть только в одном релизе`;
+
+  const userPrompt = `Распредели ${openIssues.length} задач по релизам.
+
+Задачи (JSON):
+${JSON.stringify(issuesContext, null, 2)}`;
+
+  // 6. Log: request_sent
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: `Запрос формирования релиза отправлен модели ${model.name}. Задач: ${openIssues.length}, стратегия: ${strategy}, авто-утверждение: ${autoApprove}`,
+    data: { model_name: model.name, issues_count: openIssues.length, strategy, max_releases: maxReleases, auto_approve: autoApprove, last_version: lastVersion },
+  });
+
+  // 7. Call AI
+  const aiOptions = {};
+  if (timeoutMs) aiOptions.timeoutMs = timeoutMs;
+  const watchdogMs = timeoutMs + 60_000;
+  const rawResponse = await withWatchdog(
+    callAI(model, systemPrompt, userPrompt, aiOptions),
+    watchdogMs,
+    `form_release/${model.name}`,
+  );
+
+  // 8. Log: response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов)`,
+    data: { response_length: rawResponse.length },
+  });
+
+  // 9. Parse and validate
+  const parsed = parseJsonFromAI(rawResponse);
+  const data = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!data || !Array.isArray(data.releases) || data.releases.length === 0) {
+    await processLogs.create({
+      process_id: processId,
+      step: 'error',
+      message: 'Невалидная структура ответа — не найден массив releases',
+      data: { raw_response: rawResponse.slice(0, 2000) },
+    });
+    throw new Error('Invalid form_release structure in AI response');
+  }
+
+  // Normalize
+  const validPriorities = ['high', 'medium', 'low'];
+  const proposedReleases = data.releases.slice(0, maxReleases).map(rel => ({
+    version: String(rel.version || '').slice(0, 20),
+    name: String(rel.name || '').slice(0, 100),
+    description: String(rel.description || ''),
+    issue_indices: Array.isArray(rel.issue_indices) ? rel.issue_indices.filter(i => i >= 0 && i < openIssues.length) : [],
+    priority: validPriorities.includes(rel.priority) ? rel.priority : 'medium',
+    rationale: String(rel.rationale || ''),
+  })).filter(r => r.version && r.name && r.issue_indices.length > 0);
+
+  // Map indices to issue IDs
+  const result = {
+    summary: String(data.summary || ''),
+    releases: proposedReleases.map(rel => ({
+      ...rel,
+      issues: rel.issue_indices.map(i => ({
+        id: openIssues[i].id,
+        title: openIssues[i].title,
+        type: openIssues[i].type,
+        priority: openIssues[i].priority,
+      })),
+    })),
+    unassigned: Array.isArray(data.unassigned)
+      ? data.unassigned.filter(i => i >= 0 && i < openIssues.length).map(i => ({
+          id: openIssues[i].id,
+          title: openIssues[i].title,
+        }))
+      : [],
+  };
+
+  // 10. Log: parse_result
+  const totalAssigned = result.releases.reduce((sum, r) => sum + r.issues.length, 0);
+  await processLogs.create({
+    process_id: processId,
+    step: 'releases_ready',
+    message: `Предложение: ${result.releases.length} релизов, ${totalAssigned} задач распределено, ${result.unassigned.length} не включены`,
+    data: { releases_count: result.releases.length, assigned: totalAssigned, unassigned: result.unassigned.length },
+  });
+
+  // 11. Auto-approve if enabled
+  if (autoApprove) {
+    const createdReleases = [];
+    for (const rel of result.releases) {
+      const issueIds = rel.issues.map(i => i.id);
+      const created = await releases.create({
+        product_id: product.id,
+        version: rel.version,
+        name: rel.name,
+        description: rel.description,
+        issue_ids: issueIds,
+      });
+      createdReleases.push({ id: created.id, version: created.version, name: created.name, issues: issueIds.length });
+    }
+
+    await processLogs.create({
+      process_id: processId,
+      step: 'auto_approved',
+      message: `Авто-утверждение: создано ${createdReleases.length} релизов`,
+      data: { created_releases: createdReleases },
+    });
+
+    result.auto_approved = true;
+    result.created_releases = createdReleases;
+  }
+
+  // 12. Update process → completed
   const durationMs = Date.now() - startTime;
   await processes.update(processId, {
     status: 'completed',

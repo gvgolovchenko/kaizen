@@ -19,11 +19,11 @@ export async function getById(id) {
   return rows[0] || null;
 }
 
-export async function create({ product_id, title, description, type, priority }) {
+export async function create({ product_id, title, description, type, priority, rc_ticket_id }) {
   const { rows } = await pool.query(
-    `INSERT INTO ${TABLE} (product_id, title, description, type, priority)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [product_id, title, description || null, type || 'improvement', priority || 'medium']
+    `INSERT INTO ${TABLE} (product_id, title, description, type, priority, rc_ticket_id)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [product_id, title, description || null, type || 'improvement', priority || 'medium', rc_ticket_id || null]
   );
   return rows[0];
 }

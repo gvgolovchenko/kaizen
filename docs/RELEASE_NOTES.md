@@ -2,6 +2,72 @@
 
 ---
 
+## v1.8.0 — Интеграция с Rivc.Connect + AI-формирование релизов (2026-03-09)
+
+**Синхронизация тикетов из HelpDesk Rivc.Connect (MS SQL) и AI-формирование релизов из задач с 4 стратегиями группировки.**
+
+### Интеграция с Rivc.Connect (HelpDesk)
+
+- MS SQL клиент для подключения к БД Connect (`mssql` пакет)
+- Синхронизация тикетов: MS SQL → кэш `kaizen_rc_tickets` (upsert по rc_ticket_id)
+- Ручной импорт: RC-тикет → задача Kaizen (`kaizen_issues`) с сохранением `rc_ticket_id`
+- Массовый импорт выбранных тикетов
+- Игнорирование нерелевантных тикетов
+- Вкладка «Тикеты RC» на странице продукта (таблица, фильтры, чекбоксы, модал деталей)
+- Загрузка всех НЕ закрытых тикетов (12 статусов backlog)
+
+### AI-формирование релизов (form_release)
+
+- Новый тип AI-процесса `form_release` — группирует открытые задачи в релизы
+- 4 стратегии группировки:
+  - `balanced` — сбалансированные по объёму и приоритету (по умолчанию)
+  - `critical_first` — критичные баги в первый релиз
+  - `by_topic` — по функциональным областям
+  - `single` — всё в один релиз
+- Ручной режим: AI предлагает → пользователь просматривает → утверждает (с возможностью снять задачи)
+- Авто-утверждение: AI предлагает → релизы создаются автоматически
+- Модал настроек: стратегия, макс. релизов, модель, таймаут, чекбокс авто-утверждения
+- Модал обзора: карточки предложенных релизов с чекбоксами задач, обоснование группировки
+
+### API (11 новых эндпоинтов)
+
+- `GET /api/rc/test` — проверка подключения к Rivc.Connect
+- `GET /api/rc/systems` — список систем RC
+- `GET /api/rc/systems/:id/modules` — модули системы
+- `POST /api/products/:id/rc-sync` — синхронизация тикетов
+- `GET /api/products/:id/rc-tickets` — кэшированные тикеты (?sync_status=)
+- `GET /api/rc-tickets/:id` — детали тикета
+- `POST /api/rc-tickets/:id/import` — импорт тикета → задача
+- `POST /api/rc-tickets/import-bulk` — массовый импорт
+- `POST /api/rc-tickets/:id/ignore` — игнорировать тикет
+- `POST /api/processes` (type=form_release) — запуск AI-формирования
+- `POST /api/processes/:id/approve-releases` — утверждение предложенных релизов
+
+### База данных
+
+- Миграция `013_rc_tickets.sql`:
+  - Колонка `rc_ticket_id INTEGER` в `kaizen_issues`
+  - Таблица `kaizen_rc_tickets` (кэш RC-тикетов, sync_status: new/imported/ignored)
+
+### MCP-сервер (6 новых инструментов → 29 итого)
+
+| Инструмент | Описание |
+|------------|----------|
+| `kaizen_rc_test` | Проверка подключения к Rivc.Connect |
+| `kaizen_rc_sync` | Синхронизация тикетов продукта |
+| `kaizen_rc_list_tickets` | Список кэшированных тикетов |
+| `kaizen_rc_import_tickets` | Импорт тикетов → задачи |
+| `kaizen_form_release` | AI-формирование релизов (strategy, auto_approve) |
+| `kaizen_approve_releases` | Утверждение предложенных релизов |
+
+### Новые серверные модули
+
+- `server/rc-client.js` — MS SQL клиент (getSystems, getModules, getTickets)
+- `server/rc-sync.js` — синхронизация и импорт (syncTickets, importTicket, importBulk)
+- `server/db/rc-tickets.js` — CRUD для kaizen_rc_tickets
+
+---
+
 ## v1.7.0 — MCP-сервер для Claude Code (2026-03-08)
 
 **MCP-сервер с 27 инструментами для управления Kaizen через Claude Code. Полный конвейер улучшения продукта одной командой.**
