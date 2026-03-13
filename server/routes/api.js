@@ -58,8 +58,41 @@ router.get('/products/:id/issues', async (req, res) => {
 });
 
 router.post('/issues', async (req, res) => {
-  const issue = await issues.create(req.body);
-  res.status(201).json(issue);
+  try {
+    if (!req.body.product_id) {
+      return res.status(400).json({ error: 'product_id is required' });
+    }
+    if (!req.body.title) {
+      return res.status(400).json({ error: 'title is required' });
+    }
+    const issue = await issues.create(req.body);
+    res.status(201).json(issue);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/issues/bulk', async (req, res) => {
+  try {
+    const { issues: items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'issues array is required and must not be empty' });
+    }
+    if (items.length > 100) {
+      return res.status(400).json({ error: 'Maximum 100 issues per request' });
+    }
+    const created = [];
+    for (const item of items) {
+      if (!item.product_id || !item.title) {
+        return res.status(400).json({ error: `Each issue must have product_id and title. Missing in: ${JSON.stringify(item).slice(0, 100)}` });
+      }
+      const issue = await issues.create(item);
+      created.push(issue);
+    }
+    res.status(201).json({ created, count: created.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/issues/:id', async (req, res) => {
@@ -88,8 +121,25 @@ router.get('/products/:id/releases', async (req, res) => {
 });
 
 router.post('/releases', async (req, res) => {
-  const release = await releases.create(req.body);
-  res.status(201).json(release);
+  try {
+    // Accept both 'title' and 'name' for consistency with issues API
+    if (req.body.title && !req.body.name) {
+      req.body.name = req.body.title;
+    }
+    if (!req.body.name) {
+      return res.status(400).json({ error: 'name (or title) is required' });
+    }
+    if (!req.body.product_id) {
+      return res.status(400).json({ error: 'product_id is required' });
+    }
+    if (!req.body.version) {
+      return res.status(400).json({ error: 'version is required' });
+    }
+    const release = await releases.create(req.body);
+    res.status(201).json(release);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/releases/:id', async (req, res) => {
@@ -99,6 +149,7 @@ router.get('/releases/:id', async (req, res) => {
 });
 
 router.put('/releases/:id', async (req, res) => {
+  if (req.body.title && !req.body.name) req.body.name = req.body.title;
   const release = await releases.update(req.params.id, req.body);
   if (!release) return res.status(404).json({ error: 'Release not found' });
   res.json(release);
@@ -480,27 +531,30 @@ router.post('/processes', async (req, res) => {
     const { product_id, model_id, type, prompt, template_id, count, timeout_min, config } = req.body;
 
     if (!product_id) return res.status(400).json({ error: 'product_id is required' });
-    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
+    if (!model_id && type !== 'run_tests') return res.status(400).json({ error: 'model_id is required' });
 
     const product = await products.getById(product_id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
 
-    const model = await aiModels.getById(model_id);
-    if (!model) return res.status(404).json({ error: 'Model not found' });
+    if (model_id) {
+      const model = await aiModels.getById(model_id);
+      if (!model) return res.status(404).json({ error: 'Model not found' });
+    }
 
     if (type === 'roadmap_from_doc' && !prompt) {
       return res.status(400).json({ error: 'prompt (document text) is required for roadmap_from_doc' });
     }
-    if (type !== 'roadmap_from_doc' && type !== 'form_release' && !prompt && !template_id) {
+    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && !prompt && !template_id) {
       return res.status(400).json({ error: 'prompt or template_id is required' });
     }
 
-    // For form_release, store config as JSON in input_prompt
-    const inputPrompt = type === 'form_release' ? JSON.stringify(config || {}) : (prompt || null);
+    // For form_release/run_tests, store config as JSON in input_prompt
+    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs')
+      ? JSON.stringify(config || {}) : (prompt || null);
 
     const proc = await processes.create({
       product_id,
-      model_id,
+      model_id: model_id || null,
       type: type || 'improve',
       input_prompt: inputPrompt,
       input_template_id: template_id || null,
@@ -865,10 +919,12 @@ router.post('/plans', async (req, res) => {
   try {
     const { name, description, product_id, on_failure, is_template, scheduled_at, steps } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
-    if (!product_id) return res.status(400).json({ error: 'product_id is required' });
+    if (!product_id && !is_template) return res.status(400).json({ error: 'product_id is required' });
 
-    const product = await products.getById(product_id);
-    if (!product) return res.status(404).json({ error: 'Product not found' });
+    if (product_id) {
+      const product = await products.getById(product_id);
+      if (!product) return res.status(404).json({ error: 'Product not found' });
+    }
 
     const plan = await plans.create({ name, description, product_id, on_failure, is_template, scheduled_at });
 
@@ -885,6 +941,88 @@ router.post('/plans', async (req, res) => {
     }
 
     res.status(201).json({ ...plan, steps: createdSteps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/plans/from-releases', async (req, res) => {
+  try {
+    const { product_id, name, description, release_ids, model_id, on_failure, timeout_spec, timeout_develop } = req.body;
+
+    if (!product_id) return res.status(400).json({ error: 'product_id is required' });
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (!Array.isArray(release_ids) || release_ids.length === 0) {
+      return res.status(400).json({ error: 'release_ids array is required' });
+    }
+    if (!model_id) return res.status(400).json({ error: 'model_id is required' });
+
+    const product = await products.getById(product_id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    // Create the plan
+    const plan = await plans.create({
+      name,
+      description: description || `Автоматический план: spec → develop для ${release_ids.length} релизов`,
+      product_id,
+      on_failure: on_failure || 'stop',
+    });
+
+    // Build sequential steps: for each release, spec then develop
+    // Each release's spec depends on previous release's develop
+    const stepsToCreate = [];
+    let stepOrder = 1;
+
+    for (let i = 0; i < release_ids.length; i++) {
+      const releaseId = release_ids[i];
+
+      // prepare_spec step
+      stepsToCreate.push({
+        step_order: stepOrder++,
+        name: `Спецификация (релиз ${i + 1}/${release_ids.length})`,
+        model_id,
+        process_type: 'prepare_spec',
+        release_id: releaseId,
+        timeout_min: timeout_spec || 30,
+        depends_on: i > 0 ? [`__prev_dev__`] : [],
+      });
+
+      // develop_release step
+      stepsToCreate.push({
+        step_order: stepOrder++,
+        name: `Разработка (релиз ${i + 1}/${release_ids.length})`,
+        model_id,
+        process_type: 'develop_release',
+        release_id: releaseId,
+        timeout_min: timeout_develop || 60,
+        depends_on: [`__prev_spec__`],
+      });
+    }
+
+    // Now create steps and resolve depends_on with real IDs
+    const createdSteps = [];
+    for (let i = 0; i < stepsToCreate.length; i++) {
+      const stepDef = stepsToCreate[i];
+
+      // Resolve depends_on
+      const resolvedDeps = [];
+      for (const dep of (stepDef.depends_on || [])) {
+        if (dep === '__prev_spec__') {
+          // This is a develop step — depends on the spec step right before it
+          resolvedDeps.push(createdSteps[i - 1].id);
+        } else if (dep === '__prev_dev__') {
+          // This is a spec step — depends on the develop step of previous release
+          resolvedDeps.push(createdSteps[i - 1].id);
+        }
+      }
+      stepDef.depends_on = resolvedDeps.length > 0 ? resolvedDeps : null;
+
+      const created = await planSteps.create({ ...stepDef, plan_id: plan.id });
+      createdSteps.push(created);
+    }
+
+    const allSteps = await planSteps.getByPlan(plan.id);
+    res.status(201).json({ ...plan, steps: allSteps });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -981,27 +1119,44 @@ router.post('/plans/:id/clone', async (req, res) => {
     if (!source) return res.status(404).json({ error: 'Plan not found' });
 
     const { name, product_id } = req.body;
+    const targetProductId = product_id || source.product_id;
+    if (!targetProductId) return res.status(400).json({ error: 'product_id is required when cloning a template' });
+
     const newPlan = await plans.create({
       name: name || `${source.name} (копия)`,
       description: source.description,
-      product_id: product_id || source.product_id,
+      product_id: targetProductId,
       on_failure: source.on_failure,
       is_template: false,
     });
 
     const sourceSteps = await planSteps.getByPlan(source.id);
-    const newSteps = await planSteps.bulkCreate(newPlan.id, sourceSteps.map(s => ({
-      step_order: s.step_order,
-      name: s.name,
-      model_id: s.model_id,
-      process_type: s.process_type,
-      input_prompt: s.input_prompt,
-      input_template_id: s.input_template_id,
-      input_count: s.input_count,
-      release_id: s.release_id,
-      timeout_min: s.timeout_min,
-      depends_on: s.depends_on,
-    })));
+
+    // Create steps sequentially and build old→new ID mapping for depends_on
+    const idMap = new Map(); // old step id → new step id
+    const newSteps = [];
+    for (const s of sourceSteps) {
+      // Remap depends_on from source step IDs to new step IDs
+      const newDeps = s.depends_on?.length
+        ? s.depends_on.map(depId => idMap.get(depId)).filter(Boolean)
+        : null;
+
+      const newStep = await planSteps.create({
+        plan_id: newPlan.id,
+        step_order: s.step_order,
+        name: s.name,
+        model_id: s.model_id,
+        process_type: s.process_type,
+        input_prompt: s.input_prompt,
+        input_template_id: s.input_template_id,
+        input_count: s.input_count,
+        release_id: null, // release_id не переносится — релизы другие
+        timeout_min: s.timeout_min,
+        depends_on: newDeps?.length ? newDeps : null,
+      });
+      idMap.set(s.id, newStep.id);
+      newSteps.push(newStep);
+    }
 
     res.status(201).json({ ...newPlan, steps: newSteps });
   } catch (err) {
@@ -1021,6 +1176,24 @@ router.post('/plans/:id/steps', async (req, res) => {
 
     const step = await planSteps.create({ ...req.body, plan_id: plan.id });
     res.status(201).json(step);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/plans/:id/steps/bulk', async (req, res) => {
+  try {
+    const plan = await plans.getById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    if (!['draft', 'scheduled'].includes(plan.status)) {
+      return res.status(400).json({ error: 'Can only add steps to draft/scheduled plans' });
+    }
+    const { steps: items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'steps array is required' });
+    }
+    const created = await planSteps.bulkCreate(plan.id, items);
+    res.status(201).json({ steps: created, count: created.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1135,6 +1308,71 @@ router.post('/rc-tickets/:id/ignore', async (req, res) => {
   }
 });
 
+// ── Run Pipeline (manual / scheduled) ──────────────────────
+
+router.post('/products/:id/run-pipeline', async (req, res) => {
+  try {
+    const product = await products.getById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const auto = product.automation?.auto_pipeline;
+    if (!auto?.enabled) return res.status(400).json({ error: 'Auto-pipeline not configured. Enable it in Automation settings.' });
+
+    const pc = auto.pipeline_config || {};
+    const globalModelId = pc.improve?.model_id || pc.model_id;
+    if (!globalModelId) return res.status(400).json({ error: 'No model configured for pipeline' });
+
+    const { scheduled_at } = req.body || {};
+
+    // Import scheduler from app context
+    const scheduler = req.app.get('scheduler');
+    if (!scheduler) return res.status(500).json({ error: 'Scheduler not available' });
+
+    if (scheduled_at) {
+      // Deferred: create a plan with scheduled_at
+      const { default: plansDb } = await import('../db/plans.js');
+      const version = await scheduler._autoVersion(product.id, pc.version_strategy);
+      const plan = await plansDb.create({
+        product_id: product.id,
+        name: `Pipeline v${version} (запланирован)`,
+        status: 'scheduled',
+        scheduled_at,
+      });
+      // Store pipeline config in plan metadata for reference
+      await plansDb.update(plan.id, {
+        description: JSON.stringify({
+          _pipeline_run: true,
+          preset: auto.preset,
+          version,
+          pipeline_config: pc,
+        }),
+      });
+
+      // Schedule actual trigger via setTimeout
+      const delay = new Date(scheduled_at).getTime() - Date.now();
+      if (delay > 0) {
+        setTimeout(async () => {
+          try {
+            await scheduler._triggerPipeline(product, auto);
+            await plansDb.updateStatus(plan.id, 'completed', { completed_at: new Date().toISOString() });
+          } catch (err) {
+            console.error('Scheduled pipeline error:', err.message);
+            await plansDb.updateStatus(plan.id, 'failed', { completed_at: new Date().toISOString() });
+          }
+        }, delay);
+      }
+
+      res.json({ ok: true, mode: 'scheduled', scheduled_at, plan_id: plan.id });
+    } else {
+      // Immediate
+      await scheduler._triggerPipeline(product, auto);
+      res.json({ ok: true, mode: 'immediate' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Notifications ──────────────────────────────────────────
 
 router.post('/notify', async (req, res) => {
@@ -1150,6 +1388,121 @@ router.post('/notify', async (req, res) => {
     }
     await notify(event, data, opts);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Import Roadmap ───────────────────────────────────────
+// Принимает структурированный план (релизы + задачи) и создаёт всё за один вызов:
+// issues, releases (с привязкой issues), и опционально план выполнения.
+
+router.post('/import-roadmap', async (req, res) => {
+  try {
+    const { product_id, releases: releaseDefs, create_plan, model_id, plan_name } = req.body;
+
+    if (!product_id) return res.status(400).json({ error: 'product_id is required' });
+    if (!Array.isArray(releaseDefs) || releaseDefs.length === 0) {
+      return res.status(400).json({ error: 'releases array is required' });
+    }
+
+    const product = await products.getById(product_id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const createdReleases = [];
+
+    for (const relDef of releaseDefs) {
+      if (!relDef.version || !relDef.name) {
+        return res.status(400).json({ error: `Each release must have version and name. Missing in: ${JSON.stringify(relDef).slice(0, 100)}` });
+      }
+
+      // Create issues for this release
+      const issueIds = [];
+      if (Array.isArray(relDef.issues)) {
+        for (const issueDef of relDef.issues) {
+          if (!issueDef.title) continue;
+          const issue = await issues.create({
+            product_id,
+            title: issueDef.title,
+            description: issueDef.description || null,
+            type: issueDef.type || 'feature',
+            priority: issueDef.priority || 'medium',
+          });
+          issueIds.push(issue.id);
+        }
+      }
+
+      // Create release with issues
+      const release = await releases.create({
+        product_id,
+        version: relDef.version,
+        name: relDef.name,
+        description: relDef.description || null,
+        issue_ids: issueIds,
+      });
+
+      createdReleases.push({
+        id: release.id,
+        version: relDef.version,
+        name: relDef.name,
+        issues_count: issueIds.length,
+        issue_ids: issueIds,
+      });
+    }
+
+    // Optionally create an execution plan (spec → develop for each release)
+    let plan = null;
+    if (create_plan && model_id) {
+      plan = await plans.create({
+        name: plan_name || `Разработка: ${product.name}`,
+        description: `Автоматический план из импорта roadmap: ${createdReleases.length} релизов`,
+        product_id,
+        on_failure: 'stop',
+      });
+
+      let stepOrder = 1;
+      const createdSteps = [];
+
+      for (let i = 0; i < createdReleases.length; i++) {
+        const rel = createdReleases[i];
+
+        // prepare_spec step
+        const specStep = await planSteps.create({
+          plan_id: plan.id,
+          step_order: stepOrder++,
+          name: `Спецификация ${rel.version}`,
+          model_id,
+          process_type: 'prepare_spec',
+          release_id: rel.id,
+          timeout_min: 30,
+          depends_on: i > 0 ? [createdSteps[createdSteps.length - 1].id] : null,
+        });
+        createdSteps.push(specStep);
+
+        // develop_release step
+        const devStep = await planSteps.create({
+          plan_id: plan.id,
+          step_order: stepOrder++,
+          name: `Разработка ${rel.version}`,
+          model_id,
+          process_type: 'develop_release',
+          release_id: rel.id,
+          timeout_min: 60,
+          depends_on: [specStep.id],
+        });
+        createdSteps.push(devStep);
+      }
+
+      plan.steps = createdSteps;
+    }
+
+    res.status(201).json({
+      product_id,
+      releases: createdReleases,
+      total_issues: createdReleases.reduce((sum, r) => sum + r.issues_count, 0),
+      total_releases: createdReleases.length,
+      plan: plan ? { id: plan.id, steps_count: plan.steps.length } : null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

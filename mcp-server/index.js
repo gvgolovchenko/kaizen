@@ -388,8 +388,8 @@ server.tool(
     scheduled_at: z.string().optional().describe('ISO datetime для отложенного запуска'),
     steps: z.array(z.object({
       name: z.string().describe('Название шага'),
-      model_id: z.string().uuid().describe('UUID AI-модели'),
-      process_type: z.enum(['improve', 'prepare_spec', 'develop_release', 'roadmap_from_doc', 'prepare_press_release']),
+      model_id: z.string().uuid().optional().describe('UUID AI-модели (не нужно для run_tests)'),
+      process_type: z.enum(['improve', 'prepare_spec', 'develop_release', 'form_release', 'run_tests', 'update_docs', 'roadmap_from_doc', 'prepare_press_release']),
       input_prompt: z.string().optional(),
       input_template_id: z.string().optional(),
       input_count: z.number().optional(),
@@ -421,6 +421,90 @@ server.tool(
   async ({ plan_id }) => {
     const result = await api.cancelPlan(plan_id);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// BULK OPERATIONS
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_create_issues_bulk',
+  `Создать несколько задач за один вызов (до 100 штук).
+Передай массив объектов с полями: title, description, type, priority.
+product_id задаётся один раз для всех.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    issues: z.array(z.object({
+      title: z.string().describe('Заголовок задачи'),
+      description: z.string().optional(),
+      type: z.enum(['improvement', 'bug', 'feature']).default('improvement'),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
+    })).describe('Массив задач (до 100)'),
+  },
+  async ({ product_id, issues: items }) => {
+    const enriched = items.map(item => ({ ...item, product_id }));
+    const result = await api.createIssuesBulk(enriched);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_create_plan_from_releases',
+  `Создать план выполнения из списка релизов.
+Автоматически строит цепочку: prepare_spec → develop_release для каждого релиза.
+Каждый следующий релиз стартует после завершения предыдущего.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    name: z.string().describe('Название плана'),
+    description: z.string().optional(),
+    release_ids: z.array(z.string().uuid()).describe('Массив UUID релизов в порядке выполнения'),
+    model_id: z.string().uuid().describe('UUID AI-модели для всех шагов'),
+    on_failure: z.enum(['stop', 'skip']).default('stop'),
+    timeout_spec: z.number().optional().default(30).describe('Таймаут для спецификации (мин)'),
+    timeout_develop: z.number().optional().default(60).describe('Таймаут для разработки (мин)'),
+  },
+  async (params) => {
+    const plan = await api.createPlanFromReleases(params);
+    return { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_import_roadmap',
+  `Импортировать дорожную карту: создать issues + releases + (опционально) план выполнения за один вызов.
+Принимает структурированный массив релизов, каждый с массивом задач.
+Заменяет десятки отдельных вызовов create_issue/create_release одним.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    releases: z.array(z.object({
+      version: z.string().describe('Версия (например "0.1.0")'),
+      name: z.string().describe('Название релиза'),
+      description: z.string().optional(),
+      issues: z.array(z.object({
+        title: z.string().describe('Заголовок задачи'),
+        description: z.string().optional(),
+        type: z.enum(['improvement', 'bug', 'feature']).default('feature'),
+        priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
+      })).describe('Задачи для этого релиза'),
+    })).describe('Массив релизов с задачами'),
+    create_plan: z.boolean().default(false).describe('Создать план выполнения (spec → develop)'),
+    model_id: z.string().uuid().optional().describe('UUID AI-модели для плана (если create_plan=true)'),
+    plan_name: z.string().optional().describe('Название плана'),
+  },
+  async (params) => {
+    const result = await api.importRoadmap(params);
+    let text = `Импорт roadmap завершён:\n`;
+    text += `- Релизов: ${result.total_releases}\n`;
+    text += `- Задач: ${result.total_issues}\n`;
+    for (const rel of result.releases) {
+      text += `  ${rel.version} — ${rel.name} (${rel.issues_count} задач) [${rel.id}]\n`;
+    }
+    if (result.plan) {
+      text += `- План: ${result.plan.id} (${result.plan.steps_count} шагов)\n`;
+    }
+    text += `\nJSON:\n${JSON.stringify(result, null, 2)}`;
+    return { content: [{ type: 'text', text }] };
   }
 );
 
@@ -860,6 +944,59 @@ server.tool(
   async ({ process_id, releases }) => {
     const result = await api.approveReleases(process_id, releases);
     return { content: [{ type: 'text', text: `Утверждено: создано ${result.created_releases} релизов, ${result.total_issues} задач включено.\n${result.releases.map(r => `  - ${r.version} — ${r.name} (${r.issues} задач)`).join('\n')}` }] };
+  }
+);
+
+server.tool(
+  'kaizen_update_docs',
+  `Обновить документацию продукта. Использует Claude Code для анализа изменений и обновления docs/.
+При запуске из плана — автоматически мержит ветки develop_release из depends_on.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    model_id: z.string().uuid().describe('UUID модели (claude-code)'),
+    doc_files: z.array(z.string()).optional().describe('Файлы для обновления (по умолчанию: USER_GUIDE, MAIN_FUNC, RELEASE_NOTES, DATABASE_SCHEMA)'),
+    branches: z.array(z.string()).optional().describe('Ветки для мержа перед обновлением'),
+    timeout_min: z.number().optional().default(20),
+  },
+  async ({ product_id, model_id, doc_files, branches, timeout_min }) => {
+    const config = {};
+    if (doc_files?.length) config.doc_files = doc_files;
+    if (branches?.length) config.branches = branches;
+
+    const result = await api.createProcess({
+      product_id,
+      model_id,
+      type: 'update_docs',
+      config,
+      timeout_min,
+    });
+    return { content: [{ type: 'text', text: `Процесс документирования создан: ${result.id}\nСтатус: ${result.status}` }] };
+  }
+);
+
+server.tool(
+  'kaizen_run_tests',
+  `Запустить тесты продукта. Определяет тестовую команду по стеку автоматически.
+При запуске из плана — автоматически мержит ветки develop_release из depends_on.
+Можно указать кастомную команду и ветки для мержа.`,
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    test_command: z.string().optional().describe('Команда для тестов (по умолчанию: auto-detect по стеку)'),
+    branches: z.array(z.string()).optional().describe('Ветки для мержа перед тестированием'),
+    timeout_min: z.number().optional().default(10).describe('Таймаут в минутах'),
+  },
+  async ({ product_id, test_command, branches, timeout_min }) => {
+    const config = {};
+    if (test_command) config.test_command = test_command;
+    if (branches?.length) config.branches = branches;
+
+    const result = await api.createProcess({
+      product_id,
+      type: 'run_tests',
+      config,
+      timeout_min,
+    });
+    return { content: [{ type: 'text', text: `Процесс тестирования создан: ${result.id}\nСтатус: ${result.status}${result.queue?.queued ? ` (очередь, позиция ${result.queue.position})` : ''}` }] };
   }
 );
 

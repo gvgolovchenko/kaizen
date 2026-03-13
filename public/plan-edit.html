@@ -92,16 +92,19 @@
             <label>Название</label>
             <input type="text" id="stepName" placeholder="Описание шага">
           </div>
-          <div class="form-group">
+          <div class="form-group" id="stepModelGroup">
             <label>Модель ИИ *</label>
             <select id="stepModel" required></select>
           </div>
           <div class="form-group">
             <label>Тип процесса</label>
-            <select id="stepProcessType">
+            <select id="stepProcessType" onchange="onProcessTypeChange()">
               <option value="improve">Улучшение</option>
               <option value="prepare_spec">Спецификация</option>
               <option value="develop_release">Разработка</option>
+              <option value="form_release">Формирование релиза</option>
+              <option value="run_tests">Тестирование</option>
+              <option value="update_docs">Документирование</option>
               <option value="roadmap_from_doc">Дорожная карта</option>
               <option value="prepare_press_release">Пресс-релиз</option>
             </select>
@@ -114,7 +117,7 @@
             <label>Промпт (необязательно)</label>
             <textarea id="stepPrompt" rows="2" placeholder="Промпт для AI..."></textarea>
           </div>
-          <div class="form-group">
+          <div class="form-group" id="stepCountGroup">
             <label>Количество задач (1-10)</label>
             <input type="number" id="stepCount" value="5" min="1" max="10">
           </div>

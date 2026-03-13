@@ -9,7 +9,7 @@ export async function getAll({ status, product_id } = {}) {
       m.name AS model_name
     FROM ${TABLE} p
     JOIN opii.kaizen_products pr ON pr.id = p.product_id
-    JOIN opii.kaizen_ai_models m ON m.id = p.model_id`;
+    LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id`;
   const params = [];
   const conditions = [];
 
@@ -36,7 +36,7 @@ export async function getByProduct(productId) {
     SELECT p.*,
       m.name AS model_name
     FROM ${TABLE} p
-    JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+    LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
     WHERE p.product_id = $1
     ORDER BY p.created_at DESC`,
     [productId]
@@ -51,7 +51,7 @@ export async function getById(id) {
       m.name AS model_name
     FROM ${TABLE} p
     JOIN opii.kaizen_products pr ON pr.id = p.product_id
-    JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+    LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
     WHERE p.id = $1`,
     [id]
   );
@@ -110,11 +110,39 @@ export async function getNextQueued(provider) {
 }
 
 /**
+ * Получить следующий queued-процесс без model_id (локальные процессы: run_tests).
+ */
+export async function getNextQueuedLocal() {
+  const { rows } = await pool.query(`
+    SELECT p.id
+    FROM ${TABLE} p
+    WHERE p.status = 'queued' AND p.model_id IS NULL
+    ORDER BY p.priority DESC, p.created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED`
+  );
+  return rows[0] || null;
+}
+
+/**
  * Позиция процесса в очереди (1-based) или null если не в очереди.
  */
 export async function getQueuePosition(processId) {
   const proc = await getById(processId);
   if (!proc || proc.status !== 'queued') return null;
+
+  // Local processes (no model_id) — count among other local queued processes
+  if (!proc.model_id) {
+    const { rows } = await pool.query(`
+      SELECT COUNT(*) AS position
+      FROM ${TABLE} p2
+      WHERE p2.status = 'queued' AND p2.model_id IS NULL
+        AND (p2.priority > $2 OR (p2.priority = $2 AND p2.created_at <= $3))
+        AND p2.id != $1`,
+      [processId, proc.priority || 0, proc.created_at]
+    );
+    return parseInt(rows[0].position) + 1;
+  }
 
   const { rows } = await pool.query(`
     SELECT COUNT(*) AS position

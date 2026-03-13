@@ -120,7 +120,7 @@ export class Scheduler {
       // Создать процесс
       const proc = await processes.create({
         product_id: plan.product_id,
-        model_id: step.model_id,
+        model_id: step.model_id || null,
         type: step.process_type || 'improve',
         input_prompt: step.input_prompt || null,
         input_template_id: step.input_template_id || null,

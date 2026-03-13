@@ -9,7 +9,7 @@ export async function getAll({ status, product_id } = {}) {
       (SELECT COUNT(*) FROM opii.kaizen_plan_steps s WHERE s.plan_id = p.id) AS step_count,
       (SELECT COUNT(*) FROM opii.kaizen_plan_steps s WHERE s.plan_id = p.id AND s.status = 'completed') AS completed_steps
     FROM ${TABLE} p
-    JOIN opii.kaizen_products pr ON pr.id = p.product_id`;
+    LEFT JOIN opii.kaizen_products pr ON pr.id = p.product_id`;
   const params = [];
   const conditions = [];
 

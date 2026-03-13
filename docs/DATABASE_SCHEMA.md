@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.10.0 (миграции 001–014)
+> Версия схемы: 1.11.0 (миграции 001–016)
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -113,7 +113,7 @@ AI-процессы (фоновые задачи генерации).
 | id | UUID | NO | gen_random_uuid() | PK |
 | product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
 | model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) |
-| type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / roadmap_from_doc / prepare_press_release / form_release |
+| type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / form_release / run_tests / update_docs / roadmap_from_doc / prepare_press_release |
 | status | VARCHAR(20) | YES | 'pending' | pending / queued / running / completed / failed |
 | priority | INTEGER | YES | 0 | Приоритет в очереди (0=normal, 1=high, 2=urgent) |
 | plan_step_id | UUID | YES | NULL | FK → kaizen_plan_steps(id) ON DELETE SET NULL |
@@ -153,7 +153,7 @@ AI-процессы (фоновые задачи генерации).
 | id | UUID | NO | gen_random_uuid() | PK |
 | name | VARCHAR(255) | NO | — | Название плана |
 | description | TEXT | YES | NULL | Описание |
-| product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
+| product_id | UUID | YES | NULL | FK → kaizen_products(id) ON DELETE CASCADE (NULL для шаблонов) |
 | status | VARCHAR(20) | NO | 'draft' | draft / scheduled / active / paused / completed / failed / cancelled |
 | on_failure | VARCHAR(20) | YES | 'stop' | stop / skip |
 | is_template | BOOLEAN | YES | false | Флаг шаблона |
@@ -173,7 +173,7 @@ AI-процессы (фоновые задачи генерации).
 | plan_id | UUID | NO | — | FK → kaizen_plans(id) ON DELETE CASCADE |
 | step_order | INTEGER | NO | 0 | Порядок выполнения |
 | name | VARCHAR(255) | YES | NULL | Название шага |
-| model_id | UUID | NO | — | FK → kaizen_ai_models(id) |
+| model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) (NULL для run_tests, update_docs) |
 | process_type | VARCHAR(50) | NO | 'improve' | Тип процесса |
 | input_prompt | TEXT | YES | NULL | Промпт |
 | input_template_id | VARCHAR(50) | YES | NULL | ID шаблона промпта |

@@ -98,6 +98,12 @@ export const rcImportTicket = (ticketId) => request('POST', `/rc-tickets/${ticke
 export const rcImportBulk = (ticketIds) => request('POST', '/rc-tickets/import-bulk', { ticket_ids: ticketIds });
 export const rcIgnoreTicket = (ticketId) => request('POST', `/rc-tickets/${ticketId}/ignore`);
 
+// ── Bulk ──
+export const createIssuesBulk = (items) => request('POST', '/issues/bulk', { issues: items });
+export const createPlanFromReleases = (body) => request('POST', '/plans/from-releases', body);
+export const importRoadmap = (body) => request('POST', '/import-roadmap', body);
+export const createPlanStepsBulk = (planId, steps) => request('POST', `/plans/${planId}/steps/bulk`, { steps });
+
 // ── Form Release ──
 export const approveReleases = (processId, releases) =>
   request('POST', `/processes/${processId}/approve-releases`, { releases });

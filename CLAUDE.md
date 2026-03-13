@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.10.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.11.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
@@ -50,7 +50,7 @@ kaizen/
 │       └── api.js                # REST-эндпоинты
 ├── mcp-server/
 │   ├── package.json              # MCP-сервер: @modelcontextprotocol/sdk
-│   ├── index.js                  # 29 MCP-инструментов (kaizen_*) + полный конвейер
+│   ├── index.js                  # 35 MCP-инструментов (kaizen_*) + полный конвейер
 │   └── api-client.js             # HTTP-клиент к REST API (localhost:3034)
 ├── database/
 │   ├── exec-sql.js               # Утилита миграций
@@ -67,7 +67,10 @@ kaizen/
 │       ├── 010_press_release.sql
 │       ├── 011_queue.sql           # Статус queued, priority, plan_step_id
 │       ├── 012_plans.sql           # Таблицы планов и шагов
-│       └── 013_rc_tickets.sql      # RC-тикеты кэш + rc_ticket_id в issues
+│       ├── 013_rc_tickets.sql      # RC-тикеты кэш + rc_ticket_id в issues
+│       ├── 014_automation.sql       # Automation JSONB + pipeline поля
+│       ├── 015_run_tests.sql        # model_id nullable (processes + plan_steps)
+│       └── 016_plan_templates.sql   # product_id nullable для шаблонов планов
 ├── public/
 │   ├── index.html                # Список продуктов (карточки)
 │   ├── product.html              # Детали: задачи + релизы + процессы + планы
@@ -138,12 +141,13 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | PUT | /api/products/:id | Обновить |
 | DELETE | /api/products/:id | Удалить (каскадно) |
 | GET | /api/products/:id/issues | Задачи (?status=) |
-| POST | /api/issues | Создать задачу |
+| POST | /api/issues | Создать задачу (валидация: product_id, title) |
+| POST | /api/issues/bulk | Массовое создание задач (до 100) |
 | GET | /api/issues/:id | Задача по ID |
 | PUT | /api/issues/:id | Обновить |
 | DELETE | /api/issues/:id | Удалить |
 | GET | /api/products/:id/releases | Релизы продукта |
-| POST | /api/releases | Создать (с issue_ids[]) |
+| POST | /api/releases | Создать (с issue_ids[], принимает name или title) |
 | GET | /api/releases/:id | С вложенными issues |
 | PUT | /api/releases/:id | Обновить (add/remove issues) |
 | DELETE | /api/releases/:id | Удалить (issues → open) |
@@ -193,8 +197,11 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | POST | /api/plans/:id/cancel | Отменить план |
 | POST | /api/plans/:id/clone | Клонировать план |
 | POST | /api/plans/:id/steps | Добавить шаг к плану |
+| POST | /api/plans/:id/steps/bulk | Массовое добавление шагов |
 | PUT | /api/plans/:id/steps/:stepId | Обновить шаг |
 | DELETE | /api/plans/:id/steps/:stepId | Удалить шаг |
+| POST | /api/plans/from-releases | Создать план spec→develop из списка release_ids |
+| POST | /api/import-roadmap | Импорт roadmap: issues + releases + план за один вызов |
 | POST | /api/notify | Отправить уведомление в Б24 (event_type, product_id, data) |
 
 ## Бизнес-логика
@@ -204,7 +211,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Удаление issue из релиза**: issue → `open`
 - **Удаление релиза**: все issues → `open`, затем удаление
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
-- **Очередь процессов (QueueManager)**: POST /processes ставит процесс в очередь. Контроль параллелизма по провайдерам: ollama:1, mlx:1, claude-code:2, anthropic:3, openai:3, google:3. Статусы: pending → queued → running → completed/failed. При завершении — автоматический запуск следующего queued-процесса (`FOR UPDATE SKIP LOCKED`). Восстановление состояния при перезапуске сервера. Frontend: badge «queued», позиция в очереди, кнопка отмены.
+- **Очередь процессов (QueueManager)**: POST /processes ставит процесс в очередь. Контроль параллелизма по провайдерам: ollama:1, mlx:1, claude-code:2, anthropic:3, openai:3, google:3, local:3. Статусы: pending → queued → running → completed/failed. При завершении — автоматический запуск следующего queued-процесса (`FOR UPDATE SKIP LOCKED`). Восстановление состояния при перезапуске сервера. Frontend: badge «queued», позиция в очереди, кнопка отмены. Провайдер `local` — для процессов без AI-модели (run_tests, update_docs).
 - **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Планы с шагами (depends_on для зависимостей). Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), поиск ready шагов, запуск через QueueManager. Каждые 2 мин — `_runAutomation()`: RC auto-sync по расписанию, auto-import по правилам приоритетов, авто-запуск pipeline (threshold/schedule/on_sync). Обратная связь: при завершении процесса → обновление шага → проверка следующих. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
 - **Автоматизация продуктов**: JSONB `automation` в products — per-product настройки rc_auto_sync (interval_hours, auto_import rules), auto_pipeline (trigger: threshold/schedule/on_sync, preset: analysis/full_cycle/custom, per-stage model_id, pipeline_config) и notifications (enabled, bitrix24_user_id, events[]). UI: таб «Автоматизация» на странице продукта.
 - **Уведомления в Б24**: модуль `notifier.js` отправляет сообщения через бота АФИИНА (ID 1624) методом `im.message.add`. 7 типов событий (pipeline_completed/failed, release_published, develop_completed/failed, rc_sync_done, improve_completed). BB-code форматирование. Интегрирован в process-runner, scheduler, mcp-server.
@@ -217,12 +224,15 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Дорожная карта из документа**: POST /processes с type=roadmap_from_doc → парсит документ в релизы + задачи
 - **Пресс-релиз**: POST /releases/:id/prepare-press-release → AI генерирует PR-материалы для 4 каналов (соцсети, сайт, Б24, СМИ)
 - **Формирование релиза (AI)**: POST /processes с type=form_release → AI группирует открытые задачи в релизы. 4 стратегии (balanced, critical_first, by_topic, single). Авто-утверждение или ручной обзор предложения.
+- **Тестирование (run_tests)**: Локальный процесс (без AI). Собирает ветки из depends_on develop_release шагов, создаёт интеграционную ветку, мержит последовательно, запускает тестовую команду проекта. model_id = null, провайдер `local`.
+- **Документирование (update_docs)**: Локальный процесс. Аналогично run_tests собирает ветки, мержит, вызывает Claude Code с документационным промптом для обновления docs/ файлов.
+- **Шаблоны планов**: Планы с `is_template=true` и `product_id=null`. Клонирование через POST /plans/:id/clone с product_id, автоматический ремаппинг depends_on UUID. 3 предустановленных шаблона: «Анализ продукта» (3 шага), «Полный цикл» (4 шага), «Ночная разработка» (8 шагов).
 - **Интеграция с Rivc.Connect**: MS SQL клиент → синхронизация тикетов HelpDesk → кэш в kaizen_rc_tickets → ручной импорт в задачи (kaizen_issues) с сохранением rc_ticket_id
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
-- **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google
+- **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google, local (без модели — для run_tests, update_docs)
 - **claude-code провайдер**: два режима вызова CLI `claude`:
   - `callClaudeCode` (execFile, `--output-format text`) — для improve, prepare_spec и др. Буферизирует весь stdout.
-  - `callClaudeCodeStreaming` (spawn, `--output-format stream-json`) — для develop_release. Парсит NDJSON-события на лету, детектирует контрольные точки (7 фаз: repo → study → implement → tests → test_run → docs → commit), пишет промежуточные логи с `step: 'checkpoint'`.
+  - `callClaudeCodeStreaming` (spawn, `--output-format stream-json`) — для develop_release. Парсит NDJSON-события на лету, детектирует контрольные точки (6 фаз: repo → study → implement → tests → test_run → commit), пишет промежуточные логи с `step: 'checkpoint'`.
   - Общее: удаляет `CLAUDE*` env vars, `child.stdin.end()`, `--` разделитель, `cwd = product.project_path`. API key не требуется. Таймаут 3-60 мин (по умолчанию 20 мин).
 
 ## Важные правила
@@ -239,7 +249,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Транспорт**: stdio (стандарт Claude Code)
 - **API-клиент**: HTTP к `http://localhost:3034/api` (env `KAIZEN_API_URL`)
 - **Подключение**: `~/.claude/settings.json` → `mcpServers.kaizen`
-- **29 инструментов** с префиксом `kaizen_`:
+- **35 инструментов** с префиксом `kaizen_`:
   - Продукты: `list_products`, `get_product`
   - Задачи: `list_issues`, `create_issue`
   - Модели: `list_models`
@@ -250,5 +260,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
   - Планы: `list_plans`, `get_plan`, `create_plan`, `start_plan`, `cancel_plan`
   - RC: `rc_test`, `rc_sync`, `rc_list_tickets`, `rc_import_tickets`
   - Формирование релиза: `form_release`, `approve_releases`
+  - Тестирование и документирование: `run_tests`, `update_docs`
+  - Bulk-операции: `create_issues_bulk`, `create_plan_from_releases`, `import_roadmap`
   - **Конвейер**: `run_pipeline` — полный сквозной цикл одной командой
 - **kaizen_run_pipeline**: 5 базовых этапов (improve → approve → release → spec) + 3 опциональных (develop → publish → press_release). Пресеты: analysis (1-5), full_cycle (1-8), custom. Per-stage model_id (improve/spec/develop/press_release) с глобальным fallback. Авто-утверждение по правилам, polling статусов, auto-publish при успешных тестах

@@ -8,8 +8,14 @@ let pollingTimer = null;
 async function loadPlans() {
   try {
     const filter = document.getElementById('filterStatus').value;
-    const qs = filter ? `?status=${filter}` : '';
-    plansList = await api(`/plans${qs}`);
+    let qs = '';
+    if (filter === 'template') {
+      // Filter templates client-side (no server param for is_template)
+      plansList = (await api('/plans')).filter(p => p.is_template);
+    } else {
+      qs = filter ? `?status=${filter}` : '';
+      plansList = await api(`/plans${qs}`);
+    }
     renderPlans();
     updatePolling();
   } catch (err) {
@@ -38,7 +44,8 @@ function renderPlans() {
       <td style="white-space:nowrap">${p.scheduled_at ? formatDate(p.scheduled_at) : '—'}</td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
       <td style="white-space:nowrap">
-        ${['draft', 'scheduled'].includes(p.status) ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); startPlan('${p.id}')">Запустить</button>` : ''}
+        ${p.is_template ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); clonePlan('${p.id}', '${escapeHtml(p.name)}')">Клонировать</button>` : ''}
+        ${!p.is_template && ['draft', 'scheduled'].includes(p.status) ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); startPlan('${p.id}')">Запустить</button>` : ''}
         ${['active', 'scheduled'].includes(p.status) ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelPlan('${p.id}')">Отменить</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deletePlan('${p.id}')">Уд.</button>
       </td>
@@ -87,6 +94,40 @@ window.cancelPlan = async function (id) {
     await api(`/plans/${id}/cancel`, { method: 'POST' });
     toast('План отменён');
     loadPlans();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.clonePlan = async function (id, name) {
+  try {
+    // Load products for selection
+    const products = await api('/products');
+    if (products.length === 0) return toast('Нет продуктов для клонирования', 'error');
+
+    const options = products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    const html = `
+      <div style="margin-bottom:12px">
+        <label style="display:block;margin-bottom:4px;color:var(--text-dim)">Продукт *</label>
+        <select id="cloneProductId" style="width:100%;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text)">${options}</select>
+      </div>
+      <div>
+        <label style="display:block;margin-bottom:4px;color:var(--text-dim)">Название</label>
+        <input id="cloneName" type="text" value="${escapeHtml(name)}" style="width:100%;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text)">
+      </div>`;
+
+    const ok = await confirm(html, 'Клонировать шаблон');
+    if (!ok) return;
+
+    const productId = document.getElementById('cloneProductId').value;
+    const newName = document.getElementById('cloneName').value.trim() || name;
+
+    const cloned = await api(`/plans/${id}/clone`, {
+      method: 'POST',
+      body: { product_id: productId, name: newName },
+    });
+    toast('План создан из шаблона');
+    window.location.href = `/plan-edit.html?id=${cloned.id}`;
   } catch (err) {
     toast(err.message, 'error');
   }

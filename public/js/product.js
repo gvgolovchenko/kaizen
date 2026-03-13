@@ -2017,6 +2017,47 @@ window.handleSaveAutomation = async function () {
   }
 };
 
+window.runPipelineNow = async function () {
+  if (!await confirm('Запустить конвейер для этого продукта сейчас?')) return;
+  const statusEl = document.getElementById('pipelineRunStatus');
+  try {
+    statusEl.textContent = 'Запуск...';
+    const res = await api(`/products/${productId}/run-pipeline`, { method: 'POST' });
+    statusEl.textContent = `Конвейер запущен (${new Date().toLocaleTimeString('ru')})`;
+    statusEl.style.color = 'var(--accent)';
+    toast('Конвейер запущен! Следите за процессами.');
+    // Switch to processes tab after a moment
+    setTimeout(() => switchTab('processes'), 1500);
+  } catch (err) {
+    statusEl.textContent = `Ошибка: ${err.message}`;
+    statusEl.style.color = 'var(--danger)';
+    toast(err.message, 'error');
+  }
+};
+
+window.runPipelineScheduled = async function () {
+  const scheduledAt = document.getElementById('pipelineScheduledAt').value;
+  if (!scheduledAt) { toast('Укажите дату и время', 'error'); return; }
+  const dt = new Date(scheduledAt);
+  if (dt <= new Date()) { toast('Время должно быть в будущем', 'error'); return; }
+  if (!await confirm(`Запланировать конвейер на ${dt.toLocaleString('ru')}?`)) return;
+  const statusEl = document.getElementById('pipelineRunStatus');
+  try {
+    statusEl.textContent = 'Планирование...';
+    const res = await api(`/products/${productId}/run-pipeline`, {
+      method: 'POST',
+      body: { scheduled_at: dt.toISOString() },
+    });
+    statusEl.textContent = `Запланирован на ${dt.toLocaleString('ru')}`;
+    statusEl.style.color = 'var(--accent)';
+    toast(`Конвейер запланирован на ${dt.toLocaleTimeString('ru')}`);
+  } catch (err) {
+    statusEl.textContent = `Ошибка: ${err.message}`;
+    statusEl.style.color = 'var(--danger)';
+    toast(err.message, 'error');
+  }
+};
+
 window.testNotification = async function () {
   try {
     await api('/notify', {

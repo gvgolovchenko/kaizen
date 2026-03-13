@@ -133,7 +133,9 @@ function renderSteps() {
       return dep ? (dep.name || `Шаг ${steps.indexOf(dep) + 1}`) : '?';
     }).join(', ');
 
-    const modelName = models.find(m => m.id === s.model_id)?.name || s.model_id;
+    const modelName = s.model_id
+      ? (models.find(m => m.id === s.model_id)?.name || s.model_id)
+      : 'Локальный';
 
     return `
     <div class="plan-step-card ${statusClass}">
@@ -183,6 +185,7 @@ window.showAddStep = function () {
   document.getElementById('stepDependsOn').value = '';
   document.getElementById('stepFormContainer').style.display = '';
   populateModelSelect();
+  onProcessTypeChange();
 };
 
 window.editStep = function (stepId) {
@@ -190,15 +193,16 @@ window.editStep = function (stepId) {
   if (!step) return;
   editingStepId = stepId;
   document.getElementById('stepFormTitle').textContent = 'Редактировать шаг';
+  document.getElementById('stepFormContainer').style.display = '';
+  populateModelSelect();
   document.getElementById('stepName').value = step.name || '';
-  document.getElementById('stepModel').value = step.model_id;
+  document.getElementById('stepModel').value = step.model_id || '';
   document.getElementById('stepProcessType').value = step.process_type || 'improve';
   document.getElementById('stepTimeout').value = step.timeout_min || 20;
   document.getElementById('stepPrompt').value = step.input_prompt || '';
   document.getElementById('stepCount').value = step.input_count || 5;
   document.getElementById('stepDependsOn').value = (step.depends_on || [])[0] || '';
-  document.getElementById('stepFormContainer').style.display = '';
-  populateModelSelect();
+  onProcessTypeChange();
 };
 
 window.hideStepForm = function () {
@@ -206,14 +210,26 @@ window.hideStepForm = function () {
   editingStepId = null;
 };
 
+window.onProcessTypeChange = function () {
+  const type = document.getElementById('stepProcessType').value;
+  const isRunTests = type === 'run_tests';
+  document.getElementById('stepModelGroup').style.display = isRunTests ? 'none' : '';
+  document.getElementById('stepCountGroup').style.display = isRunTests ? 'none' : '';
+  const promptEl = document.getElementById('stepPrompt');
+  promptEl.placeholder = isRunTests
+    ? 'JSON конфиг: {"test_command":"npm test"} (необязательно, auto-detect по стеку)'
+    : 'Промпт для AI...';
+};
+
 window.saveStep = async function () {
+  const processType = document.getElementById('stepProcessType').value;
   const modelId = document.getElementById('stepModel').value;
-  if (!modelId) return toast('Выберите модель', 'error');
+  if (processType !== 'run_tests' && !modelId) return toast('Выберите модель', 'error');
 
   const body = {
     name: document.getElementById('stepName').value.trim() || null,
-    model_id: modelId,
-    process_type: document.getElementById('stepProcessType').value,
+    model_id: processType === 'run_tests' ? null : modelId,
+    process_type: processType,
     timeout_min: parseInt(document.getElementById('stepTimeout').value) || 20,
     input_prompt: document.getElementById('stepPrompt').value.trim() || null,
     input_count: parseInt(document.getElementById('stepCount').value) || 5,

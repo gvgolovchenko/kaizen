@@ -2,6 +2,81 @@
 
 ---
 
+## v1.11.0 — Шаблоны планов + Тестирование + Документирование (2026-03-13)
+
+**Шаблоны планов для переиспользования, интеграционное тестирование (run_tests) и автодокументирование (update_docs) как отдельные шаги в планах автоматизации.**
+
+### Шаблоны планов
+
+- Планы с `is_template=true` и `product_id=null` — переиспользуемые шаблоны
+- Клонирование через `POST /plans/:id/clone` с указанием `product_id`
+- Автоматический ремаппинг `depends_on` UUID при клонировании
+- 3 предустановленных шаблона:
+  - **Анализ продукта** (3 шага): improve → form_release → prepare_spec
+  - **Полный цикл** (4 шага): prepare_spec → develop_release → run_tests → update_docs
+  - **Ночная разработка** (8 шагов): (spec → develop) ×3 → run_tests → update_docs
+- UI: фильтр «Шаблоны» на странице планов, кнопка клонирования с выбором продукта
+
+### Тестирование (run_tests)
+
+- Новый тип процесса: `run_tests` — локальный процесс без AI-модели
+- Собирает ветки из зависимых шагов `develop_release` (depends_on)
+- Создаёт интеграционную ветку, последовательно мержит ветки разработки
+- Запускает тестовую команду проекта (автоопределение: npm test, pytest и т.д.)
+- Парсит результаты: passed/failed/skipped
+- Провайдер `local` в QueueManager (лимит: 3)
+
+### Документирование (update_docs)
+
+- Новый тип процесса: `update_docs` — локальный процесс
+- Аналогично `run_tests` собирает и мержит ветки из depends_on
+- Вызывает Claude Code с документационным промптом
+- Обновляет README.md, RELEASE_NOTES.md, USER_GUIDE.md и другие docs/ файлы
+- Шаг документации удалён из develop_release — выделен в отдельный процесс для надёжности
+
+### Устойчивость JSON-парсинга
+
+- `parseJsonFromAI()` в utils.js: поиск всех `{...}` блоков вместо первого
+- Предпочтение объектов с ключами develop_release (branch, commit_hash, tests_passed)
+- Git fallback в process-runner: извлечение результатов из git при неудаче парсинга
+
+### БД (миграции 015–016)
+
+- `015_run_tests.sql`: `model_id` nullable в processes и plan_steps
+- `016_plan_templates.sql`: `product_id` nullable в plans для шаблонов
+
+### MCP-сервер (33 → 35 инструментов)
+
+- `kaizen_run_tests` — запуск тестирования
+- `kaizen_update_docs` — запуск документирования
+- Обновлены enum типов процессов: добавлены form_release, run_tests, update_docs
+
+### UI
+
+- Новые типы шагов в редакторе плана: «Формирование релиза», «Тестирование», «Документирование»
+- Скрытие полей «Модель» и «Количество задач» для run_tests/update_docs
+- Отображение «Локальный» для шагов без model_id
+- Фильтр «Шаблоны» на странице планов, клонирование с диалогом выбора продукта
+
+### Изменённые файлы
+
+- `server/process-runner.js` — `runTests()`, `runUpdateDocs()`, `gitFallback()`, убран step docs из develop_release
+- `server/utils.js` — улучшенный parseJsonFromAI (все {} блоки, prefer develop_release keys)
+- `server/queue-manager.js` — провайдер `local` (лимит 3), `getNextQueuedLocal()`
+- `server/db/processes.js` — LEFT JOIN для model, `getNextQueuedLocal()`
+- `server/db/plans.js` — LEFT JOIN для product_id
+- `server/routes/api.js` — поддержка run_tests/update_docs/form_release, clone с ремаппингом
+- `server/scheduler.js` — model_id nullable
+- `public/plan-edit.html` — новые типы шагов, stepModelGroup/stepCountGroup
+- `public/js/plan-edit.js` — `onProcessTypeChange()`, model/count visibility
+- `public/plans.html` — фильтр шаблонов
+- `public/js/plans.js` — фильтрация шаблонов, clonePlan()
+- `mcp-server/index.js` — 2 новых инструмента, обновлённые enum
+- `database/migrations/015_run_tests.sql` — model_id nullable
+- `database/migrations/016_plan_templates.sql` — product_id nullable
+
+---
+
 ## v1.10.0 — Пресеты конвейера + Мульти-модель + Уведомления в Б24 (2026-03-10)
 
 **Пресеты и per-stage модели для конвейера + уведомления через бота АФИИНА в Битрикс24 при ключевых событиях.**

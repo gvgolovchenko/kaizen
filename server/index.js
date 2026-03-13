@@ -23,9 +23,20 @@ queueManager.onProcessDone = (processId, status) => {
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(join(__dirname, '..', 'public')));
 
-// Передаём queueManager в router через app.locals
+// Передаём queueManager и scheduler в router
 app.locals.queueManager = queueManager;
+app.set('scheduler', scheduler);
 app.use('/api', apiRouter);
+
+// JSON error handler — always return JSON, never HTML
+app.use('/api', (err, req, res, next) => {
+  console.error(`API error [${req.method} ${req.path}]:`, err.message);
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
+    error: err.message || 'Internal server error',
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
+  });
+});
 
 app.listen(PORT, async () => {
   console.log(`Kaizen запущен на http://localhost:${PORT}`);

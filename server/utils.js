@@ -33,18 +33,27 @@ export function parseJsonFromAI(raw) {
     }
   }
 
-  // 5. Find outermost { ... } (single object)
-  const objStart = str.indexOf('{');
-  if (objStart !== -1) {
+  // 5. Find ALL balanced { ... } blocks, try each one (last match wins — AI puts JSON at the end)
+  const objects = [];
+  for (let s = 0; s < str.length; s++) {
+    if (str[s] !== '{') continue;
     let depth = 0;
-    for (let i = objStart; i < str.length; i++) {
+    for (let i = s; i < str.length; i++) {
       if (str[i] === '{') depth++;
       else if (str[i] === '}') depth--;
       if (depth === 0) {
-        try { return [JSON.parse(str.slice(objStart, i + 1))]; } catch {}
+        try { objects.push(JSON.parse(str.slice(s, i + 1))); } catch {}
+        s = i; // skip past this block
         break;
       }
     }
+  }
+  if (objects.length === 1) return [objects[0]];
+  if (objects.length > 1) {
+    // Prefer object with develop_release keys (branch, commit_hash, summary)
+    const dev = objects.find(o => o.branch || o.commit_hash || ('tests_passed' in o));
+    if (dev) return [dev];
+    return [objects[objects.length - 1]]; // fallback: last object
   }
 
   return null;

@@ -15,6 +15,7 @@ export class QueueManager {
       anthropic: 3,
       openai: 3,
       google: 3,
+      local: 3,
     };
     this.activeCount = new Map();    // provider → number
     this.onProcessDone = null;       // callback(processId, status) — для Scheduler
@@ -36,10 +37,13 @@ export class QueueManager {
     // Загрузить процесс и модель
     const proc = await processes.getById(processId);
     if (!proc) throw new Error(`Process ${processId} not found`);
-    const model = await aiModels.getById(proc.model_id);
-    if (!model) throw new Error(`Model ${proc.model_id} not found`);
 
-    const provider = model.provider;
+    let provider = 'local';
+    if (proc.model_id) {
+      const model = await aiModels.getById(proc.model_id);
+      if (!model) throw new Error(`Model ${proc.model_id} not found`);
+      provider = model.provider;
+    }
     const active = this._getActive(provider);
     const limit = this._getLimit(provider);
 
@@ -87,7 +91,9 @@ export class QueueManager {
     const limit = this._getLimit(provider);
     if (active >= limit) return;
 
-    const next = await processes.getNextQueued(provider);
+    const next = provider === 'local'
+      ? await processes.getNextQueuedLocal()
+      : await processes.getNextQueued(provider);
     if (!next) return;
 
     this._execute(next.id, provider, { timeoutMs: 20 * 60 * 1000 });
@@ -99,13 +105,13 @@ export class QueueManager {
   async getStats() {
     const { pool } = await import('./db/pool.js');
     const { rows } = await pool.query(`
-      SELECT m.provider,
+      SELECT COALESCE(m.provider, 'local') AS provider,
         COUNT(*) FILTER (WHERE p.status = 'running') AS running,
         COUNT(*) FILTER (WHERE p.status = 'queued') AS queued
       FROM opii.kaizen_processes p
-      JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+      LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
       WHERE p.status IN ('running', 'queued')
-      GROUP BY m.provider
+      GROUP BY COALESCE(m.provider, 'local')
     `);
 
     const stats = {};
@@ -136,11 +142,11 @@ export class QueueManager {
 
     // Пересчитать activeCount из running процессов
     const { rows: running } = await pool.query(`
-      SELECT m.provider, COUNT(*) AS cnt
+      SELECT COALESCE(m.provider, 'local') AS provider, COUNT(*) AS cnt
       FROM opii.kaizen_processes p
-      JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+      LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
       WHERE p.status = 'running'
-      GROUP BY m.provider
+      GROUP BY COALESCE(m.provider, 'local')
     `);
     for (const row of running) {
       this.activeCount.set(row.provider, parseInt(row.cnt));

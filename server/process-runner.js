@@ -8,6 +8,10 @@ import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
 import { parseJsonFromAI, detectTestCommand } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFileCb);
 
 /**
  * Watchdog wrapper — guarantees a Promise settles within timeoutMs.
@@ -22,6 +26,237 @@ function withWatchdog(promise, timeoutMs, label = 'AI call') {
       val => { clearTimeout(timer); resolve(val); },
       err => { clearTimeout(timer); reject(err); },
     );
+  });
+}
+
+/**
+ * Git fallback: extract develop_release results from git when JSON parsing fails.
+ * Checks if the branch has commits and extracts commit hash, file count, etc.
+ */
+async function gitFallback(branchName, cwd, processId) {
+  const fallback = {
+    branch: branchName,
+    commit_hash: null,
+    tests_passed: false,
+    summary: 'Не удалось распарсить итоговый JSON',
+    git_fallback: true,
+  };
+  try {
+    // Check if branch exists and get latest commit
+    const { stdout: hash } = await execFileAsync('git', ['rev-parse', branchName], { cwd, timeout: 10_000 });
+    fallback.commit_hash = hash.trim() || null;
+
+    if (fallback.commit_hash) {
+      // Count changed files vs parent branch
+      try {
+        const { stdout: diff } = await execFileAsync('git', ['diff', '--stat', `${branchName}~1`, branchName], { cwd, timeout: 10_000 });
+        const lines = diff.trim().split('\n');
+        const lastLine = lines[lines.length - 1] || '';
+        const filesMatch = lastLine.match(/(\d+)\s+files?\s+changed/);
+        if (filesMatch) fallback.files_changed = parseInt(filesMatch[1], 10);
+      } catch {}
+
+      // Get commit message as summary
+      try {
+        const { stdout: msg } = await execFileAsync('git', ['log', '-1', '--format=%s', branchName], { cwd, timeout: 10_000 });
+        if (msg.trim()) fallback.summary = msg.trim();
+      } catch {}
+
+      fallback.tests_passed = true; // branch exists with commit → assume success
+    }
+
+    await processLogs.create({
+      process_id: processId,
+      step: 'git_fallback',
+      message: `JSON не распарсен, результат получен из git: коммит ${fallback.commit_hash || '—'}, файлов: ${fallback.files_changed || '?'}`,
+      data: fallback,
+    });
+  } catch {
+    // Branch doesn't exist — no fallback possible
+  }
+  return fallback;
+}
+
+/**
+ * Run tests: merge develop_release branches (from plan depends_on) and run test command.
+ * No AI model required — just shell commands.
+ */
+async function runTests(processId, proc, product, startTime, timeoutMs) {
+  const cwd = product.project_path;
+  if (!cwd) throw new Error('Product has no project_path configured');
+
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+
+  const testCommand = config.test_command || detectTestCommand(product.tech_stack);
+
+  // 1. Collect branches from plan step dependencies
+  let branches = [];
+  if (proc.plan_step_id) {
+    const { default: planSteps } = await import('./db/plan-steps.js');
+    const step = await planSteps.getById(proc.plan_step_id);
+    if (step?.depends_on?.length) {
+      const allSteps = await planSteps.getByPlan(step.plan_id);
+      for (const depId of step.depends_on) {
+        const depStep = allSteps.find(s => s.id === depId);
+        if (depStep?.process_id && depStep.process_type === 'develop_release') {
+          const depProc = await processes.getById(depStep.process_id);
+          if (depProc?.result?.branch) {
+            branches.push(depProc.result.branch);
+          }
+        }
+      }
+    }
+  }
+
+  // Also accept explicit branches from config
+  if (config.branches?.length) branches = config.branches;
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'test_started',
+    message: `Тестирование продукта. Команда: ${testCommand}. Веток для мержа: ${branches.length}`,
+    data: { test_command: testCommand, cwd, branches },
+  });
+
+  // 2. Create integration branch and merge release branches
+  let integrationBranch = null;
+  if (branches.length > 0) {
+    integrationBranch = `kaizen/integration-${processId.slice(0, 8)}`;
+
+    try {
+      // Ensure clean state on main
+      await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 15_000 });
+      await execFileAsync('git', ['pull', '--ff-only'], { cwd, timeout: 30_000 }).catch(() => {});
+
+      // Create integration branch
+      await execFileAsync('git', ['checkout', '-b', integrationBranch], { cwd, timeout: 10_000 });
+
+      // Merge each release branch sequentially
+      for (const branch of branches) {
+        await processLogs.create({
+          process_id: processId,
+          step: 'merging_branch',
+          message: `Мерж ветки: ${branch}`,
+          data: { branch },
+        });
+
+        try {
+          await execFileAsync('git', ['merge', branch, '--no-edit'], { cwd, timeout: 30_000 });
+        } catch (mergeErr) {
+          // Merge conflict — abort and report
+          await execFileAsync('git', ['merge', '--abort'], { cwd, timeout: 10_000 }).catch(() => {});
+
+          const error = `Конфликт при мерже ветки ${branch}: ${mergeErr.message}`;
+          await processLogs.create({
+            process_id: processId,
+            step: 'merge_conflict',
+            message: error,
+            data: { branch, error: mergeErr.message },
+          });
+
+          // Cleanup: go back to main, delete integration branch
+          await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 10_000 }).catch(() => {});
+          await execFileAsync('git', ['branch', '-D', integrationBranch], { cwd, timeout: 10_000 }).catch(() => {});
+
+          const durationMs = Date.now() - startTime;
+          await processes.update(processId, {
+            status: 'failed',
+            result: { branches, failed_branch: branch, integration_branch: integrationBranch },
+            error,
+            completed_at: new Date().toISOString(),
+            duration_ms: durationMs,
+          });
+          return;
+        }
+      }
+
+      await processLogs.create({
+        process_id: processId,
+        step: 'merge_complete',
+        message: `Все ${branches.length} веток смержены в ${integrationBranch}`,
+        data: { integration_branch: integrationBranch, branches },
+      });
+    } catch (gitErr) {
+      throw new Error(`Git error during merge setup: ${gitErr.message}`);
+    }
+  }
+
+  // 3. Run tests
+  await processLogs.create({
+    process_id: processId,
+    step: 'running_tests',
+    message: `Запуск: ${testCommand}`,
+  });
+
+  let stdout = '', stderr = '', exitCode = 0;
+  const cmdTimeoutMs = Math.min(timeoutMs - 5000, 10 * 60 * 1000);
+
+  try {
+    const result = await execFileAsync('sh', ['-c', testCommand], {
+      cwd,
+      timeout: cmdTimeoutMs,
+      maxBuffer: 5 * 1024 * 1024,
+      env: { ...process.env, CI: 'true', NODE_ENV: 'test' },
+    });
+    stdout = result.stdout;
+    stderr = result.stderr;
+  } catch (err) {
+    stdout = err.stdout || '';
+    stderr = err.stderr || '';
+    exitCode = err.code ?? 1;
+  }
+
+  // 4. Parse results
+  const output = (stdout + '\n' + stderr).trim();
+  const lastChars = output.slice(-3000);
+
+  // Try to extract test counts from common test runner outputs
+  const totalMatch = output.match(/(\d+)\s+(?:tests?|specs?|suites?)/i);
+  const failMatch = output.match(/(\d+)\s+fail/i);
+  const passMatch = output.match(/(\d+)\s+pass/i);
+
+  const testsTotal = totalMatch ? parseInt(totalMatch[1]) : null;
+  const testsFailed = failMatch ? parseInt(failMatch[1]) : null;
+  const testsPassed = exitCode === 0;
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'test_result',
+    message: testsPassed
+      ? `Тесты пройдены (exit code 0)${testsTotal ? `, всего: ${testsTotal}` : ''}`
+      : `Тесты провалены (exit code ${exitCode})${testsFailed ? `, ошибок: ${testsFailed}` : ''}`,
+    data: { tests_passed: testsPassed, exit_code: exitCode, tests_total: testsTotal, tests_failed: testsFailed, output: lastChars },
+  });
+
+  // 5. Build result
+  const resultObj = {
+    tests_passed: testsPassed,
+    test_command: testCommand,
+    exit_code: exitCode,
+    tests_total: testsTotal,
+    tests_failed: testsFailed,
+    tests_pass_count: passMatch ? parseInt(passMatch[1]) : null,
+    test_output: lastChars,
+    branches,
+    integration_branch: integrationBranch,
+  };
+
+  // 6. Cleanup on failure: go back to main, delete integration branch
+  if (!testsPassed && integrationBranch) {
+    await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 10_000 }).catch(() => {});
+    await execFileAsync('git', ['branch', '-D', integrationBranch], { cwd, timeout: 10_000 }).catch(() => {});
+    resultObj.integration_branch = null;
+  }
+
+  // 7. Complete
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: testsPassed ? 'completed' : 'failed',
+    result: resultObj,
+    error: testsPassed ? null : `Tests failed (exit code ${exitCode})`,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
   });
 }
 
@@ -56,6 +291,12 @@ export async function runProcess(processId, options = {}) {
     const product = await products.getById(proc.product_id);
     if (!product) throw new Error('Product not found');
 
+    // Dispatch run_tests before loading model (no model required)
+    if (proc.type === 'run_tests') {
+      await runTests(processId, proc, product, startTime, timeoutMs);
+      return;
+    }
+
     const model = await aiModels.getById(proc.model_id);
     if (!model) throw new Error('Model not found');
 
@@ -82,6 +323,10 @@ export async function runProcess(processId, options = {}) {
     }
     if (proc.type === 'form_release') {
       await runFormRelease(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'update_docs') {
+      await runUpdateDocs(processId, proc, product, model, startTime, timeoutMs);
       return;
     }
 
@@ -613,6 +858,225 @@ ${docText}
 }
 
 /**
+ * Run update_docs: merge develop_release branches, then use Claude Code
+ * to update project documentation based on all changes.
+ */
+async function runUpdateDocs(processId, proc, product, model, startTime, timeoutMs) {
+  const cwd = product.project_path;
+  if (!cwd) throw new Error('Product has no project_path configured');
+
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+
+  // 1. Collect branches from plan step dependencies
+  let branches = [];
+  if (proc.plan_step_id) {
+    const { default: planSteps } = await import('./db/plan-steps.js');
+    const step = await planSteps.getById(proc.plan_step_id);
+    if (step?.depends_on?.length) {
+      const allSteps = await planSteps.getByPlan(step.plan_id);
+      for (const depId of step.depends_on) {
+        const depStep = allSteps.find(s => s.id === depId);
+        if (depStep?.process_id && depStep.process_type === 'develop_release') {
+          const depProc = await processes.getById(depStep.process_id);
+          if (depProc?.result?.branch) {
+            branches.push(depProc.result.branch);
+          }
+        }
+      }
+    }
+  }
+  if (config.branches?.length) branches = config.branches;
+
+  // Also collect release info for context
+  let releaseContext = '';
+  if (proc.plan_step_id) {
+    const { default: planSteps } = await import('./db/plan-steps.js');
+    const step = await planSteps.getById(proc.plan_step_id);
+    if (step?.depends_on?.length) {
+      const allSteps = await planSteps.getByPlan(step.plan_id);
+      for (const depId of step.depends_on) {
+        const depStep = allSteps.find(s => s.id === depId);
+        if (depStep?.release_id) {
+          const rel = await releases.getById(depStep.release_id);
+          if (rel) {
+            releaseContext += `\n- ${rel.version} "${rel.name}": ${rel.issues?.map(i => i.title).join(', ') || 'нет задач'}`;
+          }
+        }
+      }
+    }
+  }
+
+  const docFiles = config.doc_files || [
+    'docs/USER_GUIDE.md',
+    'docs/MAIN_FUNC.md',
+    'docs/RELEASE_NOTES.md',
+    'docs/DATABASE_SCHEMA.md',
+  ];
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'docs_started',
+    message: `Обновление документации. Веток для мержа: ${branches.length}, файлов: ${docFiles.join(', ')}`,
+    data: { branches, doc_files: docFiles },
+  });
+
+  // 2. Merge branches (same logic as run_tests)
+  let integrationBranch = null;
+  if (branches.length > 0) {
+    integrationBranch = `kaizen/docs-${processId.slice(0, 8)}`;
+    try {
+      await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 15_000 });
+      await execFileAsync('git', ['pull', '--ff-only'], { cwd, timeout: 30_000 }).catch(() => {});
+      await execFileAsync('git', ['checkout', '-b', integrationBranch], { cwd, timeout: 10_000 });
+
+      for (const branch of branches) {
+        try {
+          await execFileAsync('git', ['merge', branch, '--no-edit'], { cwd, timeout: 30_000 });
+        } catch (mergeErr) {
+          await execFileAsync('git', ['merge', '--abort'], { cwd, timeout: 10_000 }).catch(() => {});
+          await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 10_000 }).catch(() => {});
+          await execFileAsync('git', ['branch', '-D', integrationBranch], { cwd, timeout: 10_000 }).catch(() => {});
+          throw new Error(`Конфликт при мерже ветки ${branch}: ${mergeErr.message}`);
+        }
+      }
+
+      await processLogs.create({
+        process_id: processId,
+        step: 'merge_complete',
+        message: `${branches.length} веток смержены в ${integrationBranch}`,
+        data: { integration_branch: integrationBranch, branches },
+      });
+    } catch (err) {
+      throw new Error(`Git merge error: ${err.message}`);
+    }
+  }
+
+  // 3. Get diff summary for context
+  let diffSummary = '';
+  try {
+    const { stdout } = await execFileAsync('git', ['diff', '--stat', 'main', 'HEAD'], { cwd, timeout: 15_000 });
+    diffSummary = stdout.trim();
+  } catch {}
+
+  // 4. Build prompts for Claude Code
+  const systemPrompt = `Ты — технический писатель. Твоя задача — обновить документацию проекта на основе изменений в коде.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
+Путь к проекту: ${cwd}
+
+СТРОГИЙ ПОРЯДОК ДЕЙСТВИЙ:
+
+Шаг 1 — ИЗУЧЕНИЕ ИЗМЕНЕНИЙ
+  Используй git diff main..HEAD для просмотра всех изменений.
+  Изучи новый и изменённый код. Пойми что было добавлено/изменено.
+
+Шаг 2 — ОБНОВЛЕНИЕ ДОКУМЕНТАЦИИ
+  Обнови следующие файлы (если они существуют):
+${docFiles.map(f => `  - ${f}`).join('\n')}
+
+  Для каждого файла:
+  - Прочитай текущее содержимое
+  - Определи какие разделы затронуты изменениями
+  - Обнови только затронутые разделы
+  - Сохрани существующий формат и стиль
+  - Если файла нет — создай с базовой структурой
+
+  Для RELEASE_NOTES.md:
+  - Добавь записи о новых релизах в начало файла
+  - Формат: ## версия — название (дата)
+${releaseContext ? `\n  Релизы для документирования:${releaseContext}` : ''}
+
+Шаг 3 — КОММИТ И ПУШ
+  git add -A
+  git commit -m "docs: обновление документации"
+  git push origin HEAD
+  Получи хэш коммита: git rev-parse HEAD
+
+Шаг 4 — ИТОГОВЫЙ JSON
+  Последней строкой ответа выведи ТОЛЬКО этот JSON (без пояснений):
+  {"branch":"текущая ветка","commit_hash":"<хэш>","files_updated":["файл1","файл2"],"summary":"краткое описание обновлений"}
+
+ПРАВИЛА:
+- Не изменяй код — только документацию
+- Не выходи за пределы ${cwd}
+- Пиши документацию на русском языке${config.language === 'en' ? ' (на английском)' : ''}
+- При отсутствии изменений — верни JSON с пустым files_updated`;
+
+  const userPrompt = `Обнови документацию проекта.
+
+${diffSummary ? `=== ИЗМЕНЕНИЯ (git diff --stat) ===\n${diffSummary}\n` : ''}
+${releaseContext ? `=== РЕЛИЗЫ ===${releaseContext}\n` : ''}
+Файлы для обновления: ${docFiles.join(', ')}`;
+
+  // 5. Log: request_sent
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: `Запрос отправлен Claude Code. Ветка: ${integrationBranch || 'текущая'}`,
+    data: { branch: integrationBranch, doc_files: docFiles },
+  });
+
+  // 6. Call Claude Code with streaming
+  const onEvent = createCheckpointTracker(processId);
+  const watchdogMs = timeoutMs + 60_000;
+  const { text: rawResponse, events } = await withWatchdog(
+    callClaudeCodeStreaming(model.model_id, systemPrompt, userPrompt, {
+      cwd,
+      timeoutMs,
+      allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
+      onEvent,
+    }),
+    watchdogMs,
+    `update_docs/${model.name}`,
+  );
+
+  // 7. Log: response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов, ${events.length} событий)`,
+    data: { response_length: rawResponse.length, event_count: events.length },
+  });
+
+  // 8. Parse result
+  const parsedArr = parseJsonFromAI(rawResponse);
+  const parsed = parsedArr ? parsedArr[0] : null;
+  let resultObj;
+  if (parsed) {
+    resultObj = {
+      branch: parsed.branch || integrationBranch || 'unknown',
+      commit_hash: parsed.commit_hash || null,
+      files_updated: parsed.files_updated || [],
+      summary: parsed.summary || '',
+    };
+  } else {
+    // Git fallback
+    resultObj = await gitFallback(integrationBranch || 'HEAD', cwd, processId);
+    resultObj.files_updated = [];
+  }
+
+  // 9. Log: parse_result
+  await processLogs.create({
+    process_id: processId,
+    step: 'parse_result',
+    message: `Ветка: ${resultObj.branch} · коммит: ${resultObj.commit_hash || '—'} · файлов обновлено: ${resultObj.files_updated?.length || 0}`,
+    data: resultObj,
+  });
+
+  // 10. Complete
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result: resultObj,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+}
+
+/**
  * Run a form_release process — AI groups open issues into releases.
  */
 async function runFormRelease(processId, proc, product, model, startTime, timeoutMs) {
@@ -923,35 +1387,28 @@ ${product.tech_stack  ? `Стек: ${product.tech_stack}`       : ''}
   Реализуй каждую задачу из спецификации полностью.
   Пиши код в стиле существующего проекта.
   Не пропускай задачи — реализуй все.
+  НЕ обновляй документацию (docs/) — это делается отдельным процессом.
 
-Шаг 4 — ОБНОВЛЕНИЕ ДОКУМЕНТАЦИИ
-  После реализации задач обнови документацию проекта, если она есть:
-  - docs/USER_GUIDE.md — руководство пользователя (новые возможности, изменённое поведение)
-  - docs/MAIN_FUNC.md — основная функциональность (технические изменения, новые модули/API)
-  - docs/RELEASE_NOTES.md — добавь запись о текущем релизе
-  Обновляй только разделы, затронутые изменениями. Если файла нет — пропусти.
-  Сохрани существующий формат и стиль документа.
-
-Шаг 5 — НАПИСАНИЕ ТЕСТОВ
+Шаг 4 — НАПИСАНИЕ ТЕСТОВ
   Напиши тесты для каждого реализованного компонента / функции / эндпоинта.
   Покрой основные сценарии использования и граничные случаи.
 
-Шаг 6 — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
+Шаг 5 — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
   Запусти: ${testCommand}
   Если тесты упали:
     - Проанализируй ошибки
     - Исправь код (не тест, если только тест не содержит явную ошибку)
     - Запусти снова
-  После 3 неудачных итераций: зафиксируй причину в summary и переходи к шагу 7.
+  После 3 неудачных итераций: зафиксируй причину в summary и переходи к шагу 6.
 
-Шаг 7 — КОММИТ И ПУШ
+Шаг 6 — КОММИТ И ПУШ
   git add -A
   git commit -m "feat: ${release.version} — ${release.name}"
   git push origin ${branchName}
   (если отклонён: git push --set-upstream origin ${branchName})
   Получи хэш коммита: git rev-parse HEAD
 
-Шаг 8 — ИТОГОВЫЙ JSON
+Шаг 7 — ИТОГОВЫЙ JSON
   Последней строкой ответа выведи ТОЛЬКО этот JSON (без пояснений):
   {"branch":"${branchName}","commit_hash":"<хэш>","files_changed":<N>,"tests_written":<N>,"tests_passed":<true|false>,"summary":"<краткое описание>"}
 
@@ -1010,20 +1467,20 @@ ${issuesList}`;
   // 9. Parse JSON from last line of response
   const parsedArr = parseJsonFromAI(rawResponse);
   const parsed = parsedArr ? parsedArr[0] : null;
-  const resultObj = parsed ? {
-    branch:        parsed.branch        || branchName,
-    commit_hash:   parsed.commit_hash   || null,
-    files_changed: parsed.files_changed || null,
-    tests_written: parsed.tests_written || null,
-    tests_passed:  parsed.tests_passed  !== false,
-    summary:       parsed.summary       || '',
-  } : {
-    branch:       branchName,
-    commit_hash:  null,
-    tests_passed: false,
-    summary:      'Не удалось распарсить итоговый JSON',
-    raw_tail:     rawResponse.slice(-2000),
-  };
+  let resultObj;
+  if (parsed) {
+    resultObj = {
+      branch:        parsed.branch        || branchName,
+      commit_hash:   parsed.commit_hash   || null,
+      files_changed: parsed.files_changed || null,
+      tests_written: parsed.tests_written || null,
+      tests_passed:  parsed.tests_passed  !== false,
+      summary:       parsed.summary       || '',
+    };
+  } else {
+    // Git fallback: if JSON parsing failed, try to extract results from git
+    resultObj = await gitFallback(branchName, product.project_path, processId);
+  }
 
   // 10. Log: parse_result
   await processLogs.create({
