@@ -64,6 +64,26 @@ export function parseJsonFromAI(raw) {
  * @param {string} techStack
  * @returns {string}
  */
+/**
+ * Detect build/compile command based on tech stack string.
+ */
+export function detectBuildCommand(techStack) {
+  const s = (techStack || '').toLowerCase();
+  if (s.includes('dotnet') || s.includes('c#') || s.includes('asp'))
+    return 'dotnet build';
+  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue') || s.includes('nuxt'))
+    return 'npm run build';
+  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
+    return null; // Python не компилируется
+  if (s.includes('go'))
+    return 'go build ./...';
+  if (s.includes('rust'))
+    return 'cargo build';
+  if (s.includes('java') || s.includes('spring'))
+    return 'mvn compile';
+  return null;
+}
+
 export function detectTestCommand(techStack) {
   const s = (techStack || '').toLowerCase();
   if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue'))

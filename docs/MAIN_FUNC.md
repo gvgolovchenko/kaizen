@@ -307,12 +307,34 @@ Kaizen (改善) — веб-приложение для непрерывного 
 - 35 MCP-инструментов (добавлены: `kaizen_run_tests`, `kaizen_update_docs`)
 - UI: фильтр «Шаблоны» на странице планов, клонирование с выбором продукта
 
-### Этап 12: Планируется
+### Этап 12: Безопасность и стабильность — Планируется
 
+- Валидация входных данных на всех эндпоинтах (zod)
+- Валидация git branch names (защита от инъекций)
+- Rate limiting (express-rate-limit)
+- Security headers (helmet: HSTS, CSP, X-Frame-Options)
+- Структурированное логирование (pino)
+- Graceful shutdown (SIGTERM → остановка Scheduler/QueueManager)
+- Health check эндпоинт (`GET /health`)
+
+### Этап 13: Качество и масштабирование — Планируется
+
+- Unit-тесты бизнес-логики (parseJsonFromAI, approval rules, status transitions)
+- Интеграционные тесты (supertest + тестовая БД)
+- Пагинация API (limit/offset для процессов, логов, задач)
+- Разбиение process-runner.js на модули по типам процессов
+- Трекинг миграций (таблица kaizen_migrations)
+- Auto-retry для AI-процессов (exponential backoff)
+
+### Этап 14: UX и инфраструктура — Планируется
+
+- Аутентификация и авторизация (JWT + RBAC: admin/product-owner/viewer)
+- SSE вместо polling для real-time статусов процессов
 - Условные переходы в планах (on_success, on_failure, on_condition)
 - Docker-деплой
 - Метрики и дашборд (время цикла, success rate)
-- WebSocket для real-time обновлений процессов
+- OpenAPI/Swagger документация API
+- Визуализация зависимостей планов (DAG)
 
 ---
 

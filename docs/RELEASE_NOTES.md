@@ -625,8 +625,39 @@
 
 ## Планируемые улучшения
 
+### v1.12.0 — Безопасность и стабильность
+
+- Валидация входных данных (zod) на всех POST/PUT эндпоинтах
+- Валидация git branch names (regex `/^[a-z0-9._/-]+$/i`)
+- Rate limiting (`express-rate-limit`: 100 req/мин API, 10 req/мин AI-процессы)
+- Security headers (`helmet`: HSTS, CSP, X-Frame-Options, X-Content-Type-Options)
+- Структурированное логирование (`pino`) вместо console.log/error
+- Graceful shutdown (SIGTERM → остановка Scheduler/QueueManager/Pool)
+- Health check эндпоинт (`GET /health` — сервер, БД, Scheduler, QueueManager)
+- Исправление проглатывания ошибок в QueueManager.onProcessDone
+
+### v1.13.0 — Качество разработки
+
+- Unit-тесты бизнес-логики: parseJsonFromAI, approval rules, status transitions, QueueManager limits (50+ тестов)
+- Пагинация API: limit/offset для processes, process_logs, issues
+- Разбиение process-runner.js (1771 строк) на модули по типам процессов
+- Индикация зависших процессов (elapsed time + warning при превышении таймаута)
+- Трекинг миграций (таблица kaizen_migrations с автоматическим apply)
+- Бейджи статусов на карточках релизов (Spec/Dev/PR)
+
+### v1.14.0 — Масштабирование
+
+- Аутентификация и авторизация (JWT + RBAC: admin/product-owner/viewer)
+- Server-Sent Events (SSE) вместо polling для real-time статусов
+- Интеграционные тесты (supertest + тестовая PostgreSQL)
+- Auto-retry для AI-процессов (exponential backoff, retry_count/max_retries)
+- Автоочистка process_logs (90 дней)
+
+### Дальнейшие планы
+
 - Условные переходы в планах (on_success, on_failure, on_condition)
-- AI-приоритизация очереди, авто-ретрай с анализом ошибок
-- Метрики и дашборд (время цикла, success rate)
+- OpenAPI/Swagger документация API (swagger-jsdoc)
+- Визуализация зависимостей планов (DAG: Mermaid/D3)
 - Docker-деплой (Dockerfile + nginx)
-- WebSocket для real-time обновлений процессов (вместо polling)
+- Метрики и дашборд (время цикла, success rate)
+- Нагрузочное тестирование (k6) (вместо polling)

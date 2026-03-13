@@ -5,7 +5,7 @@ import * as releases from './db/releases.js';
 import * as issues from './db/issues.js';
 import * as aiModels from './db/ai-models.js';
 import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
-import { parseJsonFromAI, detectTestCommand } from './utils.js';
+import { parseJsonFromAI, detectTestCommand, detectBuildCommand } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { execFile as execFileCb } from 'node:child_process';
@@ -93,7 +93,7 @@ async function runTests(processId, proc, product, startTime, timeoutMs) {
   // 1. Collect branches from plan step dependencies
   let branches = [];
   if (proc.plan_step_id) {
-    const { default: planSteps } = await import('./db/plan-steps.js');
+    const planSteps = await import('./db/plan-steps.js');
     const step = await planSteps.getById(proc.plan_step_id);
     if (step?.depends_on?.length) {
       const allSteps = await planSteps.getByPlan(step.plan_id);
@@ -604,7 +604,9 @@ ${historySection}
 - **Тип**: improvement/bug/feature
 - **Приоритет**: critical/high/medium/low
 - **Описание**: Подробное описание что нужно сделать
-- **Файлы для изменения**: Какие файлы нужно создать/изменить
+- **Файлы для изменения**: Точные пути к файлам (проверенные через Glob/Read — НЕ угаданные)
+- **Существующий код**: Ключевые фрагменты затрагиваемого кода (скопируй из проекта)
+- **Схема БД** (если задача затрагивает БД): Точные имена таблиц и колонок — ТОЛЬКО из CLAUDE.md или docs/, НЕ придуманные
 - **Шаги реализации**: Пошаговый план (конкретные действия)
 - **Критерии приёмки**: Как проверить что задача выполнена
 
@@ -612,7 +614,8 @@ ${historySection}
 Рекомендуемая последовательность выполнения задач (с учётом зависимостей).
 
 ## Риски и замечания
-Потенциальные риски, на что обратить внимание при реализации.`;
+Потенциальные риски, на что обратить внимание при реализации.
+Перечисли существующие модули/функции, которые могут быть затронуты изменениями — разработчик должен убедиться, что они не сломаны.`;
 
   // 6. Log: request_sent
   const logData = {
@@ -871,7 +874,7 @@ async function runUpdateDocs(processId, proc, product, model, startTime, timeout
   // 1. Collect branches from plan step dependencies
   let branches = [];
   if (proc.plan_step_id) {
-    const { default: planSteps } = await import('./db/plan-steps.js');
+    const planSteps = await import('./db/plan-steps.js');
     const step = await planSteps.getById(proc.plan_step_id);
     if (step?.depends_on?.length) {
       const allSteps = await planSteps.getByPlan(step.plan_id);
@@ -891,7 +894,7 @@ async function runUpdateDocs(processId, proc, product, model, startTime, timeout
   // Also collect release info for context
   let releaseContext = '';
   if (proc.plan_step_id) {
-    const { default: planSteps } = await import('./db/plan-steps.js');
+    const planSteps = await import('./db/plan-steps.js');
     const step = await planSteps.getById(proc.plan_step_id);
     if (step?.depends_on?.length) {
       const allSteps = await planSteps.getByPlan(step.plan_id);
@@ -1360,11 +1363,19 @@ async function runDevelopRelease(processId, proc, product, model, startTime, tim
   try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
   const branchName  = config.git_branch  || `kaizen/release-${release.version}`;
   const testCommand = config.test_command || detectTestCommand(product.tech_stack);
+  const buildCommand = config.build_command || detectBuildCommand(product.tech_stack);
 
   // 3. Mark release as in_progress
   await releases.updateDevInfo(release.id, { dev_status: 'in_progress' });
 
   // 4. System prompt
+  const buildStep = buildCommand
+    ? `\nШаг 5 — ПРОВЕРКА СБОРКИ
+  Запусти команду сборки: ${buildCommand}
+  Если не собирается — исправь ошибки. НЕ КОММИТЬ код, который не компилируется.
+  Повтори до 3 раз, анализируя ошибки компиляции.\n`
+    : '';
+
   const systemPrompt = `Ты — опытный разработчик. Твоя задача — полностью реализовать релиз программного продукта.
 
 Продукт: ${product.name}
@@ -1379,42 +1390,54 @@ ${product.tech_stack  ? `Стек: ${product.tech_stack}`       : ''}
   Создай ветку: git checkout -b ${branchName}
   (если ветка существует: git checkout ${branchName})
 
-Шаг 2 — ИЗУЧЕНИЕ КОДОВОЙ БАЗЫ
-  Изучи структуру проекта, ключевые файлы, архитектурные паттерны.
-  Пойми стиль кода прежде чем писать.
+Шаг 2 — ИЗУЧЕНИЕ ПРОЕКТА И ДОКУМЕНТАЦИИ (КРИТИЧНО!)
+  ОБЯЗАТЕЛЬНО прочитай файл CLAUDE.md в корне проекта — там архитектура, схема БД, имена таблиц и колонок, API, бизнес-логика.
+  Прочитай файлы из папки docs/ — там детальная документация проекта.
+  Если задача затрагивает базу данных — найди ТОЧНЫЕ имена таблиц и колонок в документации.
+  НЕ ПРИДУМЫВАЙ имена колонок, таблиц, полей — бери ТОЛЬКО из документации или существующего кода.
+  Изучи существующий код в файлах, которые будешь менять — пойми текущую реализацию.
 
-Шаг 3 — РЕАЛИЗАЦИЯ ВСЕХ ЗАДАЧ
+Шаг 3 — BASELINE: ПРОВЕРКА ТЕКУЩЕГО СОСТОЯНИЯ
+  Запусти тесты ДО своих изменений: ${testCommand}
+  Запомни, какие тесты проходят — это baseline.${buildCommand ? `\n  Запусти сборку: ${buildCommand}\n  Убедись, что проект собирается ДО твоих изменений.` : ''}
+  Если baseline-тесты уже падают — зафиксируй это, но НЕ ломай то, что работало.
+
+Шаг 4 — РЕАЛИЗАЦИЯ ВСЕХ ЗАДАЧ
   Реализуй каждую задачу из спецификации полностью.
   Пиши код в стиле существующего проекта.
   Не пропускай задачи — реализуй все.
   НЕ обновляй документацию (docs/) — это делается отдельным процессом.
-
-Шаг 4 — НАПИСАНИЕ ТЕСТОВ
+  КРИТИЧНО: Не ломай существующий функционал! Если меняешь файл — сначала пойми, что он делает сейчас.
+${buildStep}
+Шаг ${buildCommand ? '6' : '5'} — НАПИСАНИЕ ТЕСТОВ
   Напиши тесты для каждого реализованного компонента / функции / эндпоинта.
   Покрой основные сценарии использования и граничные случаи.
 
-Шаг 5 — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
+Шаг ${buildCommand ? '7' : '6'} — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
   Запусти: ${testCommand}
   Если тесты упали:
     - Проанализируй ошибки
     - Исправь код (не тест, если только тест не содержит явную ошибку)
     - Запусти снова
-  После 3 неудачных итераций: зафиксируй причину в summary и переходи к шагу 6.
+  После 3 неудачных итераций: зафиксируй причину в summary и переходи к следующему шагу.
+  ВАЖНО: все baseline-тесты (которые проходили ДО твоих изменений) ДОЛЖНЫ продолжать проходить.
 
-Шаг 6 — КОММИТ И ПУШ
+Шаг ${buildCommand ? '8' : '7'} — КОММИТ И ПУШ
   git add -A
   git commit -m "feat: ${release.version} — ${release.name}"
   git push origin ${branchName}
   (если отклонён: git push --set-upstream origin ${branchName})
   Получи хэш коммита: git rev-parse HEAD
 
-Шаг 7 — ИТОГОВЫЙ JSON
+Шаг ${buildCommand ? '9' : '8'} — ИТОГОВЫЙ JSON
   Последней строкой ответа выведи ТОЛЬКО этот JSON (без пояснений):
   {"branch":"${branchName}","commit_hash":"<хэш>","files_changed":<N>,"tests_written":<N>,"tests_passed":<true|false>,"summary":"<краткое описание>"}
 
 ПРАВИЛА:
 - Не выходи за пределы ${product.project_path}
 - Не создавай Pull Request
+- НЕ ПРИДУМЫВАЙ имена колонок БД — бери из CLAUDE.md, docs/ или существующего кода
+- Если добавляешь зависимость (import, using, NuGet, npm) — убедись, что пакет установлен
 - При непреодолимой ошибке: опиши в summary, верни JSON с tests_passed: false`;
 
   // 5. User prompt
