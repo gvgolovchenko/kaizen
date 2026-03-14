@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.11.0 (миграции 001–016)
+> Версия схемы: 1.12.0 (миграции 001–017) — актуализировано 2026-03-14
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -34,6 +34,7 @@
 | rc_system_id | INTEGER | YES | NULL | ID системы в Rivc.Connect |
 | rc_module_id | INTEGER | YES | NULL | ID модуля в Rivc.Connect |
 | automation | JSONB | YES | '{}' | Настройки автоматизации (rc_auto_sync, auto_pipeline, notifications) |
+| deploy | JSONB | YES | '{}' | Настройки деплоя (gitlab, target, auto_deploy) |
 | last_rc_sync_at | TIMESTAMPTZ | YES | NULL | Время последней авто-синхронизации RC |
 | last_pipeline_at | TIMESTAMPTZ | YES | NULL | Время последнего авто-запуска pipeline |
 | status | VARCHAR(20) | YES | 'active' | active / archived |
@@ -112,8 +113,8 @@ AI-процессы (фоновые задачи генерации).
 |------|-----|:----:|---------|----------|
 | id | UUID | NO | gen_random_uuid() | PK |
 | product_id | UUID | NO | — | FK → kaizen_products(id) ON DELETE CASCADE |
-| model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) |
-| type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / form_release / run_tests / update_docs / roadmap_from_doc / prepare_press_release |
+| model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) (nullable: run_tests, update_docs не требуют модели) |
+| type | VARCHAR(50) | YES | 'improve' | improve / prepare_spec / develop_release / form_release / run_tests / update_docs / deploy / roadmap_from_doc / prepare_press_release |
 | status | VARCHAR(20) | YES | 'pending' | pending / queued / running / completed / failed |
 | priority | INTEGER | YES | 0 | Приоритет в очереди (0=normal, 1=high, 2=urgent) |
 | plan_step_id | UUID | YES | NULL | FK → kaizen_plan_steps(id) ON DELETE SET NULL |
@@ -153,7 +154,7 @@ AI-процессы (фоновые задачи генерации).
 | id | UUID | NO | gen_random_uuid() | PK |
 | name | VARCHAR(255) | NO | — | Название плана |
 | description | TEXT | YES | NULL | Описание |
-| product_id | UUID | YES | NULL | FK → kaizen_products(id) ON DELETE CASCADE (NULL для шаблонов) |
+| product_id | UUID | YES | NULL | FK → kaizen_products(id) ON DELETE CASCADE (nullable: NULL для универсальных шаблонов, is_template=true) |
 | status | VARCHAR(20) | NO | 'draft' | draft / scheduled / active / paused / completed / failed / cancelled |
 | on_failure | VARCHAR(20) | YES | 'stop' | stop / skip |
 | is_template | BOOLEAN | YES | false | Флаг шаблона |
@@ -173,7 +174,7 @@ AI-процессы (фоновые задачи генерации).
 | plan_id | UUID | NO | — | FK → kaizen_plans(id) ON DELETE CASCADE |
 | step_order | INTEGER | NO | 0 | Порядок выполнения |
 | name | VARCHAR(255) | YES | NULL | Название шага |
-| model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) (NULL для run_tests, update_docs) |
+| model_id | UUID | YES | NULL | FK → kaizen_ai_models(id) (nullable: run_tests, update_docs не требуют модели) |
 | process_type | VARCHAR(50) | NO | 'improve' | Тип процесса |
 | input_prompt | TEXT | YES | NULL | Промпт |
 | input_template_id | VARCHAR(50) | YES | NULL | ID шаблона промпта |
@@ -288,12 +289,42 @@ kaizen_ai_models (независимая таблица, ссылается из
 | 012 | 012_plans.sql | Таблицы kaizen_plans и kaizen_plan_steps, FK, индексы, триггеры |
 | 013 | 013_rc_tickets.sql | Таблица kaizen_rc_tickets, rc_ticket_id в issues, UNIQUE constraint |
 | 014 | 014_automation.sql | Колонки automation JSONB, last_rc_sync_at, last_pipeline_at в products |
+| 015 | 015_run_tests.sql | model_id nullable в processes и plan_steps (для run_tests/update_docs) |
+| 016 | 016_plan_templates.sql | product_id nullable в plans + пересоздание FK (для шаблонов) |
+| 017 | 017_deploy_config.sql | Колонка deploy JSONB в products (GitLab CI/CD) |
 
 ---
 
 ## Структура JSONB-полей
 
 ### automation (kaizen_products)
+
+### deploy (kaizen_products)
+
+```json
+{
+  "gitlab": {
+    "url": "https://gitlab.rivc-pulkovo.ru",
+    "project_id": 42,
+    "remote_url": "git@gitlab.rivc-pulkovo.ru:opii/project.git",
+    "default_branch": "main",
+    "access_token": "glpat-xxxx"
+  },
+  "target": {
+    "host": "192.168.196.213",
+    "port": 22,
+    "user": "opii",
+    "method": "docker|native",
+    "docker_compose_path": "/opt/project/docker-compose.yml",
+    "service_name": "kaizen",
+    "project_path_on_server": "/opt/project",
+    "pm2_name": "kaizen"
+  },
+  "auto_deploy": {
+    "on_publish": true
+  }
+}
+```
 
 ```json
 {

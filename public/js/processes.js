@@ -1,4 +1,4 @@
-import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate } from './app.js';
+import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, restoreFilterFromUrl, syncFilterToUrl } from './app.js';
 import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess } from './process-detail.js';
 
 let processesList = [];
@@ -189,6 +189,8 @@ window.deleteProcess = async function (id) {
 
 // ── Filter ───────────────────────────────────────────────
 
+restoreFilterFromUrl('filterStatus', 'status');
+syncFilterToUrl('filterStatus', 'status');
 document.getElementById('filterStatus').addEventListener('change', loadProcesses);
 
 // Expose closeModal globally

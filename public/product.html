@@ -11,7 +11,8 @@
     <div class="nav-inner">
       <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
       <div class="nav-links">
-        <a href="/">Продукты</a>
+        <a href="/">Главная</a>
+        <a href="/products.html">Продукты</a>
         <a href="/processes.html">Процессы</a>
         <a href="/plans.html">Планы</a>
         <a href="/models.html">Модели ИИ</a>
@@ -20,7 +21,7 @@
   </nav>
 
   <div class="container">
-    <a href="/" class="back-link">&larr; Все продукты</a>
+    <div id="breadcrumbs" class="breadcrumbs"></div>
 
     <div id="productHeader" class="product-header">
       <h1 id="prodName">Загрузка...</h1>
@@ -42,13 +43,14 @@
       <div class="tab" data-tab="plans">Планы <span class="tab-count" id="tabPlansCount"></span></div>
       <div class="tab" data-tab="rc-tickets" id="tabRcTickets" style="display:none">Тикеты RC <span class="tab-count" id="tabRcTicketsCount"></span></div>
       <div class="tab" data-tab="automation">Автоматизация</div>
+      <div class="tab" data-tab="deploy">Деплой</div>
     </div>
 
     <!-- Panel: Issues -->
     <div class="tab-panel active" id="panel-issues">
       <div class="section">
         <div class="section-header">
-          <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <div class="filters" id="issueFilters">
               <button class="btn btn-ghost btn-sm active" data-status="">Все</button>
               <button class="btn btn-ghost btn-sm" data-status="open">Open</button>
@@ -56,10 +58,21 @@
               <button class="btn btn-ghost btn-sm" data-status="done">Done</button>
               <button class="btn btn-ghost btn-sm" data-status="closed">Closed</button>
             </div>
+            <select id="issuePriorityFilter" style="padding:5px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.8rem">
+              <option value="">Все приоритеты</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <div class="view-toggle" id="viewToggle">
+              <button class="btn btn-ghost btn-sm active" data-view="table" title="Таблица">☰</button>
+              <button class="btn btn-ghost btn-sm" data-view="kanban" title="Kanban">▥</button>
+            </div>
             <button class="btn btn-primary btn-sm" onclick="showIssueModal()">+ Задача</button>
           </div>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap" id="issuesTableWrap">
           <table>
             <thead>
               <tr>
@@ -74,6 +87,7 @@
             <tbody id="issuesBody"></tbody>
           </table>
         </div>
+        <div id="kanbanBoard" class="kanban-board" style="display:none"></div>
         <div id="issuesEmpty" class="empty" style="display:none">
           <p>Нет задач</p>
         </div>
@@ -465,6 +479,107 @@
       </div>
     </div>
   </div>
+
+    <!-- Panel: Deploy -->
+    <div class="tab-panel" id="panel-deploy">
+      <div class="section">
+        <div class="section-header">
+          <h3 style="margin:0">Настройки деплоя (GitLab CI/CD)</h3>
+          <button class="btn btn-primary btn-sm" onclick="handleSaveDeploy()">Сохранить настройки</button>
+        </div>
+
+        <!-- GitLab -->
+        <div style="margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <h4 style="margin:0 0 12px">GitLab</h4>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>URL сервера GitLab</label>
+            <input type="text" id="deployGitlabUrl" placeholder="https://gitlab.rivc-pulkovo.ru">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Project ID</label>
+            <input type="number" id="deployGitlabProjectId" placeholder="42">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Remote URL</label>
+            <input type="text" id="deployGitlabRemoteUrl" placeholder="git@gitlab.rivc-pulkovo.ru:opii/project.git">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Default branch</label>
+            <input type="text" id="deployGitlabDefaultBranch" value="main" placeholder="main">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Access Token</label>
+            <input type="password" id="deployGitlabToken" placeholder="glpat-xxxx">
+            <div style="font-size:0.8rem;color:var(--text-dim)">Personal Access Token с правами api, read_repository, write_repository</div>
+          </div>
+        </div>
+
+        <!-- Target Server -->
+        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <h4 style="margin:0 0 12px">Сервер деплоя</h4>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Хост</label>
+            <input type="text" id="deployTargetHost" placeholder="192.168.196.213">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Порт SSH</label>
+            <input type="number" id="deployTargetPort" value="22" style="max-width:120px">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Пользователь</label>
+            <input type="text" id="deployTargetUser" placeholder="opii">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Метод деплоя</label>
+            <select id="deployTargetMethod" onchange="toggleDeployMethodFields()">
+              <option value="docker">Docker (docker compose pull + up)</option>
+              <option value="native">Native (git pull + npm ci + pm2 restart)</option>
+            </select>
+          </div>
+          <div id="deployDockerFields">
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Путь к docker-compose.yml</label>
+              <input type="text" id="deployDockerComposePath" placeholder="/opt/project/docker-compose.yml">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Имя сервиса</label>
+              <input type="text" id="deployServiceName" placeholder="kaizen">
+            </div>
+          </div>
+          <div id="deployNativeFields" style="display:none">
+            <div class="form-group" style="margin-bottom:10px">
+              <label>Путь к проекту на сервере</label>
+              <input type="text" id="deployProjectPathServer" placeholder="/opt/project">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Имя pm2 процесса</label>
+              <input type="text" id="deployPm2Name" placeholder="kaizen">
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto Deploy -->
+        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
+            <input type="checkbox" id="deployAutoOnPublish" style="width:auto;accent-color:var(--accent)">
+            Авто-деплой при публикации релиза
+          </label>
+          <div style="font-size:0.8rem;color:var(--text-dim);margin-top:6px">
+            При публикации релиза автоматически мержить в default branch и запускать GitLab CI/CD pipeline
+          </div>
+        </div>
+
+        <!-- Generate CI Files -->
+        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <h4 style="margin:0 0 12px">Генерация файлов</h4>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm" onclick="handleGenerateCI()">Сгенерировать .gitlab-ci.yml</button>
+            <button class="btn btn-sm" onclick="handleGenerateDockerfile()">Сгенерировать Dockerfile</button>
+          </div>
+          <pre id="deployGeneratedFile" style="display:none;margin-top:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;max-height:300px;overflow-y:auto;white-space:pre-wrap"></pre>
+        </div>
+      </div>
+    </div>
 
   <!-- Edit Product Modal -->
   <div class="modal-overlay" id="editProductModal">

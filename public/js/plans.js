@@ -1,4 +1,4 @@
-import { api, toast, confirm, escapeHtml, formatDate } from './app.js';
+import { api, toast, confirm, escapeHtml, formatDate, restoreFilterFromUrl, syncFilterToUrl } from './app.js';
 
 let plansList = [];
 let pollingTimer = null;
@@ -147,6 +147,8 @@ window.deletePlan = async function (id) {
 
 // ── Filter ───────────────────────────────────────────────
 
+restoreFilterFromUrl('filterStatus', 'status');
+syncFilterToUrl('filterStatus', 'status');
 document.getElementById('filterStatus').addEventListener('change', loadPlans);
 
 // ── Init ─────────────────────────────────────────────────

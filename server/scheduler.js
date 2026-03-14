@@ -90,18 +90,10 @@ export class Scheduler {
           continue;
         }
 
-        // Найти pending шаги, чьи depends_on все completed
-        const readySteps = steps.filter(step => {
-          if (step.status !== 'pending') return false;
-          const deps = step.depends_on || [];
-          return deps.every(depId => {
-            const dep = steps.find(s => s.id === depId);
-            return dep && (dep.status === 'completed' || (hasFailed && plan.on_failure === 'skip'));
-          });
-        });
-
-        for (const step of readySteps) {
-          await this._launchStep(plan, step);
+        // Следующий шаг (строго последовательно по step_order)
+        const nextStep = await planSteps.getNextStep(plan.id, plan.on_failure);
+        if (nextStep) {
+          await this._launchStep(plan, nextStep);
         }
       }
     } catch (err) {

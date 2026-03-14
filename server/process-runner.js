@@ -8,6 +8,7 @@ import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
 import { parseJsonFromAI, detectTestCommand, detectBuildCommand } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
+import { pushToGitlab, pushToDefaultBranch, waitForPipeline, getPipelineStatus } from './gitlab-client.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -327,6 +328,10 @@ export async function runProcess(processId, options = {}) {
     }
     if (proc.type === 'update_docs') {
       await runUpdateDocs(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'deploy') {
+      await runDeploy(processId, proc, product, startTime, timeoutMs);
       return;
     }
 
@@ -1513,7 +1518,28 @@ ${issuesList}`;
     data: resultObj,
   });
 
-  // 11. Update process → completed
+  // 11. GitLab push (if configured)
+  if (product.deploy?.gitlab?.remote_url && product.deploy?.gitlab?.access_token) {
+    try {
+      const pushResult = await pushToGitlab(product.project_path, resultObj.branch || branchName, product.deploy);
+      await processLogs.create({
+        process_id: processId,
+        step: pushResult.pushed ? 'gitlab_push' : 'gitlab_push_failed',
+        message: pushResult.pushed
+          ? `Ветка ${resultObj.branch} отправлена в GitLab`
+          : `Ошибка push в GitLab: ${pushResult.output}`,
+        data: pushResult,
+      });
+    } catch (pushErr) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'gitlab_push_failed',
+        message: `Ошибка push в GitLab: ${pushErr.message}`,
+      });
+    }
+  }
+
+  // 12. Update process → completed
   const durationMs = Date.now() - startTime;
   await processes.update(processId, {
     status: 'completed',
@@ -1522,14 +1548,14 @@ ${issuesList}`;
     duration_ms: durationMs,
   });
 
-  // 12. Update release
+  // 13. Update release
   await releases.updateDevInfo(release.id, {
     dev_branch: resultObj.branch,
     dev_commit: resultObj.commit_hash,
     dev_status: resultObj.tests_passed ? 'done' : 'failed',
   });
 
-  // 13. Auto-publish if tests passed and auto_publish is enabled
+  // 14. Auto-publish if tests passed and auto_publish is enabled
   if (resultObj.tests_passed && config.auto_publish) {
     try {
       await releases.publish(release.id);
@@ -1554,7 +1580,7 @@ ${issuesList}`;
     }
   }
 
-  // 14. Notify: develop completed/failed
+  // 15. Notify: develop completed/failed
   if (resultObj.tests_passed) {
     notify('develop_completed', {
       product: product.name, version: release.version,
@@ -1566,6 +1592,108 @@ ${issuesList}`;
       error: 'тесты не пройдены',
     }, getNotifyOpts(product)).catch(() => {});
   }
+}
+
+/**
+ * Run a deploy process — merge to default branch, push to GitLab, wait for CI/CD pipeline.
+ */
+async function runDeploy(processId, proc, product, startTime, timeoutMs) {
+  const deploy = product.deploy;
+  if (!deploy?.gitlab?.remote_url || !deploy?.gitlab?.access_token) {
+    throw new Error('GitLab не настроен для этого продукта (deploy.gitlab.remote_url, access_token)');
+  }
+  if (!product.project_path) throw new Error('product.project_path не задан');
+
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+
+  const branchName = config.branch || null;
+  const release = proc.release_id ? await releases.getById(proc.release_id) : null;
+
+  // Determine branch to deploy
+  let deployBranch = branchName;
+  if (!deployBranch && release) {
+    deployBranch = release.dev_branch || `kaizen/release-${release.version}`;
+  }
+  if (!deployBranch) throw new Error('Не указана ветка для деплоя (branch)');
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'deploy_started',
+    message: `Деплой ветки ${deployBranch} в GitLab`,
+    data: { branch: deployBranch, method: deploy.target?.method || 'docker' },
+  });
+
+  // 1. Merge branch to default branch and push
+  const pushResult = await pushToDefaultBranch(product.project_path, deployBranch, deploy);
+
+  if (!pushResult.pushed) {
+    throw new Error(`Не удалось push в GitLab: ${pushResult.output}`);
+  }
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'gitlab_pushed',
+    message: `Push в ${deploy.gitlab.default_branch || 'main'} выполнен`,
+    data: pushResult,
+  });
+
+  // 2. Get commit SHA for pipeline tracking
+  const { stdout: sha } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: product.project_path, timeout: 10_000,
+  });
+  const commitSha = sha.trim();
+
+  // 3. Wait for GitLab pipeline
+  await processLogs.create({
+    process_id: processId,
+    step: 'pipeline_waiting',
+    message: `Ожидание pipeline для коммита ${commitSha.substring(0, 8)}...`,
+    data: { sha: commitSha },
+  });
+
+  const pipelineTimeoutMs = Math.min(timeoutMs - (Date.now() - startTime), 600_000);
+  let pipelineResult;
+  try {
+    pipelineResult = await waitForPipeline(deploy, commitSha, { timeoutMs: pipelineTimeoutMs });
+  } catch (err) {
+    pipelineResult = { status: 'timeout', web_url: null, jobs: [] };
+  }
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'pipeline_result',
+    message: `Pipeline: ${pipelineResult.status}${pipelineResult.web_url ? ` (${pipelineResult.web_url})` : ''}`,
+    data: pipelineResult,
+  });
+
+  // 4. Complete
+  const durationMs = Date.now() - startTime;
+  const resultObj = {
+    branch: deployBranch,
+    commit_sha: commitSha,
+    pipeline_status: pipelineResult.status,
+    pipeline_url: pipelineResult.web_url,
+    jobs: pipelineResult.jobs,
+    method: deploy.target?.method || 'docker',
+  };
+
+  const success = pipelineResult.status === 'success';
+  await processes.update(processId, {
+    status: success ? 'completed' : 'failed',
+    result: resultObj,
+    error: success ? null : `Pipeline ${pipelineResult.status}`,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+
+  // 5. Notify
+  notify(success ? 'deploy_completed' : 'deploy_failed', {
+    product: product.name,
+    version: release?.version || deployBranch,
+    pipeline_status: pipelineResult.status,
+    pipeline_url: pipelineResult.web_url,
+  }, getNotifyOpts(product)).catch(() => {});
 }
 
 /**

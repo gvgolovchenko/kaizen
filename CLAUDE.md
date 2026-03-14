@@ -1,20 +1,20 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.11.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.13.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
 Вариант Е-lite: Express.js + Vanilla JS + PostgreSQL. Без фреймворков на фронтенде, минимум зависимостей.
 
 ```
-[Браузер] → [Vanilla JS (7 страниц)] → [Express.js API (порт 3034)]
+[Браузер] → [Vanilla JS (8 страниц)] → [Express.js API (порт 3034)]
                                                 ├── [PostgreSQL (схема opii)]
                                                 ├── [QueueManager (контроль параллелизма)]
                                                 ├── [Scheduler (планировщик, tick 30с)]
                                                 └── [AI Process Runner (фоновые задачи)]
 
 [Claude Code] → [MCP-сервер (kaizen)] → [Express.js API (порт 3034)]
-                 27 инструментов             ↑ HTTP-клиент (api-client.js)
+                 38 инструментов             ↑ HTTP-клиент (api-client.js)
 ```
 
 ## Структура
@@ -33,6 +33,8 @@ kaizen/
 │   ├── notifier.js               # Уведомления в Б24 через бота АФИИНА (im.message.add)
 │   ├── queue-manager.js          # QueueManager — контроль параллелизма по провайдерам
 │   ├── scheduler.js              # Scheduler — планировщик выполнения планов (tick 30с)
+│   ├── gitlab-client.js          # GitLab API клиент (push, pipeline status, wait)
+│   ├── ci-generator.js           # Генерация .gitlab-ci.yml, Dockerfile, docker-compose.yml
 │   ├── db/
 │   │   ├── pool.js               # pg Pool (Supavisor)
 │   │   ├── products.js           # getAll, getById, create, update, remove
@@ -42,7 +44,7 @@ kaizen/
 │   │   ├── processes.js          # getAll, getByProduct, getById, create, update, remove, getNextQueued, getQueuePosition
 │   │   ├── process-logs.js       # getByProcess, create
 │   │   ├── plans.js              # getAll, getByProduct, getById, create, update, updateStatus, remove
-│   │   ├── plan-steps.js         # getByPlan, getById, create, bulkCreate, update, remove, getReadySteps
+│   │   ├── plan-steps.js         # getByPlan, getById, create, bulkCreate, update, remove, getNextStep
 │   │   └── rc-tickets.js         # getByProduct, getById, getByRcTicketId, upsert, updateSyncStatus, countByProduct
 │   ├── rc-client.js              # MS SQL клиент для Rivc.Connect HelpDesk
 │   ├── rc-sync.js                # Синхронизация и импорт тикетов RC → Kaizen
@@ -50,7 +52,7 @@ kaizen/
 │       └── api.js                # REST-эндпоинты
 ├── mcp-server/
 │   ├── package.json              # MCP-сервер: @modelcontextprotocol/sdk
-│   ├── index.js                  # 35 MCP-инструментов (kaizen_*) + полный конвейер
+│   ├── index.js                  # 38 MCP-инструментов (kaizen_*) + полный конвейер
 │   └── api-client.js             # HTTP-клиент к REST API (localhost:3034)
 ├── database/
 │   ├── exec-sql.js               # Утилита миграций
@@ -70,9 +72,11 @@ kaizen/
 │       ├── 013_rc_tickets.sql      # RC-тикеты кэш + rc_ticket_id в issues
 │       ├── 014_automation.sql       # Automation JSONB + pipeline поля
 │       ├── 015_run_tests.sql        # model_id nullable (processes + plan_steps)
-│       └── 016_plan_templates.sql   # product_id nullable для шаблонов планов
+│       ├── 016_plan_templates.sql   # product_id nullable для шаблонов планов
+│       └── 017_deploy_config.sql    # deploy JSONB в products (GitLab CI/CD)
 ├── public/
-│   ├── index.html                # Список продуктов (карточки)
+│   ├── index.html                # Dashboard — обзор системы (8+ виджетов)
+│   ├── products.html             # Список продуктов (карточки + сортировка)
 │   ├── product.html              # Детали: задачи + релизы + процессы + планы
 │   ├── processes.html            # Все процессы (глобальная страница)
 │   ├── plans.html                # Все планы (глобальная страница)
@@ -82,7 +86,8 @@ kaizen/
 │   ├── css/style.css             # Dark theme
 │   └── js/
 │       ├── app.js                # api(), toast(), confirm(), escapeHtml(), notifyStatusChanges(), modal helpers
-│       ├── products.js           # Логика index.html
+│       ├── dashboard.js          # Логика index.html (Dashboard виджеты, auto-refresh)
+│       ├── products.js           # Логика products.html
 │       ├── product.js            # Логика product.html + процессы + improve + планы
 │       ├── processes.js          # Логика processes.html + виджет очереди
 │       ├── process-detail.js     # Общая логика отображения деталей процесса
@@ -95,11 +100,8 @@ kaizen/
     ├── USER_GUIDE.md             # Руководство пользователя
     ├── RELEASE_NOTES.md          # История релизов
     ├── DATABASE_SCHEMA.md        # Схема БД
-    ├── RELEASE_001_SPEC.md       # Спецификация MVP
-    ├── RELEASE_SPEC_FEATURE.md   # Фича: генерация спецификаций
-    ├── DEVELOP_RELEASE_FEATURE.md # Фича: разработка релизов (claude-code)
-    ├── ROADMAP_FROM_DOC_FEATURE.md # Фича: дорожная карта из документа
-    └── ANALYSIS_REPORT.md        # Глубокий анализ и сравнение с конкурентами
+    ├── ANALYSIS_REPORT.md        # Глубокий анализ и сравнение с конкурентами
+    └── BACKLOG.md                # Единый бэклог доработок
 ```
 
 ## Команды
@@ -125,7 +127,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 
 - **Схема**: `opii`
 - **Префикс**: `kaizen_` (изоляция в общей схеме)
-- **Таблицы**: kaizen_products (+ automation JSONB, last_rc_sync_at, last_pipeline_at), kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps, kaizen_rc_tickets
+- **Таблицы**: kaizen_products (+ automation JSONB, deploy JSONB, last_rc_sync_at, last_pipeline_at), kaizen_issues, kaizen_releases, kaizen_release_issues, kaizen_ai_models, kaizen_processes, kaizen_process_logs, kaizen_plans, kaizen_plan_steps, kaizen_rc_tickets
 - **PK**: UUID (gen_random_uuid())
 - **Каскадное удаление**: products → issues + releases + processes + plans; processes → process_logs; plans → plan_steps
 - **Триггеры**: updated_at на products, issues, releases, processes, plans, plan_steps
@@ -203,6 +205,10 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 | POST | /api/plans/from-releases | Создать план spec→develop из списка release_ids |
 | POST | /api/import-roadmap | Импорт roadmap: issues + releases + план за один вызов |
 | POST | /api/notify | Отправить уведомление в Б24 (event_type, product_id, data) |
+| POST | /api/products/:id/generate-ci | Сгенерировать .gitlab-ci.yml по настройкам продукта |
+| POST | /api/products/:id/generate-dockerfile | Сгенерировать Dockerfile + docker-compose.yml |
+| POST | /api/releases/:id/deploy | Запустить деплой релиза (мерж + push → GitLab CI/CD) |
+| GET | /api/products/:id/pipeline-status | Статус GitLab CI/CD pipeline (?sha=) |
 
 ## Бизнес-логика
 
@@ -212,7 +218,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Удаление релиза**: все issues → `open`, затем удаление
 - **Каскадное удаление продукта**: ON DELETE CASCADE на FK
 - **Очередь процессов (QueueManager)**: POST /processes ставит процесс в очередь. Контроль параллелизма по провайдерам: ollama:1, mlx:1, claude-code:2, anthropic:3, openai:3, google:3, local:3. Статусы: pending → queued → running → completed/failed. При завершении — автоматический запуск следующего queued-процесса (`FOR UPDATE SKIP LOCKED`). Восстановление состояния при перезапуске сервера. Frontend: badge «queued», позиция в очереди, кнопка отмены. Провайдер `local` — для процессов без AI-модели (run_tests, update_docs).
-- **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Планы с шагами (depends_on для зависимостей). Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), поиск ready шагов, запуск через QueueManager. Каждые 2 мин — `_runAutomation()`: RC auto-sync по расписанию, auto-import по правилам приоритетов, авто-запуск pipeline (threshold/schedule/on_sync). Обратная связь: при завершении процесса → обновление шага → проверка следующих. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
+- **Планировщик (Scheduler)**: автоматический запуск цепочек AI-процессов. Шаги внутри плана выполняются **строго последовательно по step_order** (один за другим). Несколько планов могут выполняться параллельно. Тик 30с: активация scheduled планов (scheduled_at ≤ NOW()), запуск следующего шага через `getNextStep()` и QueueManager. Каждые 2 мин — `_runAutomation()`: RC auto-sync по расписанию, auto-import по правилам приоритетов, авто-запуск pipeline (threshold/schedule/on_sync). Обратная связь: при завершении процесса → обновление шага → запуск следующего. При ошибке: stop (план fails) или skip (пропустить шаг). Статусы плана: draft → scheduled → active → completed/failed/cancelled.
 - **Автоматизация продуктов**: JSONB `automation` в products — per-product настройки rc_auto_sync (interval_hours, auto_import rules), auto_pipeline (trigger: threshold/schedule/on_sync, preset: analysis/full_cycle/custom, per-stage model_id, pipeline_config) и notifications (enabled, bitrix24_user_id, events[]). UI: таб «Автоматизация» на странице продукта.
 - **Уведомления в Б24**: модуль `notifier.js` отправляет сообщения через бота АФИИНА (ID 1624) методом `im.message.add`. 7 типов событий (pipeline_completed/failed, release_published, develop_completed/failed, rc_sync_done, improve_completed). BB-code форматирование. Интегрирован в process-runner, scheduler, mcp-server.
 - **Асинхронные AI-процессы**: POST /processes создаёт запись + ставит в очередь QueueManager. Каждый шаг логируется (request_sent, response_received, parse_result, issues_ready, error). Frontend: polling 4с (активные) / 10с (покой), живая длительность для running-процессов.
@@ -220,7 +226,9 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Утверждение предложений**: POST /processes/:id/approve с indices[] → создаёт issues, сохраняет approved_indices (повторное одобрение — disabled чекбоксы)
 - **Перезапуск процесса**: POST /processes/:id/restart → создаёт копию и запускает заново
 - **Генерация спецификации**: POST /releases/:id/prepare-spec → AI-процесс (standalone или claude-code)
-- **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты. Стриминг NDJSON с промежуточными checkpoint-логами (7 фаз). Auto-publish: если `config.auto_publish === true` и тесты пройдены — автоматическая публикация
+- **Разработка релиза**: POST /releases/:id/develop → claude-code создаёт ветку, реализует задачи, запускает тесты. Стриминг NDJSON с промежуточными checkpoint-логами (6 фаз). Auto-publish: если `config.auto_publish === true` и тесты пройдены — автоматическая публикация. После коммита — автоматический push в GitLab (если deploy.gitlab настроен).
+- **Деплой релиза**: POST /releases/:id/deploy → мерж ветки в default branch, push в GitLab, ожидание CI/CD pipeline. Тип процесса `deploy`, провайдер `local`. Авто-деплой при publish (если `deploy.auto_deploy.on_publish === true`).
+- **GitLab-интеграция**: per-product JSONB `deploy` — GitLab URL/project_id/access_token, сервер деплоя (host/user/method), авто-деплой. Генерация `.gitlab-ci.yml`, `Dockerfile`, `docker-compose.yml` по стеку продукта. Два метода деплоя: `docker` (compose pull + up) и `native` (git pull + npm ci + pm2 restart). UI: таб «Деплой» на странице продукта.
 - **Дорожная карта из документа**: POST /processes с type=roadmap_from_doc → парсит документ в релизы + задачи
 - **Пресс-релиз**: POST /releases/:id/prepare-press-release → AI генерирует PR-материалы для 4 каналов (соцсети, сайт, Б24, СМИ)
 - **Формирование релиза (AI)**: POST /processes с type=form_release → AI группирует открытые задачи в релизы. 4 стратегии (balanced, critical_first, by_topic, single). Авто-утверждение или ручной обзор предложения.
@@ -229,7 +237,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Шаблоны планов**: Планы с `is_template=true` и `product_id=null`. Клонирование через POST /plans/:id/clone с product_id, автоматический ремаппинг depends_on UUID. 3 предустановленных шаблона: «Анализ продукта» (3 шага), «Полный цикл» (4 шага), «Ночная разработка» (8 шагов).
 - **Интеграция с Rivc.Connect**: MS SQL клиент → синхронизация тикетов HelpDesk → кэш в kaizen_rc_tickets → ручной импорт в задачи (kaizen_issues) с сохранением rc_ticket_id
 - **Маскировка api_key**: первые 4 + `****` + последние 4 символа в API-ответах
-- **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google, local (без модели — для run_tests, update_docs)
+- **AI-провайдеры**: ollama (localhost:11434), mlx (localhost:8080), claude-code (CLI), anthropic, openai, google, local (без модели — для run_tests, update_docs, deploy)
 - **claude-code провайдер**: два режима вызова CLI `claude`:
   - `callClaudeCode` (execFile, `--output-format text`) — для improve, prepare_spec и др. Буферизирует весь stdout.
   - `callClaudeCodeStreaming` (spawn, `--output-format stream-json`) — для develop_release. Парсит NDJSON-события на лету, детектирует контрольные точки (6 фаз: repo → study → implement → tests → test_run → commit), пишет промежуточные логи с `step: 'checkpoint'`.
@@ -249,7 +257,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Транспорт**: stdio (стандарт Claude Code)
 - **API-клиент**: HTTP к `http://localhost:3034/api` (env `KAIZEN_API_URL`)
 - **Подключение**: `~/.claude/settings.json` → `mcpServers.kaizen`
-- **35 инструментов** с префиксом `kaizen_`:
+- **38 инструментов** с префиксом `kaizen_`:
   - Продукты: `list_products`, `get_product`
   - Задачи: `list_issues`, `create_issue`
   - Модели: `list_models`
@@ -262,5 +270,6 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
   - Формирование релиза: `form_release`, `approve_releases`
   - Тестирование и документирование: `run_tests`, `update_docs`
   - Bulk-операции: `create_issues_bulk`, `create_plan_from_releases`, `import_roadmap`
+  - Деплой: `deploy_release`, `deploy_status`, `generate_ci`
   - **Конвейер**: `run_pipeline` — полный сквозной цикл одной командой
 - **kaizen_run_pipeline**: 5 базовых этапов (improve → approve → release → spec) + 3 опциональных (develop → publish → press_release). Пресеты: analysis (1-5), full_cycle (1-8), custom. Per-stage model_id (improve/spec/develop/press_release) с глобальным fallback. Авто-утверждение по правилам, polling статусов, auto-publish при успешных тестах

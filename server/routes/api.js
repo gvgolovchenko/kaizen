@@ -12,6 +12,10 @@ import * as planSteps from '../db/plan-steps.js';
 import * as rcClient from '../rc-client.js';
 import * as rcTickets from '../db/rc-tickets.js';
 import * as rcSync from '../rc-sync.js';
+import { generateGitlabCI, generateDockerfile, generateDockerCompose } from '../ci-generator.js';
+import { getPipelineStatus } from '../gitlab-client.js';
+import * as searchDb from '../db/search.js';
+import * as dashboard from '../db/dashboard.js';
 
 const router = Router();
 
@@ -19,6 +23,22 @@ const router = Router();
 function getQueueManager(req) {
   return req.app.locals.queueManager;
 }
+
+// ── Dashboard ────────────────────────────────────────────
+
+router.get('/dashboard', async (req, res) => {
+  const stats = await dashboard.getStats();
+  res.json(stats);
+});
+
+// ── Search ───────────────────────────────────────────────
+
+router.get('/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  const results = await searchDb.search(q);
+  res.json(results);
+});
 
 // ── Products ──────────────────────────────────────────────
 
@@ -165,6 +185,26 @@ router.delete('/releases/:id', async (req, res) => {
 router.post('/releases/:id/publish', async (req, res) => {
   const release = await releases.publish(req.params.id);
   if (!release) return res.status(404).json({ error: 'Release not found' });
+
+  // Auto-deploy if configured
+  try {
+    const product = await products.getById(release.product_id);
+    if (product?.deploy?.auto_deploy?.on_publish && product?.deploy?.gitlab?.remote_url) {
+      const config = { branch: release.dev_branch || `kaizen/release-${release.version}` };
+      const proc = await processes.create({
+        product_id: release.product_id,
+        type: 'deploy',
+        release_id: release.id,
+        input_prompt: JSON.stringify(config),
+      });
+      const qm = getQueueManager(req);
+      await qm.enqueue(proc.id, { timeoutMs: 15 * 60 * 1000 });
+      release.auto_deploy = { process_id: proc.id, status: 'queued' };
+    }
+  } catch (deployErr) {
+    release.auto_deploy = { error: deployErr.message };
+  }
+
   res.json(release);
 });
 
@@ -1503,6 +1543,79 @@ router.post('/import-roadmap', async (req, res) => {
       total_releases: createdReleases.length,
       plan: plan ? { id: plan.id, steps_count: plan.steps.length } : null,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Deploy / CI/CD ────────────────────────────────────────
+
+// Generate .gitlab-ci.yml
+router.post('/products/:id/generate-ci', async (req, res) => {
+  try {
+    const product = await products.getById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    const ci = generateGitlabCI(product, product.deploy);
+    res.json({ content: ci, filename: '.gitlab-ci.yml' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate Dockerfile
+router.post('/products/:id/generate-dockerfile', async (req, res) => {
+  try {
+    const product = await products.getById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    const dockerfile = generateDockerfile(product);
+    const compose = generateDockerCompose(product, product.deploy);
+    res.json({ dockerfile, docker_compose: compose, dockerignore: 'node_modules\n.env\n.git\n*.log\n' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deploy release (create deploy process)
+router.post('/releases/:id/deploy', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+    const product = await products.getById(release.product_id);
+    if (!product?.deploy?.gitlab?.remote_url) {
+      return res.status(400).json({ error: 'GitLab не настроен для продукта' });
+    }
+
+    const config = {
+      branch: release.dev_branch || `kaizen/release-${release.version}`,
+      ...(req.body || {}),
+    };
+
+    const proc = await processes.create({
+      product_id: release.product_id,
+      type: 'deploy',
+      release_id: release.id,
+      input_prompt: JSON.stringify(config),
+    });
+
+    const qm = getQueueManager(req);
+    const timeoutMs = (req.body?.timeout_min || 15) * 60 * 1000;
+    const queueResult = await qm.enqueue(proc.id, { timeoutMs });
+
+    res.status(201).json({ ...proc, queue: queueResult });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get pipeline status
+router.get('/products/:id/pipeline-status', async (req, res) => {
+  try {
+    const product = await products.getById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    const sha = req.query.sha;
+    if (!sha) return res.status(400).json({ error: 'sha parameter required' });
+    const status = await getPipelineStatus(product.deploy, sha);
+    res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

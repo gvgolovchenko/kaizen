@@ -1,11 +1,10 @@
-import { api, toast, escapeHtml, formatDate } from './app.js';
+import { api, toast, escapeHtml, formatDate, renderBreadcrumbs } from './app.js';
 
 const params = new URLSearchParams(location.search);
 const processId = params.get('process_id');
 const productId = params.get('product_id');
 
 if (!processId || !productId) location.href = '/';
-document.getElementById('backLink').href = `/product.html?id=${productId}`;
 
 let proc = null;
 let product = null;
@@ -22,6 +21,11 @@ async function init() {
 
     document.getElementById('pageTitle').textContent = `Дорожная карта: ${product.name}`;
     document.title = `Kaizen — Дорожная карта: ${product.name}`;
+    renderBreadcrumbs('breadcrumbs', [
+      { label: 'Продукты', href: '/' },
+      { label: product.name, href: `/product.html?id=${productId}` },
+      { label: 'Дорожная карта' },
+    ]);
 
     renderState();
   } catch (err) {

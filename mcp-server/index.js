@@ -1001,6 +1001,57 @@ server.tool(
 );
 
 // ══════════════════════════════════════════════════════════════
+// DEPLOY
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_deploy_release',
+  `Запустить деплой релиза через GitLab CI/CD.
+Мержит ветку разработки в default branch, пушит в GitLab, ждёт завершения pipeline.
+Требуется: deploy.gitlab настроен для продукта.`,
+  {
+    release_id: z.string().uuid().describe('UUID релиза для деплоя'),
+    timeout_min: z.number().min(5).max(30).default(15).describe('Таймаут ожидания pipeline'),
+  },
+  async ({ release_id, timeout_min }) => {
+    const result = await api.deployRelease(release_id, { timeout_min });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_deploy_status',
+  'Статус GitLab CI/CD pipeline для коммита',
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+    sha: z.string().describe('SHA коммита'),
+  },
+  async ({ product_id, sha }) => {
+    const status = await api.getPipelineStatus(product_id, sha);
+    return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_generate_ci',
+  'Сгенерировать .gitlab-ci.yml и Dockerfile для продукта на основе его стека и настроек деплоя',
+  {
+    product_id: z.string().uuid().describe('UUID продукта'),
+  },
+  async ({ product_id }) => {
+    const [ci, docker] = await Promise.all([
+      api.generateCI(product_id),
+      api.generateDockerfile(product_id),
+    ]);
+    let text = `# .gitlab-ci.yml\n\n${ci.content}\n\n`;
+    text += `# Dockerfile\n\n${docker.dockerfile}\n\n`;
+    text += `# docker-compose.yml\n\n${docker.docker_compose}\n\n`;
+    text += `# .dockerignore\n\n${docker.dockerignore}`;
+    return { content: [{ type: 'text', text }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
 // START SERVER
 // ══════════════════════════════════════════════════════════════
 

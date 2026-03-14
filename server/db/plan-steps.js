@@ -71,16 +71,27 @@ export async function remove(id) {
 }
 
 /**
- * Получить шаги, готовые к запуску (pending + все depends_on выполнены).
+ * Получить следующий шаг для выполнения (строго последовательно по step_order).
+ * Возвращает один pending-шаг или null, если нет готовых / текущий ещё выполняется.
+ * @param {string} planId
+ * @param {string} onFailure — 'stop' (по умолчанию) или 'skip'
  */
-export async function getReadySteps(planId) {
-  const steps = await getByPlan(planId);
-  return steps.filter(step => {
-    if (step.status !== 'pending') return false;
+export async function getNextStep(planId, onFailure = 'stop') {
+  const steps = await getByPlan(planId); // отсортированы по step_order
+  const hasFailed = steps.some(s => s.status === 'failed');
+
+  for (const step of steps) {
+    if (step.status === 'running') return null; // текущий шаг ещё выполняется
+    if (step.status === 'failed' && onFailure === 'stop') return null;
+    if (step.status !== 'pending') continue; // completed / skipped / failed(skip) — пропускаем
+
     const deps = step.depends_on || [];
-    return deps.every(depId => {
+    const depsOk = deps.every(depId => {
       const dep = steps.find(s => s.id === depId);
-      return dep && dep.status === 'completed';
+      return dep && (dep.status === 'completed' || (hasFailed && onFailure === 'skip'));
     });
-  });
+    if (depsOk) return step; // первый готовый по step_order
+    return null; // зависимость не выполнена — ждём
+  }
+  return null; // все завершены
 }

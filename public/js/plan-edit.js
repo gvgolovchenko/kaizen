@@ -1,4 +1,4 @@
-import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate } from './app.js';
+import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, renderBreadcrumbs } from './app.js';
 import { formatDuration } from './process-detail.js';
 
 const params = new URLSearchParams(location.search);
@@ -38,17 +38,24 @@ function render() {
 // ── Header ───────────────────────────────────────────────
 
 function renderHeader() {
-  // Back link
-  const backLink = document.getElementById('backLink');
+  // Breadcrumbs
   if (plan) {
-    backLink.href = `/product.html?id=${plan.product_id}`;
-    backLink.textContent = '← К продукту';
+    renderBreadcrumbs('breadcrumbs', [
+      { label: 'Продукты', href: '/' },
+      { label: plan.product_name || 'Продукт', href: `/product.html?id=${plan.product_id}` },
+      { label: plan.name || 'План' },
+    ]);
   } else if (productId) {
-    backLink.href = `/product.html?id=${productId}`;
-    backLink.textContent = '← К продукту';
+    renderBreadcrumbs('breadcrumbs', [
+      { label: 'Продукты', href: '/' },
+      { label: 'Продукт', href: `/product.html?id=${productId}` },
+      { label: 'Новый план' },
+    ]);
   } else {
-    backLink.href = '/plans.html';
-    backLink.textContent = '← Все планы';
+    renderBreadcrumbs('breadcrumbs', [
+      { label: 'Планы', href: '/plans.html' },
+      { label: 'Новый план' },
+    ]);
   }
 
   if (!plan) {

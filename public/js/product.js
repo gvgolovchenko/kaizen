@@ -1,4 +1,4 @@
-import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, notifyStatusChanges } from './app.js';
+import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, notifyStatusChanges, renderBreadcrumbs } from './app.js';
 import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess } from './process-detail.js';
 
 const productId = new URLSearchParams(location.search).get('id');
@@ -13,6 +13,8 @@ let rcTicketsList = [];
 let rcCurrentFilter = '';
 let rcSelectedIds = new Set();
 let currentFilter = '';
+let currentPriorityFilter = '';
+let currentView = 'table';
 let processPollingTimer = null;
 
 // ── Tabs ────────────────────────────────────────────────
@@ -22,7 +24,16 @@ function switchTab(tabName) {
     t.classList.toggle('active', t.dataset.tab === tabName));
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('active', p.id === `panel-${tabName}`));
+  // Persist tab in URL
+  const url = new URL(location.href);
+  if (tabName && tabName !== 'issues') url.searchParams.set('tab', tabName);
+  else url.searchParams.delete('tab');
+  history.replaceState(null, '', url);
 }
+
+// Restore tab from URL
+const savedTab = new URLSearchParams(location.search).get('tab');
+if (savedTab) switchTab(savedTab);
 
 document.getElementById('productTabs').addEventListener('click', (e) => {
   const tab = e.target.closest('.tab');
@@ -100,6 +111,12 @@ async function loadAll() {
   }
   // Load automation settings
   loadAutomationSettings();
+  // Load deploy settings
+  loadDeploySettings();
+  // Handle quick actions from product cards (?action=improve|add_issue)
+  const action = new URLSearchParams(location.search).get('action');
+  if (action === 'improve') showImproveModal();
+  else if (action === 'add_issue') showIssueModal();
 }
 
 // ── Render product header ──────────────────────────────
@@ -107,6 +124,10 @@ async function loadAll() {
 function renderProductHeader() {
   if (!product) return;
   document.title = `Kaizen — ${product.name}`;
+  renderBreadcrumbs('breadcrumbs', [
+    { label: 'Продукты', href: '/' },
+    { label: product.name },
+  ]);
   document.getElementById('prodName').textContent = product.name;
   document.getElementById('prodDesc').textContent = product.description || '';
 
@@ -128,17 +149,189 @@ function renderProductHeader() {
 // ── Render issues ──────────────────────────────────────
 
 function renderIssues() {
+  if (currentView === 'kanban') {
+    // Apply kanban view after load
+    const tableWrap = document.getElementById('issuesTableWrap');
+    const kanbanBoard = document.getElementById('kanbanBoard');
+    tableWrap.style.display = 'none';
+    kanbanBoard.style.display = '';
+    document.querySelectorAll('#viewToggle .btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.view === 'kanban'));
+    renderKanban();
+  } else {
+    renderFilteredTable();
+  }
+
+  const empty = document.getElementById('issuesEmpty');
+  const filtered = getFilteredIssues();
+  if (issues.length === 0) {
+    empty.style.display = '';
+  } else if (filtered.length > 0) {
+    empty.style.display = 'none';
+  }
+  updateTabCounts();
+  updateFormReleaseButton();
+}
+
+// ── Kanban view ────────────────────────────────────────
+
+function getFilteredIssues() {
+  if (!currentPriorityFilter) return issues;
+  return issues.filter(i => i.priority === currentPriorityFilter);
+}
+
+function renderKanban() {
+  const board = document.getElementById('kanbanBoard');
+  const filtered = getFilteredIssues();
+  const columns = [
+    { status: 'open', label: 'Open' },
+    { status: 'in_release', label: 'In Release' },
+    { status: 'done', label: 'Done' },
+  ];
+
+  board.innerHTML = columns.map(col => {
+    const colIssues = filtered.filter(i => i.status === col.status);
+    return `
+      <div class="kanban-column" data-status="${col.status}">
+        <div class="kanban-column-header">
+          <span>${col.label}</span>
+          <span class="count">${colIssues.length}</span>
+        </div>
+        <div class="kanban-cards">
+          ${colIssues.length === 0 ? '<div class="kanban-empty">Нет задач</div>' :
+            colIssues.map(i => `
+            <div class="kanban-card" draggable="true" data-issue-id="${i.id}">
+              <div class="kanban-card-title">${escapeHtml(i.title)}</div>
+              <div class="kanban-card-meta">
+                <span class="badge badge-${i.type}">${i.type}</span>
+                <span class="badge badge-${i.priority}">${i.priority}</span>
+              </div>
+              <div class="kanban-card-actions">
+                <button class="btn btn-ghost btn-sm" onclick="showEditIssue('${i.id}')">Ред.</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteIssue('${i.id}')">Уд.</button>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  initDragAndDrop();
+}
+
+function initDragAndDrop() {
+  const board = document.getElementById('kanbanBoard');
+
+  board.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.kanban-card');
+    if (!card) return;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.dataset.issueId);
+  });
+
+  board.addEventListener('dragend', (e) => {
+    const card = e.target.closest('.kanban-card');
+    if (card) card.classList.remove('dragging');
+    board.querySelectorAll('.kanban-column').forEach(c => c.classList.remove('drag-over'));
+  });
+
+  board.querySelectorAll('.kanban-column').forEach(col => {
+    col.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      col.classList.add('drag-over');
+    });
+
+    col.addEventListener('dragleave', (e) => {
+      if (!col.contains(e.relatedTarget)) {
+        col.classList.remove('drag-over');
+      }
+    });
+
+    col.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      col.classList.remove('drag-over');
+      const issueId = e.dataTransfer.getData('text/plain');
+      const newStatus = col.dataset.status;
+      const issue = issues.find(i => i.id === issueId);
+      if (!issue || issue.status === newStatus) return;
+
+      // Optimistic update
+      const oldStatus = issue.status;
+      issue.status = newStatus;
+      renderKanban();
+
+      try {
+        await api(`/issues/${issueId}`, { method: 'PUT', body: { status: newStatus } });
+        toast(`Статус → ${newStatus}`);
+        updateTabCounts();
+      } catch (err) {
+        // Rollback
+        issue.status = oldStatus;
+        renderKanban();
+        toast(err.message, 'error');
+      }
+    });
+  });
+}
+
+function switchView(view) {
+  currentView = view;
+  const tableWrap = document.getElementById('issuesTableWrap');
+  const kanbanBoard = document.getElementById('kanbanBoard');
+
+  document.querySelectorAll('#viewToggle .btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === view));
+
+  if (view === 'kanban') {
+    tableWrap.style.display = 'none';
+    kanbanBoard.style.display = '';
+    renderKanban();
+  } else {
+    tableWrap.style.display = '';
+    kanbanBoard.style.display = 'none';
+  }
+
+  // Persist in URL
+  const url = new URL(location.href);
+  if (view !== 'table') url.searchParams.set('view', view);
+  else url.searchParams.delete('view');
+  history.replaceState(null, '', url);
+}
+
+// Restore view from URL
+const savedView = new URLSearchParams(location.search).get('view');
+if (savedView === 'kanban') {
+  currentView = 'kanban';
+  // Will apply after DOM ready and issues load
+}
+
+// View toggle click handler
+document.getElementById('viewToggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn');
+  if (btn && btn.dataset.view) switchView(btn.dataset.view);
+});
+
+// Priority filter handler
+document.getElementById('issuePriorityFilter').addEventListener('change', (e) => {
+  currentPriorityFilter = e.target.value;
+  if (currentView === 'kanban') renderKanban();
+  else renderFilteredTable();
+});
+
+function renderFilteredTable() {
   const tbody = document.getElementById('issuesBody');
   const empty = document.getElementById('issuesEmpty');
+  const filtered = getFilteredIssues();
 
-  if (issues.length === 0) {
+  if (filtered.length === 0) {
     tbody.innerHTML = '';
     empty.style.display = '';
     return;
   }
   empty.style.display = 'none';
 
-  tbody.innerHTML = issues.map(i => `
+  tbody.innerHTML = filtered.map(i => `
     <tr>
       <td>${escapeHtml(i.title)}</td>
       <td><span class="badge badge-${i.type}">${i.type}</span></td>
@@ -151,8 +344,6 @@ function renderIssues() {
       </td>
     </tr>
   `).join('');
-  updateTabCounts();
-  updateFormReleaseButton();
 }
 
 // ── Dev status helpers ──────────────────────────────────
@@ -2075,6 +2266,95 @@ window.testNotification = async function () {
       },
     });
     toast('Тестовое уведомление отправлено');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Deploy ──────────────────────────────────────────────
+
+function loadDeploySettings() {
+  const d = product?.deploy || {};
+  const gl = d.gitlab || {};
+  const tgt = d.target || {};
+  const ad = d.auto_deploy || {};
+
+  document.getElementById('deployGitlabUrl').value = gl.url || '';
+  document.getElementById('deployGitlabProjectId').value = gl.project_id || '';
+  document.getElementById('deployGitlabRemoteUrl').value = gl.remote_url || '';
+  document.getElementById('deployGitlabDefaultBranch').value = gl.default_branch || 'main';
+  document.getElementById('deployGitlabToken').value = gl.access_token || '';
+
+  document.getElementById('deployTargetHost').value = tgt.host || '';
+  document.getElementById('deployTargetPort').value = tgt.port || 22;
+  document.getElementById('deployTargetUser').value = tgt.user || '';
+  document.getElementById('deployTargetMethod').value = tgt.method || 'docker';
+  document.getElementById('deployDockerComposePath').value = tgt.docker_compose_path || '';
+  document.getElementById('deployServiceName').value = tgt.service_name || '';
+  document.getElementById('deployProjectPathServer').value = tgt.project_path_on_server || '';
+  document.getElementById('deployPm2Name').value = tgt.pm2_name || '';
+  document.getElementById('deployAutoOnPublish').checked = ad.on_publish || false;
+
+  toggleDeployMethodFields();
+}
+
+window.toggleDeployMethodFields = function () {
+  const method = document.getElementById('deployTargetMethod').value;
+  document.getElementById('deployDockerFields').style.display = method === 'docker' ? '' : 'none';
+  document.getElementById('deployNativeFields').style.display = method === 'native' ? '' : 'none';
+};
+
+window.handleSaveDeploy = async function () {
+  const deploy = {
+    gitlab: {
+      url: document.getElementById('deployGitlabUrl').value.trim() || null,
+      project_id: parseInt(document.getElementById('deployGitlabProjectId').value) || null,
+      remote_url: document.getElementById('deployGitlabRemoteUrl').value.trim() || null,
+      default_branch: document.getElementById('deployGitlabDefaultBranch').value.trim() || 'main',
+      access_token: document.getElementById('deployGitlabToken').value.trim() || null,
+    },
+    target: {
+      host: document.getElementById('deployTargetHost').value.trim() || null,
+      port: parseInt(document.getElementById('deployTargetPort').value) || 22,
+      user: document.getElementById('deployTargetUser').value.trim() || null,
+      method: document.getElementById('deployTargetMethod').value,
+      docker_compose_path: document.getElementById('deployDockerComposePath').value.trim() || null,
+      service_name: document.getElementById('deployServiceName').value.trim() || null,
+      project_path_on_server: document.getElementById('deployProjectPathServer').value.trim() || null,
+      pm2_name: document.getElementById('deployPm2Name').value.trim() || null,
+    },
+    auto_deploy: {
+      on_publish: document.getElementById('deployAutoOnPublish').checked,
+    },
+  };
+
+  try {
+    product = await api('PUT', `/products/${productId}`, { deploy });
+    toast('Настройки деплоя сохранены');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.handleGenerateCI = async function () {
+  try {
+    const res = await api('POST', `/products/${productId}/generate-ci`);
+    const pre = document.getElementById('deployGeneratedFile');
+    pre.style.display = '';
+    pre.textContent = `# ${res.filename}\n\n${res.content}`;
+    toast('.gitlab-ci.yml сгенерирован');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.handleGenerateDockerfile = async function () {
+  try {
+    const res = await api('POST', `/products/${productId}/generate-dockerfile`);
+    const pre = document.getElementById('deployGeneratedFile');
+    pre.style.display = '';
+    pre.textContent = `# Dockerfile\n\n${res.dockerfile}\n# docker-compose.yml\n\n${res.docker_compose}\n# .dockerignore\n\n${res.dockerignore}`;
+    toast('Dockerfile сгенерирован');
   } catch (err) {
     toast(err.message, 'error');
   }

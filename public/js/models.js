@@ -1,4 +1,4 @@
-import { api, toast, confirm, escapeHtml, openModal, closeModal } from './app.js';
+import { api, toast, confirm, escapeHtml, openModal, closeModal, restoreFilterFromUrl, syncFilterToUrl } from './app.js';
 
 window.closeModal = closeModal;
 
@@ -291,6 +291,8 @@ window._warmup = async function (id) {
 
 // ── Init ─────────────────────────────────────────────────
 
+restoreFilterFromUrl('filterDeployment', 'deployment');
+syncFilterToUrl('filterDeployment', 'deployment');
 document.getElementById('filterDeployment').addEventListener('change', loadModels);
 document.getElementById('modelDeployment').addEventListener('change', toggleDiscoverSection);
 

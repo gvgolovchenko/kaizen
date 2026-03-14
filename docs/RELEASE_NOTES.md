@@ -2,6 +2,136 @@
 
 ---
 
+## v1.13.0 — Dashboard — Главная страница (2026-03-14)
+
+**Полноценная главная страница с обзорной аналитикой. Список продуктов переехал на отдельную страницу `/products.html`.**
+
+### Dashboard (`/`)
+
+- Главная страница переделана из списка продуктов в полноценный Dashboard с 3 секциями и 8+ виджетами
+- **Секция «Сводка»** (5 виджетов): Продукты, Задачи, Процессы, Релизы, Планы — ключевые метрики с stacked bars и badges
+- **Секция «Детали»** (3 виджета): ТОП-5 продуктов по активности, CSS bar chart динамики релизов (8 недель), лента активности (10 последних событий)
+- **Секция «Здоровье»** (2 виджета): автоматизация (pipeline/RC-sync), процессы по типам, задачи по типам и приоритетам (horizontal bars)
+- Auto-refresh каждые 30с при наличии running/queued процессов
+- Кликабельные виджеты — переход на соответствующие страницы
+
+### Страница продуктов (`/products.html`)
+
+- Новая отдельная страница для списка продуктов (карточки + сортировка + модал создания/редактирования)
+- Используется существующий `products.js` — без дублирования логики
+
+### Расширенный API Dashboard
+
+- `GET /api/dashboard` расширен новыми подзапросами:
+  - `products`: `archived`, `by_status`, `recent` (5 последних), `top_active` (ТОП-5)
+  - `issues`: `by_type`, `by_priority`, `created_this_week`, `closed_this_week`
+  - `processes`: `by_type`, `avg_duration_ms`, `success_rate`, `completed_this_week`
+  - `releases`: `this_month`, `velocity` (релизы по неделям за 8 недель)
+  - `plans`: `active`, `completed`, `templates` — новая секция
+  - `automation`: `products_with_pipeline`, `products_with_rc_sync`, `last_pipeline_runs` — новая секция
+
+### Навбар
+
+- Обновлён на всех 8 страницах: **Главная | Продукты | Процессы | Планы | Модели ИИ**
+- `app.js`: обновлён `navMap`, горячие клавиши (`g+h` → Главная, `g+p` → Продукты)
+
+### CSS
+
+- Новые стили: `.dashboard-summary` (5-колоночный grid), `.dashboard-details` (3-колоночный), `.dashboard-health` (2-колоночный)
+- `.widget-clickable`, `.bar-chart`, `.health-bar-row`, `.success-rate`, `.duration-badge`, `.mini-table`
+- Responsive breakpoints: 5→3→1 колонки на разных размерах экрана
+
+### Новые файлы
+
+- `public/products.html` — страница списка продуктов
+- `public/js/dashboard.js` — логика Dashboard (loadDashboard, renderSummary, renderDetails, renderHealth)
+
+### Изменённые файлы
+
+- `server/db/dashboard.js` — расширен getStats() (12 новых подзапросов)
+- `public/index.html` — полная переработка → Dashboard
+- `public/js/products.js` — убрана встроенная логика дашборда
+- `public/js/app.js` — обновлён navMap, shortcuts
+- `public/css/style.css` — +180 строк стилей для Dashboard
+- Все HTML файлы — обновлён навбар
+
+---
+
+## v1.12.0 — Деплой через GitLab CI/CD (2026-03-14)
+
+**Per-product настройки деплоя, автоматический push в GitLab после разработки, тип процесса deploy, генерация CI/CD файлов.**
+
+### GitLab-интеграция
+
+- Per-product JSONB `deploy` в kaizen_products — GitLab URL, project_id, access_token, remote_url, default_branch
+- Автоматический push ветки в GitLab после develop_release (если deploy.gitlab настроен)
+- Модуль `server/gitlab-client.js` — push, pipeline status, wait for pipeline
+- Аутентификация через OAuth2 access token в URL
+
+### Deploy как тип процесса
+
+- Новый тип процесса `deploy` — мерж ветки в default branch, push в GitLab, ожидание CI/CD pipeline
+- Провайдер `local` (без AI-модели), лимит 3 в QueueManager
+- Логирование шагов: deploy_started → gitlab_pushed → pipeline_waiting → pipeline_result
+- Уведомления: deploy_completed / deploy_failed
+
+### Авто-деплой при публикации
+
+- `deploy.auto_deploy.on_publish === true` → при `POST /releases/:id/publish` автоматически создаётся процесс deploy
+- Мерж ветки релиза в default branch → push → GitLab CI/CD pipeline
+
+### Генерация CI/CD файлов
+
+- `POST /api/products/:id/generate-ci` — генерация `.gitlab-ci.yml` по стеку и методу деплоя
+- `POST /api/products/:id/generate-dockerfile` — генерация `Dockerfile`, `docker-compose.yml`, `.dockerignore`
+- Два метода: `docker` (compose pull + up) и `native` (git pull + npm ci + pm2 restart)
+- Модуль `server/ci-generator.js` — шаблоны по стеку (Node.js, .NET, PHP)
+
+### UI: таб «Деплой»
+
+- Секция «GitLab» — URL, project ID, remote URL, default branch, access token
+- Секция «Сервер деплоя» — хост, порт SSH, пользователь, метод (docker/native), пути
+- Чекбокс «Авто-деплой при публикации релиза»
+- Кнопки генерации .gitlab-ci.yml и Dockerfile с предпросмотром
+
+### MCP-сервер (35 → 38 инструментов)
+
+- `kaizen_deploy_release` — запустить деплой релиза
+- `kaizen_deploy_status` — статус GitLab CI/CD pipeline
+- `kaizen_generate_ci` — сгенерировать .gitlab-ci.yml + Dockerfile
+
+### API (4 новых эндпоинта)
+
+- `POST /api/products/:id/generate-ci`
+- `POST /api/products/:id/generate-dockerfile`
+- `POST /api/releases/:id/deploy`
+- `GET /api/products/:id/pipeline-status?sha=`
+
+### БД (миграция 017)
+
+- `017_deploy_config.sql`: колонка `deploy JSONB DEFAULT '{}'` в kaizen_products
+
+---
+
+## v1.11.1 — Последовательное выполнение шагов плана (2026-03-14)
+
+**Шаги внутри одного плана теперь выполняются строго последовательно по step_order. Несколько планов могут выполняться параллельно.**
+
+### Изменения
+
+- `plan-steps.js`: `getReadySteps()` → `getNextStep(planId, onFailure)` — возвращает один следующий pending-шаг по step_order; если текущий шаг ещё `running` — возвращает null
+- `scheduler.js`: убрана дублирующая inline-фильтрация ready-шагов, используется единый `getNextStep()`
+- Исправлено: `getNextStep()` корректно учитывает `on_failure === 'skip'` (ранее `getReadySteps` не учитывал)
+
+### Документация
+
+- Актуализирован `ANALYSIS_REPORT.md` до v1.11.0 (было v1.6.0)
+- Актуализирован `DATABASE_SCHEMA.md` — добавлены миграции 015–016, nullable поля
+- Создан единый `BACKLOG.md` (56 пунктов, ~158.5ч) из DEVELOP_QUALITY_REPORT + устаревших спек
+- Удалены 7 устаревших документов (реализованные спецификации фич)
+
+---
+
 ## v1.11.0 — Шаблоны планов + Тестирование + Документирование (2026-03-13)
 
 **Шаблоны планов для переиспользования, интеграционное тестирование (run_tests) и автодокументирование (update_docs) как отдельные шаги в планах автоматизации.**
@@ -625,7 +755,7 @@
 
 ## Планируемые улучшения
 
-### v1.12.0 — Безопасность и стабильность
+### v1.14.0 — Безопасность и стабильность
 
 - Валидация входных данных (zod) на всех POST/PUT эндпоинтах
 - Валидация git branch names (regex `/^[a-z0-9._/-]+$/i`)
@@ -636,7 +766,7 @@
 - Health check эндпоинт (`GET /health` — сервер, БД, Scheduler, QueueManager)
 - Исправление проглатывания ошибок в QueueManager.onProcessDone
 
-### v1.13.0 — Качество разработки
+### v1.15.0 — Качество разработки
 
 - Unit-тесты бизнес-логики: parseJsonFromAI, approval rules, status transitions, QueueManager limits (50+ тестов)
 - Пагинация API: limit/offset для processes, process_logs, issues
@@ -645,7 +775,7 @@
 - Трекинг миграций (таблица kaizen_migrations с автоматическим apply)
 - Бейджи статусов на карточках релизов (Spec/Dev/PR)
 
-### v1.14.0 — Масштабирование
+### v1.16.0 — Масштабирование
 
 - Аутентификация и авторизация (JWT + RBAC: admin/product-owner/viewer)
 - Server-Sent Events (SSE) вместо polling для real-time статусов
@@ -659,5 +789,5 @@
 - OpenAPI/Swagger документация API (swagger-jsdoc)
 - Визуализация зависимостей планов (DAG: Mermaid/D3)
 - Docker-деплой (Dockerfile + nginx)
-- Метрики и дашборд (время цикла, success rate)
+- Расширенная аналитика (время цикла, детальные графики)
 - Нагрузочное тестирование (k6) (вместо polling)

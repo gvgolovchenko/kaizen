@@ -5,7 +5,11 @@ const TABLE = 'opii.kaizen_products';
 export async function getAll() {
   const { rows } = await pool.query(`
     SELECT p.*,
-      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open') AS open_issues
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open') AS open_issues,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id) AS total_issues,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'done') AS done_issues,
+      (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.status IN ('pending','queued','running')) AS active_processes,
+      (SELECT count(*) FROM opii.kaizen_releases r WHERE r.product_id = p.id) AS releases_count
     FROM ${TABLE} p
     ORDER BY p.created_at DESC
   `);
@@ -31,8 +35,8 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id', 'automation', 'last_rc_sync_at', 'last_pipeline_at'].includes(key)) {
-      if (key === 'automation') {
+    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id', 'automation', 'deploy', 'last_rc_sync_at', 'last_pipeline_at'].includes(key)) {
+      if (key === 'automation' || key === 'deploy') {
         sets.push(`${key} = $${i++}::jsonb`);
         vals.push(typeof value === 'string' ? value : JSON.stringify(value));
       } else {

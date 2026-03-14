@@ -115,3 +115,9 @@ export const approveAuto = (processId, rule) =>
 // ── Notifications ──
 export const sendNotify = (event, data, product_id) =>
   request('POST', '/notify', { event, data, product_id });
+
+// ── Deploy ──
+export const deployRelease = (releaseId, body) => request('POST', `/releases/${releaseId}/deploy`, body);
+export const generateCI = (productId) => request('POST', `/products/${productId}/generate-ci`);
+export const generateDockerfile = (productId) => request('POST', `/products/${productId}/generate-dockerfile`);
+export const getPipelineStatus = (productId, sha) => request('GET', `/products/${productId}/pipeline-status?sha=${sha}`);
