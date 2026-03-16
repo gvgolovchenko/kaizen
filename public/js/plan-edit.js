@@ -219,23 +219,40 @@ window.hideStepForm = function () {
 
 window.onProcessTypeChange = function () {
   const type = document.getElementById('stepProcessType').value;
-  const isRunTests = type === 'run_tests';
-  document.getElementById('stepModelGroup').style.display = isRunTests ? 'none' : '';
-  document.getElementById('stepCountGroup').style.display = isRunTests ? 'none' : '';
+  const isLocal = type === 'run_tests' || type === 'deploy';
+  document.getElementById('stepModelGroup').style.display = isLocal ? 'none' : '';
+  document.getElementById('stepCountGroup').style.display = isLocal ? 'none' : '';
   const promptEl = document.getElementById('stepPrompt');
-  promptEl.placeholder = isRunTests
-    ? 'JSON конфиг: {"test_command":"npm test"} (необязательно, auto-detect по стеку)'
+  promptEl.placeholder = isLocal
+    ? 'JSON конфиг (необязательно)'
     : 'Промпт для AI...';
+
+  // Warning for release-required types
+  const needsRelease = ['prepare_spec', 'develop_release', 'prepare_press_release'].includes(type);
+  let releaseWarning = document.getElementById('stepReleaseWarning');
+  if (needsRelease) {
+    if (!releaseWarning) {
+      releaseWarning = document.createElement('div');
+      releaseWarning.id = 'stepReleaseWarning';
+      releaseWarning.style.cssText = 'color:var(--yellow);font-size:0.85em;margin-top:4px';
+      document.getElementById('stepProcessType').parentElement.appendChild(releaseWarning);
+    }
+    releaseWarning.textContent = '⚠ Этот тип требует привязки к релизу (release_id)';
+    releaseWarning.style.display = '';
+  } else if (releaseWarning) {
+    releaseWarning.style.display = 'none';
+  }
 };
 
 window.saveStep = async function () {
   const processType = document.getElementById('stepProcessType').value;
   const modelId = document.getElementById('stepModel').value;
-  if (processType !== 'run_tests' && !modelId) return toast('Выберите модель', 'error');
+  const isLocal = processType === 'run_tests' || processType === 'deploy';
+  if (!isLocal && !modelId) return toast('Выберите модель', 'error');
 
   const body = {
     name: document.getElementById('stepName').value.trim() || null,
-    model_id: processType === 'run_tests' ? null : modelId,
+    model_id: isLocal ? null : modelId,
     process_type: processType,
     timeout_min: parseInt(document.getElementById('stepTimeout').value) || 20,
     input_prompt: document.getElementById('stepPrompt').value.trim() || null,
@@ -291,6 +308,15 @@ async function savePlanInternal() {
     scheduled_at: document.getElementById('planScheduledAt').value || null,
     product_id: plan ? plan.product_id : productId,
   };
+
+  // Автоматически переводим в scheduled при установке даты запуска
+  if (body.scheduled_at && plan && plan.status === 'draft') {
+    body.status = 'scheduled';
+  }
+  // Возвращаем в draft если дату убрали
+  if (!body.scheduled_at && plan && plan.status === 'scheduled') {
+    body.status = 'draft';
+  }
 
   if (plan) {
     plan = await api(`/plans/${plan.id}`, { method: 'PUT', body });

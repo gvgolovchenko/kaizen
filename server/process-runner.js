@@ -5,14 +5,37 @@ import * as releases from './db/releases.js';
 import * as issues from './db/issues.js';
 import * as aiModels from './db/ai-models.js';
 import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
-import { parseJsonFromAI, detectTestCommand, detectBuildCommand } from './utils.js';
+import { parseJsonFromAI, detectTestCommand, detectBuildCommand, validateBranchName } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { pushToGitlab, pushToDefaultBranch, waitForPipeline, getPipelineStatus } from './gitlab-client.js';
+import { runSmokeTests } from './smoke-tester.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFileCb);
+
+/**
+ * Generate context_files prompt section from product automation config.
+ */
+function getContextFilesPrompt(product) {
+  const files = product.automation?.context_files;
+  if (!files || !Array.isArray(files) || files.length === 0) return '';
+  return `\n  ОБЯЗАТЕЛЬНО прочитай следующие ключевые файлы проекта:\n${files.map(f =>
+    `  - ${f.path}${f.description ? ` — ${f.description}` : ''}`
+  ).join('\n')}`;
+}
+
+/**
+ * Generate critical_paths prompt section from product automation config.
+ */
+function getCriticalPathsPrompt(product) {
+  const paths = product.automation?.critical_paths;
+  if (!paths || !Array.isArray(paths) || paths.length === 0) return '';
+  return `\n  КРИТИЧНЫЕ МОДУЛИ (НЕ ЛОМАЙ! Изменяй осторожно, проверяй после каждого изменения):\n${paths.map(p =>
+    `  - ${p.path}${p.description ? ` — ${p.description}` : ''}`
+  ).join('\n')}`;
+}
 
 /**
  * Watchdog wrapper — guarantees a Promise settles within timeoutMs.
@@ -292,9 +315,13 @@ export async function runProcess(processId, options = {}) {
     const product = await products.getById(proc.product_id);
     if (!product) throw new Error('Product not found');
 
-    // Dispatch run_tests before loading model (no model required)
+    // Dispatch local processes before loading model (no model required)
     if (proc.type === 'run_tests') {
       await runTests(processId, proc, product, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'deploy') {
+      await runDeploy(processId, proc, product, startTime, timeoutMs);
       return;
     }
 
@@ -330,11 +357,6 @@ export async function runProcess(processId, options = {}) {
       await runUpdateDocs(processId, proc, product, model, startTime, timeoutMs);
       return;
     }
-    if (proc.type === 'deploy') {
-      await runDeploy(processId, proc, product, startTime, timeoutMs);
-      return;
-    }
-
     const taskCount = Math.min(Math.max(parseInt(proc.input_count) || 5, 1), 10);
 
     // 3. Build prompts
@@ -507,7 +529,71 @@ ${fileContext ? `\nНиже приведён контекст проекта (ф
     }
 
     console.error(`Process ${processId} failed:`, err.message);
+
+    // Auto-retry: if retryable error and retries left, create a retry copy
+    const retryInfo = parseRetryInfo(proc);
+    if (proc && shouldAutoRetry(proc, retryInfo, err)) {
+      try {
+        const retryCount = (retryInfo.retry_count || 0) + 1;
+        const delayMs = Math.min(retryCount * 30_000, 120_000); // 30s, 60s, 120s
+        console.log(`Auto-retry: process ${processId} (attempt ${retryCount}), delay ${delayMs / 1000}s`);
+
+        await processLogs.create({
+          process_id: processId,
+          step: 'auto_retry',
+          message: `Автоматический перезапуск (попытка ${retryCount}/${MAX_RETRIES}) через ${delayMs / 1000}с`,
+          data: { retry_count: retryCount, delay_ms: delayMs, error: err.message },
+        });
+
+        setTimeout(async () => {
+          try {
+            const newProc = await processes.create({
+              product_id: proc.product_id,
+              type: proc.type,
+              model_id: proc.model_id,
+              release_id: proc.release_id,
+              input_prompt: proc.input_prompt,
+              input_template_id: proc.input_template_id,
+              input_count: proc.input_count,
+              plan_step_id: proc.plan_step_id,
+              config: { ...proc.config, retry_count: retryCount, retry_of: processId },
+            });
+            // Enqueue via import to avoid circular dependency
+            const { QueueManager } = await import('./queue-manager.js');
+            QueueManager.instance?.enqueue(newProc.id, proc.model_id, options.timeoutMs);
+          } catch (retryErr) {
+            console.error(`Auto-retry create failed for ${processId}:`, retryErr.message);
+          }
+        }, delayMs);
+      } catch (retryErr) {
+        console.error(`Auto-retry setup failed for ${processId}:`, retryErr.message);
+      }
+    }
   }
+}
+
+const MAX_RETRIES = 2;
+
+function parseRetryInfo(proc) {
+  if (!proc) return {};
+  try {
+    const parsed = JSON.parse(proc.input_prompt);
+    if (parsed && typeof parsed === 'object' && 'retry_count' in parsed) return parsed;
+  } catch { /* not retry JSON */ }
+  return {};
+}
+
+function shouldAutoRetry(proc, retryInfo, err) {
+  const retryCount = retryInfo.retry_count || 0;
+  if (retryCount >= MAX_RETRIES) return false;
+
+  // Don't retry local processes (run_tests, update_docs, deploy) — they have deterministic errors
+  if (['run_tests', 'update_docs', 'deploy'].includes(proc.type)) return false;
+
+  // Retry on timeout, network, or AI provider errors
+  const msg = (err.message || '').toLowerCase();
+  const retryablePatterns = ['timeout', 'econnrefused', 'econnreset', 'socket hang up', 'rate limit', '429', '503', '502', 'overloaded'];
+  return retryablePatterns.some(p => msg.includes(p));
 }
 
 /**
@@ -562,6 +648,9 @@ ${product.owner ? `Ответственный: ${product.owner}` : ''}`;
 
   if (useInteractiveTools) {
     systemPrompt += `\n\nПроект находится в текущей директории. Начни с чтения CLAUDE.md и файлов из docs/ — там контекст проекта, архитектура, API, схема БД, бизнес-логика. Затем используй инструменты Read, Glob, Grep чтобы изучить код и структуру файлов. Основывай спецификацию на реальном коде и документации проекта.`;
+    systemPrompt += getContextFilesPrompt(product);
+    systemPrompt += getCriticalPathsPrompt(product);
+    systemPrompt += `\n\nКРИТИЧНО: Для каждой задачи, затрагивающей БД, укажи ТОЧНЫЕ имена таблиц и колонок из CLAUDE.md или docs/DATABASE_SCHEMA.md. Не придумывай — копируй из документации. Укажи существующие SQL-запросы или модели, которые уже работают с этими таблицами.`;
   }
 
   if (fileContext) {
@@ -1031,14 +1120,14 @@ ${releaseContext ? `=== РЕЛИЗЫ ===${releaseContext}\n` : ''}
   const onEvent = createCheckpointTracker(processId);
   const watchdogMs = timeoutMs + 60_000;
   const { text: rawResponse, events } = await withWatchdog(
-    callClaudeCodeStreaming(model.model_id, systemPrompt, userPrompt, {
+    callClaudeCodeStreaming(model?.model_id || 'claude-sonnet-4-6', systemPrompt, userPrompt, {
       cwd,
       timeoutMs,
       allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
       onEvent,
     }),
     watchdogMs,
-    `update_docs/${model.name}`,
+    `update_docs/${model?.name || 'claude-code'}`,
   );
 
   // 7. Log: response_received
@@ -1363,10 +1452,22 @@ async function runDevelopRelease(processId, proc, product, model, startTime, tim
   if (!release.spec) throw new Error('Release spec is required for development');
   if (!product.project_path) throw new Error('product.project_path is required');
 
+  // 1b. Block parallel develop_release on the same project_path
+  const allProcs = await processes.getAll({ status: 'running' });
+  const conflict = allProcs.find(p =>
+    p.id !== processId &&
+    p.type === 'develop_release' &&
+    p.product_id === proc.product_id
+  );
+  if (conflict) {
+    throw new Error(`Параллельная разработка заблокирована: на этом продукте уже запущен develop_release (${conflict.id.slice(0, 8)})`);
+  }
+
   // 2. Parse config from input_prompt
   let config = {};
   try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
-  const branchName  = config.git_branch  || `kaizen/release-${release.version}`;
+  const rawBranch   = config.git_branch  || `kaizen/release-${release.version}`;
+  const branchName  = validateBranchName(rawBranch);
   const testCommand = config.test_command || detectTestCommand(product.tech_stack);
   const buildCommand = config.build_command || detectBuildCommand(product.tech_stack);
 
@@ -1400,7 +1501,7 @@ ${product.tech_stack  ? `Стек: ${product.tech_stack}`       : ''}
   Прочитай файлы из папки docs/ — там детальная документация проекта.
   Если задача затрагивает базу данных — найди ТОЧНЫЕ имена таблиц и колонок в документации.
   НЕ ПРИДУМЫВАЙ имена колонок, таблиц, полей — бери ТОЛЬКО из документации или существующего кода.
-  Изучи существующий код в файлах, которые будешь менять — пойми текущую реализацию.
+  Изучи существующий код в файлах, которые будешь менять — пойми текущую реализацию.${getContextFilesPrompt(product)}${getCriticalPathsPrompt(product)}
 
 Шаг 3 — BASELINE: ПРОВЕРКА ТЕКУЩЕГО СОСТОЯНИЯ
   Запусти тесты ДО своих изменений: ${testCommand}
@@ -1539,7 +1640,56 @@ ${issuesList}`;
     }
   }
 
-  // 12. Update process → completed
+  // 12. Smoke test (auto-discover if not configured, runs after every develop_release)
+  if (resultObj.tests_passed && product.project_path) {
+    const smokeConfig = product.smoke_test || {};
+    const smokeEnabled = smokeConfig.enabled !== false; // enabled by default if project_path exists
+    if (smokeEnabled) {
+      try {
+        const smokeLog = async (step, message, data) => {
+          await processLogs.create({ process_id: processId, step, message, data });
+        };
+        const smokeResult = await runSmokeTests({
+          smokeConfig,
+          projectPath: product.project_path,
+          techStack: product.tech_stack,
+          log: smokeLog,
+        });
+
+        // Auto-save discovered config for future runs
+        if (smokeResult.discoveredConfig && (!smokeConfig.url || !smokeConfig.pages?.length)) {
+          try {
+            await products.update(product.id, {
+              smoke_test: { ...smokeResult.discoveredConfig, enabled: true },
+            });
+            await processLogs.create({
+              process_id: processId,
+              step: 'smoke_config_saved',
+              message: 'Smoke test конфиг автоматически сохранён в продукт',
+              data: smokeResult.discoveredConfig,
+            });
+          } catch { /* non-critical */ }
+        }
+
+        if (!smokeResult.passed) {
+          resultObj.tests_passed = false;
+          resultObj.smoke_failed = true;
+          resultObj.smoke_results = smokeResult.results;
+          resultObj.summary = (resultObj.summary || '') + '\n\nSmoke test ПРОВАЛЕН: ' +
+            smokeResult.results.filter(r => !r.ok).map(r => `${r.page}: ${r.errors.join('; ')}`).join(', ');
+        }
+      } catch (smokeErr) {
+        await processLogs.create({
+          process_id: processId,
+          step: 'smoke_error',
+          message: `Ошибка smoke test: ${smokeErr.message}`,
+          data: { error: smokeErr.message },
+        });
+      }
+    }
+  }
+
+  // 13. Update process → completed
   const durationMs = Date.now() - startTime;
   await processes.update(processId, {
     status: 'completed',
@@ -1548,14 +1698,14 @@ ${issuesList}`;
     duration_ms: durationMs,
   });
 
-  // 13. Update release
+  // 14. Update release
   await releases.updateDevInfo(release.id, {
     dev_branch: resultObj.branch,
     dev_commit: resultObj.commit_hash,
     dev_status: resultObj.tests_passed ? 'done' : 'failed',
   });
 
-  // 14. Auto-publish if tests passed and auto_publish is enabled
+  // 15. Auto-publish if tests passed and auto_publish is enabled
   if (resultObj.tests_passed && config.auto_publish) {
     try {
       await releases.publish(release.id);
@@ -1580,7 +1730,7 @@ ${issuesList}`;
     }
   }
 
-  // 15. Notify: develop completed/failed
+  // 16. Notify: develop completed/failed
   if (resultObj.tests_passed) {
     notify('develop_completed', {
       product: product.name, version: release.version,

@@ -53,6 +53,14 @@ app.listen(PORT, async () => {
     if (rowCount > 0) {
       console.log(`Startup cleanup: ${rowCount} orphaned process(es) marked as failed`);
     }
+    // Reset stale dev_status on releases
+    const { rowCount: devCount } = await pool.query(`
+      UPDATE opii.kaizen_releases
+      SET dev_status = 'failed'
+      WHERE dev_status = 'in_progress'`);
+    if (devCount > 0) {
+      console.log(`Startup cleanup: ${devCount} release(s) dev_status reset to failed`);
+    }
   } catch (err) {
     console.error('Startup cleanup failed:', err.message);
   }
@@ -66,3 +74,41 @@ app.listen(PORT, async () => {
     console.error('QueueManager/Scheduler init failed:', err.message);
   }
 });
+
+// ── Graceful shutdown ──────────────────────────────────
+
+async function shutdown(signal) {
+  console.log(`\n${signal} received. Graceful shutdown...`);
+
+  // 1. Stop Scheduler (no new ticks)
+  scheduler.stop();
+  console.log('Scheduler stopped');
+
+  // 2. Mark running processes as failed (orphaned)
+  try {
+    const { rowCount } = await pool.query(`
+      UPDATE opii.kaizen_processes
+      SET status = 'failed',
+          error = 'Server shutdown (${signal})',
+          completed_at = NOW(),
+          duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000
+      WHERE status = 'running'`);
+    if (rowCount > 0) console.log(`Shutdown: ${rowCount} running process(es) marked as failed`);
+
+    await pool.query(`UPDATE opii.kaizen_releases SET dev_status = 'failed' WHERE dev_status = 'in_progress'`);
+  } catch (err) {
+    console.error('Shutdown cleanup error:', err.message);
+  }
+
+  // 3. Close DB pool
+  try {
+    await pool.end();
+    console.log('DB pool closed');
+  } catch { /* ignore */ }
+
+  console.log('Shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

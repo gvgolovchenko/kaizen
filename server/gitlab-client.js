@@ -135,6 +135,39 @@ export async function getPipelineStatus(deploy, sha) {
 }
 
 /**
+ * Fetch issues from GitLab project.
+ * @returns {Array} List of GitLab issues
+ */
+export async function getIssues(deploy, { state = 'opened', per_page = 100 } = {}) {
+  const gl = deploy?.gitlab;
+  if (!gl?.url || !gl?.project_id || !gl?.access_token) {
+    throw new Error('GitLab API не настроен (url, project_id, access_token)');
+  }
+
+  const baseUrl = `${gl.url}/api/v4/projects/${gl.project_id}`;
+  const headers = { 'PRIVATE-TOKEN': gl.access_token };
+
+  const allIssues = [];
+  let page = 1;
+
+  while (true) {
+    const res = await fetch(
+      `${baseUrl}/issues?state=${state}&per_page=${per_page}&page=${page}`,
+      { headers }
+    );
+    if (!res.ok) throw new Error(`GitLab API: ${res.status} ${res.statusText}`);
+
+    const issues = await res.json();
+    if (issues.length === 0) break;
+    allIssues.push(...issues);
+    if (issues.length < per_page) break;
+    page++;
+  }
+
+  return allIssues;
+}
+
+/**
  * Wait for GitLab pipeline to complete (polling).
  * @returns {Promise<{ status: string, web_url: string, jobs: Array }>}
  */

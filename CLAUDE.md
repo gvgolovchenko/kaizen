@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.13.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.14.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам и планировщик (Scheduler) для автоматического запуска цепочек AI-процессов.
 
 ## Архитектура
 
@@ -45,9 +45,12 @@ kaizen/
 │   │   ├── process-logs.js       # getByProcess, create
 │   │   ├── plans.js              # getAll, getByProduct, getById, create, update, updateStatus, remove
 │   │   ├── plan-steps.js         # getByPlan, getById, create, bulkCreate, update, remove, getNextStep
-│   │   └── rc-tickets.js         # getByProduct, getById, getByRcTicketId, upsert, updateSyncStatus, countByProduct
+│   │   ├── rc-tickets.js         # getByProduct, getById, getByRcTicketId, upsert, updateSyncStatus, countByProduct
+│   │   └── gitlab-issues.js     # getByProduct, getById, upsert, updateSyncStatus, countByProduct
 │   ├── rc-client.js              # MS SQL клиент для Rivc.Connect HelpDesk
 │   ├── rc-sync.js                # Синхронизация и импорт тикетов RC → Kaizen
+│   ├── gitlab-sync.js            # Синхронизация и импорт GitLab Issues → Kaizen
+│   ├── smoke-tester.js           # Playwright smoke-тесты с автообнаружением страниц
 │   └── routes/
 │       └── api.js                # REST-эндпоинты
 ├── mcp-server/
@@ -73,7 +76,8 @@ kaizen/
 │       ├── 014_automation.sql       # Automation JSONB + pipeline поля
 │       ├── 015_run_tests.sql        # model_id nullable (processes + plan_steps)
 │       ├── 016_plan_templates.sql   # product_id nullable для шаблонов планов
-│       └── 017_deploy_config.sql    # deploy JSONB в products (GitLab CI/CD)
+│       ├── 017_deploy_config.sql    # deploy JSONB в products (GitLab CI/CD)
+│       └── 018_gitlab_issues.sql   # GitLab Issues кэш + gitlab_issue_id в issues
 ├── public/
 │   ├── index.html                # Dashboard — обзор системы (8+ виджетов)
 │   ├── products.html             # Список продуктов (карточки + сортировка)
@@ -89,7 +93,7 @@ kaizen/
 │       ├── dashboard.js          # Логика index.html (Dashboard виджеты, auto-refresh)
 │       ├── products.js           # Логика products.html
 │       ├── product.js            # Логика product.html + процессы + improve + планы
-│       ├── processes.js          # Логика processes.html + виджет очереди
+│       ├── processes.js          # Логика processes.html (операционный центр)
 │       ├── process-detail.js     # Общая логика отображения деталей процесса
 │       ├── plans.js              # Логика plans.html
 │       ├── plan-edit.js          # Логика plan-edit.html (CRUD шагов)

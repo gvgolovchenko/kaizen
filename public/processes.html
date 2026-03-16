@@ -23,37 +23,77 @@
   <div class="container">
     <header>
       <h1>Процессы</h1>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="filterStatus" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85rem">
-          <option value="">Все статусы</option>
-          <option value="pending">Pending</option>
-          <option value="queued">Queued</option>
-          <option value="running">Running</option>
-          <option value="completed">Completed</option>
-          <option value="failed">Failed</option>
-        </select>
-      </div>
     </header>
 
-    <div id="queueStats" class="queue-stats" style="display:none"></div>
+    <!-- Summary Bar -->
+    <div id="processSummary" class="proc-summary"></div>
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Продукт</th>
-            <th>Тип</th>
-            <th>Модель</th>
-            <th>Статус</th>
-            <th>Создан</th>
-            <th>Длительность</th>
-            <th>Предложения</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="processesBody"></tbody>
-      </table>
-    </div>
+    <!-- Active Processes -->
+    <section class="proc-section" id="sectionActive" style="display:none">
+      <div class="proc-section-header" onclick="toggleSection('sectionActive')">
+        <span class="collapsible-arrow">&#9654;</span>
+        <h2>Активные <span class="proc-section-count" id="countActive">0</span></h2>
+      </div>
+      <div class="proc-section-body">
+        <div class="proc-cards" id="cardsActive"></div>
+      </div>
+    </section>
+
+    <!-- Queue -->
+    <section class="proc-section" id="sectionQueue" style="display:none">
+      <div class="proc-section-header" onclick="toggleSection('sectionQueue')">
+        <span class="collapsible-arrow">&#9654;</span>
+        <h2>В очереди <span class="proc-section-count" id="countQueue">0</span></h2>
+      </div>
+      <div class="proc-section-body">
+        <div class="proc-cards" id="cardsQueue"></div>
+      </div>
+    </section>
+
+    <!-- Attention (failed) -->
+    <section class="proc-section proc-section-attention" id="sectionAttention" style="display:none">
+      <div class="proc-section-header" onclick="toggleSection('sectionAttention')">
+        <span class="collapsible-arrow">&#9654;</span>
+        <h2>Требуют внимания <span class="proc-section-count" id="countAttention">0</span></h2>
+      </div>
+      <div class="proc-section-body">
+        <div class="proc-cards" id="cardsAttention"></div>
+      </div>
+    </section>
+
+    <!-- History -->
+    <section class="proc-section" id="sectionHistory">
+      <div class="proc-section-header" onclick="toggleSection('sectionHistory')">
+        <span class="collapsible-arrow">&#9654;</span>
+        <h2>История <span class="proc-section-count" id="countHistory">0</span></h2>
+      </div>
+      <div class="proc-section-body">
+        <div class="proc-history-filters">
+          <select id="filterType"><option value="">Все типы</option></select>
+          <select id="filterProduct"><option value="">Все продукты</option></select>
+          <select id="filterPeriod">
+            <option value="7d">7 дней</option>
+            <option value="30d">30 дней</option>
+            <option value="all">Все</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Продукт</th>
+                <th>Тип</th>
+                <th>Модель</th>
+                <th>Длительность</th>
+                <th>Дата</th>
+              </tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+        <div class="proc-pagination" id="historyPagination"></div>
+      </div>
+    </section>
 
     <div id="processesEmpty" class="empty" style="display:none">
       <p>Нет процессов</p>

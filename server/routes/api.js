@@ -16,13 +16,61 @@ import { generateGitlabCI, generateDockerfile, generateDockerCompose } from '../
 import { getPipelineStatus } from '../gitlab-client.js';
 import * as searchDb from '../db/search.js';
 import * as dashboard from '../db/dashboard.js';
+import { pool } from '../db/pool.js';
 
 const router = Router();
+
+// ── Step validation ──────────────────────────────────────
+
+const STEP_REQUIREMENTS = {
+  improve:               { model: true,  release: false },
+  prepare_spec:          { model: true,  release: true  },
+  develop_release:       { model: true,  release: true  },
+  update_docs:           { model: true,  release: false },
+  prepare_press_release: { model: true,  release: true  },
+  form_release:          { model: true,  release: false },
+  roadmap_from_doc:      { model: true,  release: false },
+  run_tests:             { model: false, release: false },
+  deploy:                { model: false, release: false },
+};
+
+function validateStepConfig(step) {
+  const req = STEP_REQUIREMENTS[step.process_type];
+  if (!req) return null;
+  const errors = [];
+  if (req.model && !step.model_id) errors.push(`${step.process_type} требует model_id`);
+  if (req.release && !step.release_id) errors.push(`${step.process_type} требует release_id`);
+  return errors.length ? errors : null;
+}
+
+function validateSteps(steps) {
+  const allErrors = [];
+  for (const step of steps) {
+    const errs = validateStepConfig(step);
+    if (errs) allErrors.push({ step: step.step_order, name: step.name, errors: errs });
+  }
+  return allErrors.length ? allErrors : null;
+}
 
 // Получаем queueManager из app.locals
 function getQueueManager(req) {
   return req.app.locals.queueManager;
 }
+
+// ── Health check ─────────────────────────────────────────
+
+router.get('/health', async (req, res) => {
+  const checks = { server: 'ok', db: 'unknown', uptime: Math.round(process.uptime()) };
+  try {
+    const { rows } = await pool.query('SELECT 1 AS ok');
+    checks.db = rows[0]?.ok === 1 ? 'ok' : 'error';
+  } catch (err) {
+    checks.db = 'error';
+    checks.db_error = err.message;
+  }
+  const allOk = checks.db === 'ok';
+  res.status(allOk ? 200 : 503).json(checks);
+});
 
 // ── Dashboard ────────────────────────────────────────────
 
@@ -186,9 +234,31 @@ router.post('/releases/:id/publish', async (req, res) => {
   const release = await releases.publish(req.params.id);
   if (!release) return res.status(404).json({ error: 'Release not found' });
 
+  const product = await products.getById(release.product_id);
+
+  // Create git tag if project_path exists
+  try {
+    if (product?.project_path) {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const exec = promisify(execFile);
+      const tagName = `v${release.version}`;
+      const tagMsg = `Release ${release.version} — ${release.name}`;
+      await exec('git', ['tag', '-a', tagName, '-m', tagMsg], { cwd: product.project_path, timeout: 10_000 })
+        .catch(() => exec('git', ['tag', tagName], { cwd: product.project_path, timeout: 10_000 }));
+      release.git_tag = tagName;
+
+      // Push tag to GitLab if configured
+      if (product.deploy?.gitlab?.remote_url) {
+        await exec('git', ['push', 'origin', tagName], { cwd: product.project_path, timeout: 15_000 }).catch(() => {});
+      }
+    }
+  } catch (tagErr) {
+    release.git_tag_error = tagErr.message;
+  }
+
   // Auto-deploy if configured
   try {
-    const product = await products.getById(release.product_id);
     if (product?.deploy?.auto_deploy?.on_publish && product?.deploy?.gitlab?.remote_url) {
       const config = { branch: release.dev_branch || `kaizen/release-${release.version}` };
       const proc = await processes.create({
@@ -1081,6 +1151,12 @@ router.get('/plans/:id', async (req, res) => {
 
 router.put('/plans/:id', async (req, res) => {
   try {
+    // Validate all steps when scheduling
+    if (req.body.status === 'scheduled' || req.body.scheduled_at) {
+      const steps = await planSteps.getByPlan(req.params.id);
+      const stepErrors = validateSteps(steps);
+      if (stepErrors) return res.status(400).json({ error: 'План содержит ошибки', details: stepErrors });
+    }
     const plan = await plans.update(req.params.id, req.body);
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
     res.json(plan);
@@ -1109,6 +1185,9 @@ router.post('/plans/:id/start', async (req, res) => {
 
     const steps = await planSteps.getByPlan(plan.id);
     if (steps.length === 0) return res.status(400).json({ error: 'Plan has no steps' });
+
+    const stepErrors = validateSteps(steps);
+    if (stepErrors) return res.status(400).json({ error: 'План содержит ошибки', details: stepErrors });
 
     await plans.updateStatus(plan.id, 'active', { started_at: new Date().toISOString() });
 
@@ -1214,6 +1293,9 @@ router.post('/plans/:id/steps', async (req, res) => {
       return res.status(400).json({ error: 'Can only add steps to draft/scheduled plans' });
     }
 
+    const errs = validateStepConfig(req.body);
+    if (errs) return res.status(400).json({ error: 'Ошибка валидации шага', details: errs });
+
     const step = await planSteps.create({ ...req.body, plan_id: plan.id });
     res.status(201).json(step);
   } catch (err) {
@@ -1232,6 +1314,8 @@ router.post('/plans/:id/steps/bulk', async (req, res) => {
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'steps array is required' });
     }
+    const stepErrors = validateSteps(items);
+    if (stepErrors) return res.status(400).json({ error: 'План содержит ошибки в шагах', details: stepErrors });
     const created = await planSteps.bulkCreate(plan.id, items);
     res.status(201).json({ steps: created, count: created.length });
   } catch (err) {
@@ -1241,6 +1325,14 @@ router.post('/plans/:id/steps/bulk', async (req, res) => {
 
 router.put('/plans/:id/steps/:stepId', async (req, res) => {
   try {
+    // Validate merged config (existing + update)
+    if (req.body.process_type || req.body.model_id !== undefined || req.body.release_id !== undefined) {
+      const existing = await planSteps.getById(req.params.stepId);
+      if (!existing) return res.status(404).json({ error: 'Step not found' });
+      const merged = { ...existing, ...req.body };
+      const errs = validateStepConfig(merged);
+      if (errs) return res.status(400).json({ error: 'Ошибка валидации шага', details: errs });
+    }
     const step = await planSteps.update(req.params.stepId, req.body);
     if (!step) return res.status(404).json({ error: 'Step not found' });
     res.json(step);
@@ -1616,6 +1708,180 @@ router.get('/products/:id/pipeline-status', async (req, res) => {
     if (!sha) return res.status(400).json({ error: 'sha parameter required' });
     const status = await getPipelineStatus(product.deploy, sha);
     res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GitLab Issues ────────────────────────────────────────
+
+import * as gitlabSync from '../gitlab-sync.js';
+import * as gitlabIssuesDb from '../db/gitlab-issues.js';
+
+router.post('/products/:id/gitlab-sync', async (req, res) => {
+  try {
+    const result = await gitlabSync.syncIssues(req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/products/:id/gitlab-issues', async (req, res) => {
+  try {
+    const tickets = await gitlabIssuesDb.getByProduct(req.params.id, req.query.sync_status);
+    const stats = await gitlabIssuesDb.countByProduct(req.params.id);
+    res.json({ issues: tickets, stats });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/gitlab-issues/:id', async (req, res) => {
+  try {
+    const issue = await gitlabIssuesDb.getById(req.params.id);
+    if (!issue) return res.status(404).json({ error: 'Not found' });
+    res.json(issue);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/gitlab-issues/:id/import', async (req, res) => {
+  try {
+    const issue = await gitlabSync.importIssue(req.params.id);
+    res.json(issue);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/gitlab-issues/import-bulk', async (req, res) => {
+  try {
+    const { issue_ids } = req.body;
+    const issues = await gitlabSync.importBulk(issue_ids);
+    res.json({ count: issues.length, issues });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/gitlab-issues/:id/ignore', async (req, res) => {
+  try {
+    const issue = await gitlabIssuesDb.updateSyncStatus(req.params.id, 'ignored');
+    res.json(issue);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Release git diff ─────────────────────────────────────
+
+router.get('/releases/:id/diff', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+    const product = await products.getById(release.product_id);
+    if (!product?.project_path) return res.status(400).json({ error: 'Product has no project_path' });
+
+    const branch = release.dev_branch || `kaizen/release-${release.version}`;
+    const defaultBranch = product.deploy?.gitlab?.default_branch || 'main';
+    const cwd = product.project_path;
+
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const exec = promisify(execFile);
+
+    // Get diff stat
+    const { stdout: stat } = await exec('git', ['diff', '--stat', `${defaultBranch}...${branch}`], { cwd, timeout: 15_000 });
+    // Get full diff (limited to 200KB)
+    const { stdout: diff } = await exec('git', ['diff', `${defaultBranch}...${branch}`], { cwd, timeout: 15_000, maxBuffer: 200 * 1024 });
+    // Get file list
+    const { stdout: files } = await exec('git', ['diff', '--name-status', `${defaultBranch}...${branch}`], { cwd, timeout: 15_000 });
+
+    res.json({
+      branch,
+      base: defaultBranch,
+      stat: stat.trim(),
+      diff: diff.length > 100_000 ? diff.slice(0, 100_000) + '\n... (обрезано, слишком большой diff)' : diff,
+      files: files.trim().split('\n').filter(Boolean).map(line => {
+        const [status, ...parts] = line.split('\t');
+        return { status, path: parts.join('\t') };
+      }),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Release rollback ─────────────────────────────────────
+
+router.post('/releases/:id/rollback', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+    const product = await products.getById(release.product_id);
+    if (!product?.project_path) return res.status(400).json({ error: 'Product has no project_path' });
+
+    const branch = release.dev_branch || `kaizen/release-${release.version}`;
+    const defaultBranch = product.deploy?.gitlab?.default_branch || 'main';
+    const cwd = product.project_path;
+
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const exec = promisify(execFile);
+
+    // Checkout default branch and delete the dev branch
+    await exec('git', ['checkout', defaultBranch], { cwd, timeout: 10_000 });
+    await exec('git', ['branch', '-D', branch], { cwd, timeout: 10_000 });
+
+    // Reset dev status
+    await releases.updateDevInfo(release.id, { dev_status: null, dev_branch: null, dev_commit: null });
+
+    res.json({ ok: true, deleted_branch: branch });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Create GitLab Merge Request ──────────────────────────
+
+router.post('/releases/:id/create-mr', async (req, res) => {
+  try {
+    const release = await releases.getById(req.params.id);
+    if (!release) return res.status(404).json({ error: 'Release not found' });
+    const product = await products.getById(release.product_id);
+    if (!product?.deploy?.gitlab?.project_id || !product?.deploy?.gitlab?.access_token) {
+      return res.status(400).json({ error: 'GitLab not configured for this product' });
+    }
+
+    const branch = release.dev_branch || `kaizen/release-${release.version}`;
+    const defaultBranch = product.deploy?.gitlab?.default_branch || 'main';
+    const gitlabUrl = product.deploy.gitlab.url || 'https://gitlab.com';
+    const projectId = product.deploy.gitlab.project_id;
+    const token = product.deploy.gitlab.access_token;
+
+    const mrBody = {
+      source_branch: branch,
+      target_branch: defaultBranch,
+      title: `Release ${release.version} — ${release.name}`,
+      description: `## Задачи\n\n${(release.issues || []).map(i => `- ${i.title} (${i.type}, ${i.priority})`).join('\n')}\n\n---\nСоздано через Kaizen`,
+      remove_source_branch: true,
+    };
+
+    const mrRes = await fetch(`${gitlabUrl}/api/v4/projects/${projectId}/merge_requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'PRIVATE-TOKEN': token },
+      body: JSON.stringify(mrBody),
+    });
+
+    if (!mrRes.ok) {
+      const err = await mrRes.json().catch(() => ({}));
+      return res.status(mrRes.status).json({ error: err.message || err.error || `GitLab API error ${mrRes.status}` });
+    }
+
+    const mr = await mrRes.json();
+    res.json({ id: mr.iid, url: mr.web_url, title: mr.title, state: mr.state });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

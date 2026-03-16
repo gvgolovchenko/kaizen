@@ -7,7 +7,10 @@ import { runProcess } from './process-runner.js';
  * Singleton. Каждый провайдер имеет лимит одновременных запусков.
  */
 export class QueueManager {
+  static instance = null;
+
   constructor() {
+    QueueManager.instance = this;
     this.concurrencyLimits = {
       ollama: 1,
       mlx: 1,
@@ -75,7 +78,9 @@ export class QueueManager {
       const proc = await processes.getById(processId);
       const status = proc?.status || 'failed';
       if (this.onProcessDone) {
-        try { this.onProcessDone(processId, status); } catch {}
+        try { this.onProcessDone(processId, status); } catch (cbErr) {
+          console.error(`QueueManager: onProcessDone callback error for ${processId}:`, cbErr.message);
+        }
       }
 
       // Попробовать запустить следующий из очереди

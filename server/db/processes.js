@@ -58,11 +58,26 @@ export async function getById(id) {
   return rows[0] || null;
 }
 
-export async function create({ product_id, model_id, type, input_prompt, input_template_id, input_count, release_id }) {
+export async function create({ product_id, model_id, type, input_prompt, input_template_id, input_count, release_id, plan_step_id, config }) {
+  const cols = ['product_id', 'model_id', 'type', 'input_prompt', 'input_template_id', 'input_count', 'release_id'];
+  const vals = [product_id, model_id, type || 'improve', input_prompt || null, input_template_id || null, input_count || 5, release_id || null];
+  let idx = vals.length;
+
+  if (plan_step_id) {
+    cols.push('plan_step_id');
+    vals.push(plan_step_id);
+    idx++;
+  }
+
+  // Store config as JSON in input_prompt if provided (retry info)
+  if (config && !input_prompt) {
+    vals[3] = JSON.stringify(config); // overwrite input_prompt slot
+  }
+
+  const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
   const { rows } = await pool.query(
-    `INSERT INTO ${TABLE} (product_id, model_id, type, input_prompt, input_template_id, input_count, release_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [product_id, model_id, type || 'improve', input_prompt || null, input_template_id || null, input_count || 5, release_id || null]
+    `INSERT INTO ${TABLE} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+    vals
   );
   return rows[0];
 }

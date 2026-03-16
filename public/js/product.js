@@ -109,6 +109,11 @@ async function loadAll() {
     document.getElementById('tabRcTickets').style.display = '';
     loadRcTickets();
   }
+  // Show GitLab Issues tab if deploy.gitlab is configured
+  if (product?.deploy?.gitlab?.project_id) {
+    document.getElementById('tabGitlabIssues').style.display = '';
+    loadGlIssues();
+  }
   // Load automation settings
   loadAutomationSettings();
   // Load deploy settings
@@ -435,6 +440,9 @@ function renderReleases() {
         <h3>
           <span class="badge badge-${r.status}">${r.status}</span>
           ${escapeHtml(r.version)} — ${escapeHtml(r.name)}
+          ${r.spec ? '<span class="badge badge-improvement" style="font-size:0.6rem;margin-left:4px">Spec</span>' : ''}
+          ${r.dev_status === 'done' ? '<span class="badge badge-done" style="font-size:0.6rem;margin-left:4px">Dev</span>' : r.dev_status === 'in_progress' ? '<span class="badge badge-in_progress" style="font-size:0.6rem;margin-left:4px">Dev</span>' : r.dev_status === 'failed' ? '<span class="badge badge-failed" style="font-size:0.6rem;margin-left:4px">Dev</span>' : ''}
+          ${r.press_release ? '<span class="badge badge-process-prepare_press_release" style="font-size:0.6rem;margin-left:4px">PR</span>' : ''}
         </h3>
         <div style="display:flex;gap:6px">
           ${r.status === 'draft' ? `<button class="btn btn-green btn-sm" onclick="publishRelease('${r.id}')">Опубликовать</button>` : ''}
@@ -451,6 +459,9 @@ function renderReleases() {
         ${specBtn}
         ${devBtn}
         ${prBtn}
+        ${r.dev_branch ? `<button class="btn btn-ghost btn-sm" onclick="showReleaseDiff('${r.id}')">Diff</button>` : ''}
+        ${r.dev_branch ? `<button class="btn btn-ghost btn-sm" onclick="createReleaseMR('${r.id}')">MR</button>` : ''}
+        ${r.dev_branch && r.status !== 'released' ? `<button class="btn btn-danger btn-sm" onclick="rollbackRelease('${r.id}')">Откатить</button>` : ''}
       </div>
       ${devStatus}
       <div class="release-issues" id="release-${r.id}" style="display:none"></div>
@@ -826,6 +837,59 @@ window.deleteRelease = async function (id) {
   }
 };
 
+// ── Release Diff / MR / Rollback ────────────────────────
+
+window.showReleaseDiff = async function (releaseId) {
+  try {
+    const diff = await api(`/releases/${releaseId}/diff`);
+    const content = document.getElementById('processDetailContent');
+    document.getElementById('processDetailTitle').textContent = `Diff: ${diff.branch} ← ${diff.base}`;
+    content.innerHTML = `
+      <div style="margin-bottom:12px">
+        <strong>${diff.files.length} файлов изменено</strong>
+        <div style="margin-top:6px;font-size:0.8rem;color:var(--text-dim)">
+          ${diff.files.map(f => `<div><span class="badge badge-${f.status === 'A' ? 'done' : f.status === 'D' ? 'failed' : 'in_progress'}" style="font-size:0.6rem;width:20px;text-align:center;display:inline-block">${f.status}</span> ${escapeHtml(f.path)}</div>`).join('')}
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <strong>Stat</strong>
+        <pre style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.8rem;overflow-x:auto;margin-top:4px">${escapeHtml(diff.stat)}</pre>
+      </div>
+      <div style="margin-top:12px">
+        <strong>Diff</strong>
+        <pre style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.75rem;overflow-x:auto;margin-top:4px;max-height:60vh;overflow-y:auto">${escapeHtml(diff.diff)}</pre>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
+      </div>`;
+    openModal('processDetailModal');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.createReleaseMR = async function (releaseId) {
+  try {
+    const mr = await api(`/releases/${releaseId}/create-mr`, { method: 'POST' });
+    toast(`MR #${mr.id} создан`);
+    if (mr.url) window.open(mr.url, '_blank');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.rollbackRelease = async function (releaseId) {
+  const ok = await confirm('Откатить изменения? Ветка разработки будет удалена.');
+  if (!ok) return;
+  try {
+    await api(`/releases/${releaseId}/rollback`, { method: 'POST' });
+    toast('Ветка удалена, dev_status сброшен');
+    loadData();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
 // ── Plans ───────────────────────────────────────────────
 
 async function loadPlans() {
@@ -1157,7 +1221,12 @@ window.showSpecView = async function (releaseId) {
     }
     document.getElementById('specViewMeta').innerHTML = meta;
 
-    document.getElementById('specViewContent').textContent = currentSpecText || 'Спецификация пуста';
+    const specEl = document.getElementById('specViewContent');
+    if (currentSpecText && typeof marked !== 'undefined') {
+      specEl.innerHTML = marked.parse(currentSpecText);
+    } else {
+      specEl.textContent = currentSpecText || 'Спецификация пуста';
+    }
     openModal('specViewModal');
   } catch (err) {
     toast(err.message, 'error');
@@ -2088,6 +2157,12 @@ function loadAutomationSettings() {
   document.querySelectorAll('.autoNotifyEvent').forEach(cb => {
     cb.checked = notifEvents.includes(cb.value);
   });
+
+  // AI Config
+  const ctxFiles = auto.context_files || [];
+  const critPaths = auto.critical_paths || [];
+  document.getElementById('aiContextFiles').value = ctxFiles.length > 0 ? JSON.stringify(ctxFiles, null, 2) : '[]';
+  document.getElementById('aiCriticalPaths').value = critPaths.length > 0 ? JSON.stringify(critPaths, null, 2) : '[]';
 }
 
 async function loadAutomationModels(selected = {}) {
@@ -2199,6 +2274,16 @@ window.handleSaveAutomation = async function () {
     },
   };
 
+  // AI Config: context_files, critical_paths
+  try {
+    const ctxRaw = document.getElementById('aiContextFiles').value.trim();
+    if (ctxRaw && ctxRaw !== '[]') automation.context_files = JSON.parse(ctxRaw);
+  } catch { toast('Ошибка JSON в "Обязательные файлы"', 'error'); return; }
+  try {
+    const critRaw = document.getElementById('aiCriticalPaths').value.trim();
+    if (critRaw && critRaw !== '[]') automation.critical_paths = JSON.parse(critRaw);
+  } catch { toast('Ошибка JSON в "Критичные модули"', 'error'); return; }
+
   try {
     const updated = await api(`/products/${productId}`, { method: 'PUT', body: { automation } });
     product = updated;
@@ -2296,6 +2381,17 @@ function loadDeploySettings() {
   document.getElementById('deployAutoOnPublish').checked = ad.on_publish || false;
 
   toggleDeployMethodFields();
+  loadSmokeSettings();
+}
+
+function loadSmokeSettings() {
+  const s = product?.smoke_test || {};
+  document.getElementById('smokeEnabled').checked = s.enabled || false;
+  document.getElementById('smokeStartCommand').value = s.start_command || 'npm run dev';
+  document.getElementById('smokeUrl').value = s.url || '';
+  document.getElementById('smokePages').value = (s.pages || ['/']).join('\n');
+  document.getElementById('smokeReadyTimeout').value = s.ready_timeout_ms || 20000;
+  document.getElementById('smokeCheckTimeout').value = s.check_timeout_ms || 10000;
 }
 
 window.toggleDeployMethodFields = function () {
@@ -2328,8 +2424,17 @@ window.handleSaveDeploy = async function () {
     },
   };
 
+  const smoke_test = {
+    enabled: document.getElementById('smokeEnabled').checked,
+    start_command: document.getElementById('smokeStartCommand').value.trim() || 'npm run dev',
+    url: document.getElementById('smokeUrl').value.trim() || null,
+    pages: document.getElementById('smokePages').value.trim().split('\n').map(s => s.trim()).filter(Boolean),
+    ready_timeout_ms: parseInt(document.getElementById('smokeReadyTimeout').value) || 20000,
+    check_timeout_ms: parseInt(document.getElementById('smokeCheckTimeout').value) || 10000,
+  };
+
   try {
-    product = await api('PUT', `/products/${productId}`, { deploy });
+    product = await api('PUT', `/products/${productId}`, { deploy, smoke_test });
     toast('Настройки деплоя сохранены');
   } catch (err) {
     toast(err.message, 'error');
@@ -2359,6 +2464,157 @@ window.handleGenerateDockerfile = async function () {
     toast(err.message, 'error');
   }
 };
+
+// ── GitLab Issues ───────────────────────────────────────
+
+async function loadGlIssues() {
+  const filter = document.querySelector('#glIssueFilters .active')?.dataset.syncStatus || '';
+  const qs = filter ? `?sync_status=${filter}` : '';
+  try {
+    const data = await api(`/products/${productId}/gitlab-issues${qs}`);
+    const { issues: glIssues, stats } = data;
+    const tbody = document.getElementById('glIssuesBody');
+    const empty = document.getElementById('glIssuesEmpty');
+
+    document.getElementById('tabGitlabIssuesCount').textContent = `(${stats.total})`;
+
+    if (!glIssues.length) {
+      tbody.innerHTML = '';
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+
+    tbody.innerHTML = glIssues.map(gi => {
+      const labels = Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]');
+      const isNew = gi.sync_status === 'new';
+      return `
+      <tr style="cursor:pointer" onclick="showGlIssueDetail('${gi.id}')">
+        <td onclick="event.stopPropagation()"><input type="checkbox" class="gl-issue-checkbox" data-id="${gi.id}" ${!isNew ? 'disabled' : ''} onchange="updateGlSelectionUI()"></td>
+        <td style="font-family:monospace;font-size:0.85rem">#${gi.gitlab_issue_iid}</td>
+        <td>${escapeHtml(gi.title)}</td>
+        <td>${labels.slice(0, 3).map(l => `<span class="badge" style="font-size:0.65rem">${escapeHtml(l)}</span>`).join(' ')}</td>
+        <td>${gi.milestone ? escapeHtml(gi.milestone) : '—'}</td>
+        <td>${gi.author ? escapeHtml(gi.author) : '—'}</td>
+        <td style="white-space:nowrap">${formatDate(gi.gl_created_at)}</td>
+        <td><span class="badge badge-${gi.sync_status === 'imported' ? 'done' : gi.sync_status === 'ignored' ? 'closed' : 'open'}">${gi.sync_status}</span></td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+window.handleGlSync = async function () {
+  const btn = document.getElementById('glSyncBtn');
+  btn.disabled = true;
+  btn.textContent = 'Синхронизация...';
+  try {
+    const result = await api(`/products/${productId}/gitlab-sync`, { method: 'POST' });
+    toast(`Синхронизировано: ${result.new} новых, ${result.updated} обновлено`);
+    loadGlIssues();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Синхронизировать';
+  }
+};
+
+function updateGlSelectionUI() {
+  const checked = document.querySelectorAll('.gl-issue-checkbox:checked');
+  const count = checked.length;
+  document.getElementById('glImportBtn').style.display = count > 0 ? '' : 'none';
+  document.getElementById('glIgnoreBtn').style.display = count > 0 ? '' : 'none';
+  document.getElementById('glSelectedCount').textContent = count;
+}
+
+window.handleGlSelectAll = function (checked) {
+  document.querySelectorAll('.gl-issue-checkbox:not(:disabled)').forEach(cb => { cb.checked = checked; });
+  updateGlSelectionUI();
+};
+
+window.handleGlImportSelected = async function () {
+  const ids = Array.from(document.querySelectorAll('.gl-issue-checkbox:checked')).map(cb => cb.dataset.id);
+  try {
+    const result = await api('/gitlab-issues/import-bulk', { method: 'POST', body: { issue_ids: ids } });
+    toast(`Импортировано ${result.count} задач`);
+    loadGlIssues();
+    loadIssues();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.handleGlIgnoreSelected = async function () {
+  const ids = Array.from(document.querySelectorAll('.gl-issue-checkbox:checked')).map(cb => cb.dataset.id);
+  for (const id of ids) {
+    await api(`/gitlab-issues/${id}/ignore`, { method: 'POST' }).catch(() => {});
+  }
+  toast(`${ids.length} issues игнорировано`);
+  loadGlIssues();
+};
+
+window.showGlIssueDetail = async function (id) {
+  try {
+    const gi = await api(`/gitlab-issues/${id}`);
+    const labels = Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]');
+    document.getElementById('processDetailTitle').textContent = `GitLab Issue #${gi.gitlab_issue_iid}`;
+    document.getElementById('processDetailContent').innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div><strong>${escapeHtml(gi.title)}</strong></div>
+        ${gi.description ? `<div style="font-size:0.85rem;color:var(--text-dim);max-height:200px;overflow-y:auto;white-space:pre-wrap">${escapeHtml(gi.description)}</div>` : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${labels.map(l => `<span class="badge">${escapeHtml(l)}</span>`).join('')}</div>
+        ${gi.milestone ? `<div>Milestone: <strong>${escapeHtml(gi.milestone)}</strong></div>` : ''}
+        <div style="font-size:0.85rem;color:var(--text-dim)">Автор: ${gi.author || '—'} | Создан: ${formatDate(gi.gl_created_at)}</div>
+        ${gi.web_url ? `<a href="${gi.web_url}" target="_blank" style="font-size:0.85rem">Открыть в GitLab</a>` : ''}
+        <div style="font-size:0.85rem">Синхронизация: <span class="badge badge-${gi.sync_status === 'imported' ? 'done' : gi.sync_status === 'ignored' ? 'closed' : 'open'}">${gi.sync_status}</span></div>
+      </div>
+      <div class="modal-actions">
+        ${gi.sync_status === 'new' ? `
+          <button class="btn btn-primary" onclick="importGlIssue('${gi.id}')">Импортировать</button>
+          <button class="btn btn-ghost" onclick="ignoreGlIssue('${gi.id}')">Игнорировать</button>
+        ` : ''}
+        <button class="btn btn-ghost" onclick="closeModal('processDetailModal')">Закрыть</button>
+      </div>`;
+    openModal('processDetailModal');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.importGlIssue = async function (id) {
+  try {
+    await api(`/gitlab-issues/${id}/import`, { method: 'POST' });
+    toast('Задача создана');
+    closeModal('processDetailModal');
+    loadGlIssues();
+    loadIssues();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+window.ignoreGlIssue = async function (id) {
+  try {
+    await api(`/gitlab-issues/${id}/ignore`, { method: 'POST' });
+    toast('Issue игнорирован');
+    closeModal('processDetailModal');
+    loadGlIssues();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// GitLab Issues filter click handler
+document.addEventListener('click', e => {
+  const btn = e.target.closest('#glIssueFilters .btn');
+  if (btn) {
+    document.querySelector('#glIssueFilters .active')?.classList.remove('active');
+    btn.classList.add('active');
+    loadGlIssues();
+  }
+});
 
 // ── Init ───────────────────────────────────────────────
 

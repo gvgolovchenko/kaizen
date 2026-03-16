@@ -2,6 +2,78 @@
 
 ---
 
+## v1.14.0 — Smoke-тесты, GitLab Issues, операционный центр, Develop UX (2026-03-16)
+
+**Smoke-тесты Playwright с автообнаружением, интеграция с GitLab Issues, переработка страницы процессов, git diff/MR/rollback из UI.**
+
+### Smoke-тесты (Playwright)
+
+- Встроенные smoke-тесты после каждого `develop_release` — Playwright headless проверяет страницы
+- **Автообнаружение**: Kaizen сам находит страницы проекта (Nuxt pages/, Vue router, HTML файлы), dev-команду и порт
+- Конфиг автоматически сохраняется в продукт (`smoke_test` JSONB) после первого прогона
+- Проверки: HTTP 200, отсутствие JS-ошибок в консоли, страница не пустая
+- UI: toggle + настройки в табе «Деплой» на странице продукта
+- Если smoke провален → `tests_passed = false`, процесс не авто-публикуется
+
+### GitLab Issues интеграция
+
+- Синхронизация issues из GitLab API → кэш `kaizen_gitlab_issues`
+- Импорт в задачи Kaizen с маппингом labels → type/priority (bug, feature, critical, high...)
+- Массовый импорт и игнорирование
+- UI: таб «GitLab Issues» на странице продукта (появляется при настроенном `deploy.gitlab`)
+- Миграция 018: таблица `kaizen_gitlab_issues`, колонка `gitlab_issue_id` в issues
+
+### Операционный центр процессов
+
+- Страница `/processes.html` полностью переработана из плоской таблицы в 4 секции:
+  - **Сводка** (4 плитки): выполняются / в очереди / завершено / ошибки
+  - **Активные**: карточки с live-таймером (обновление каждую секунду)
+  - **В очереди**: карточки с кнопкой «Отменить»
+  - **Требуют внимания**: failed-карточки с ошибкой и кнопкой «Перезапустить»
+  - **История**: компактная таблица с пагинацией (20/стр) и фильтрами (тип, продукт, период)
+- Индикация зависших процессов: пороги по типам, предупреждение «возможно завис»
+- Кнопка «Удалить» убрана из списка (только в модале деталей)
+
+### Develop Release UX
+
+- `GET /releases/:id/diff` — git diff между веткой и main (stat, файлы, полный diff)
+- `POST /releases/:id/create-mr` — создание Merge Request в GitLab
+- `POST /releases/:id/rollback` — удаление ветки, сброс dev_status
+- Автоматические git-теги `v{version}` при публикации релиза + push в GitLab
+- UI: кнопки «Diff», «MR», «Откатить» на карточках релизов с dev_branch
+
+### Markdown рендеринг
+
+- Спецификации отображаются через `marked.js` вместо plain text `<pre>`
+- CSS стили `.markdown-body` для заголовков, списков, таблиц, code blocks
+
+### API (10+ новых эндпоинтов)
+
+- `POST /products/:id/gitlab-sync`
+- `GET /products/:id/gitlab-issues`
+- `GET /gitlab-issues/:id`
+- `POST /gitlab-issues/:id/import`
+- `POST /gitlab-issues/import-bulk`
+- `POST /gitlab-issues/:id/ignore`
+- `GET /releases/:id/diff`
+- `POST /releases/:id/rollback`
+- `POST /releases/:id/create-mr`
+
+### БД (миграция 018)
+
+- `018_gitlab_issues.sql`: таблица `kaizen_gitlab_issues`, колонка `gitlab_issue_id` в issues
+
+### Новые файлы
+
+- `server/smoke-tester.js` — Playwright smoke-тесты с автообнаружением
+- `server/gitlab-sync.js` — синхронизация/импорт GitLab Issues
+- `server/db/gitlab-issues.js` — CRUD для кэша GitLab Issues
+- `public/js/dashboard.js` — логика Dashboard
+- `public/products.html` — страница списка продуктов
+- `database/migrations/018_gitlab_issues.sql`
+
+---
+
 ## v1.13.0 — Dashboard — Главная страница (2026-03-14)
 
 **Полноценная главная страница с обзорной аналитикой. Список продуктов переехал на отдельную страницу `/products.html`.**

@@ -1,118 +1,332 @@
-import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, restoreFilterFromUrl, syncFilterToUrl } from './app.js';
+import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate } from './app.js';
 import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess } from './process-detail.js';
 
-let processesList = [];
+let allProcesses = [];
 let pollingTimer = null;
+let durationTimer = null;
+let historyPage = 1;
+const PAGE_SIZE = 20;
 
-// ── Load & render ────────────────────────────────────────
+// ── Load & classify ──────────────────────────────────────
 
 async function loadProcesses() {
   try {
-    const filter = document.getElementById('filterStatus').value;
-    const qs = filter ? `?status=${filter}` : '';
-    processesList = await api(`/processes${qs}`);
-    renderProcesses();
-    loadQueueStats();
+    allProcesses = await api('/processes');
+    renderAll();
     updatePolling();
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
-async function loadQueueStats() {
-  try {
-    const stats = await api('/queue/stats');
-    const el = document.getElementById('queueStats');
-    const hasAny = Object.values(stats).some(s => s.active > 0 || s.queued > 0);
-    if (!hasAny) { el.style.display = 'none'; return; }
-    el.style.display = '';
-    el.innerHTML = Object.entries(stats)
-      .filter(([, s]) => s.active > 0 || s.queued > 0)
-      .map(([provider, s]) => `
-        <div class="queue-stats-item">
-          <span class="provider-name">${provider}</span>
-          <span class="active-count">${s.active}/${s.limit}</span>
-          ${s.queued > 0 ? `<span class="queued-count">(${s.queued} ждут)</span>` : ''}
-        </div>`).join('<span style="color:var(--border)">|</span>');
-  } catch {}
+function classify() {
+  const active = [];
+  const queued = [];
+  const failed = [];
+  const history = [];
+
+  for (const p of allProcesses) {
+    if (p.status === 'running' || p.status === 'pending') active.push(p);
+    else if (p.status === 'queued') queued.push(p);
+    else if (p.status === 'failed') failed.push(p);
+    else history.push(p);
+  }
+
+  return { active, queued, failed, history };
 }
 
-function renderProcesses() {
-  const tbody = document.getElementById('processesBody');
-  const empty = document.getElementById('processesEmpty');
+// ── Render all ───────────────────────────────────────────
 
-  if (processesList.length === 0) {
-    tbody.innerHTML = '';
-    empty.style.display = '';
+function renderAll() {
+  const groups = classify();
+  const total = allProcesses.length;
+
+  document.getElementById('processesEmpty').style.display = total === 0 ? '' : 'none';
+
+  renderSummary(groups);
+  renderSection('sectionActive', 'cardsActive', 'countActive', groups.active, renderActiveCard);
+  renderSection('sectionQueue', 'cardsQueue', 'countQueue', groups.queued, renderQueueCard);
+  renderSection('sectionAttention', 'cardsAttention', 'countAttention', groups.failed, renderFailedCard);
+  populateFilters();
+  renderHistory(groups.history);
+
+  startDurationTimer(groups.active);
+}
+
+// ── Summary bar ──────────────────────────────────────────
+
+function renderSummary({ active, queued, failed, history }) {
+  document.getElementById('processSummary').innerHTML = `
+    <div class="proc-stat proc-stat-active ${active.length ? 'has-items' : ''}">
+      <div class="proc-stat-number">${active.length}</div>
+      <div class="proc-stat-label">Выполняются</div>
+    </div>
+    <div class="proc-stat proc-stat-queued ${queued.length ? 'has-items' : ''}">
+      <div class="proc-stat-number">${queued.length}</div>
+      <div class="proc-stat-label">В очереди</div>
+    </div>
+    <div class="proc-stat proc-stat-completed">
+      <div class="proc-stat-number">${history.length}</div>
+      <div class="proc-stat-label">Завершено</div>
+    </div>
+    <div class="proc-stat proc-stat-failed ${failed.length ? 'has-items' : ''}">
+      <div class="proc-stat-number">${failed.length}</div>
+      <div class="proc-stat-label">Ошибки</div>
+    </div>`;
+}
+
+// ── Section renderer ─────────────────────────────────────
+
+function renderSection(sectionId, cardsId, countId, items, cardFn) {
+  const section = document.getElementById(sectionId);
+  const cards = document.getElementById(cardsId);
+  const count = document.getElementById(countId);
+
+  if (items.length === 0) {
+    section.style.display = 'none';
     return;
   }
-  empty.style.display = 'none';
 
-  tbody.innerHTML = processesList.map(p => {
-    const isRoadmapDone = p.type === 'roadmap_from_doc' && p.status === 'completed';
-    const isQueued = p.status === 'queued';
-    return `
+  section.style.display = '';
+  count.textContent = items.length;
+  cards.innerHTML = items.map(cardFn).join('');
+}
+
+// ── Card renderers ───────────────────────────────────────
+
+function renderActiveCard(p) {
+  return `
+  <div class="proc-card" onclick="showProcessDetail('${p.id}')">
+    <div class="proc-card-header">
+      <span class="proc-card-product">${escapeHtml(p.product_name)}</span>
+      <span class="card-active-badge">running</span>
+    </div>
+    <div class="proc-card-meta">
+      <span class="badge badge-process-${p.type}">${p.type}</span>
+      ${p.model_name ? `<span>${escapeHtml(p.model_name)}</span>` : ''}
+    </div>
+    <div class="proc-card-duration" data-started-at="${p.started_at || p.created_at}" data-type="${p.type}">
+      ${liveDuration(p)}
+    </div>
+  </div>`;
+}
+
+function renderQueueCard(p) {
+  return `
+  <div class="proc-card" onclick="showProcessDetail('${p.id}')">
+    <div class="proc-card-header">
+      <span class="proc-card-product">${escapeHtml(p.product_name)}</span>
+      <span class="badge badge-process-queued">queued</span>
+    </div>
+    <div class="proc-card-meta">
+      <span class="badge badge-process-${p.type}">${p.type}</span>
+      ${p.model_name ? `<span>${escapeHtml(p.model_name)}</span>` : ''}
+    </div>
+    <div class="proc-card-actions">
+      <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelProcess('${p.id}')">Отменить</button>
+    </div>
+  </div>`;
+}
+
+function renderFailedCard(p) {
+  const errorMsg = extractError(p);
+  return `
+  <div class="proc-card" onclick="showProcessDetail('${p.id}')">
+    <div class="proc-card-header">
+      <span class="proc-card-product">${escapeHtml(p.product_name)}</span>
+      <span class="badge badge-process-failed">failed</span>
+    </div>
+    <div class="proc-card-meta">
+      <span class="badge badge-process-${p.type}">${p.type}</span>
+      ${p.model_name ? `<span>${escapeHtml(p.model_name)}</span>` : ''}
+      <span style="margin-left:auto;font-size:0.75rem">${formatDate(p.updated_at)}</span>
+    </div>
+    ${errorMsg ? `<div class="proc-card-error" title="${escapeHtml(errorMsg)}">${escapeHtml(errorMsg)}</div>` : ''}
+    <div class="proc-card-actions">
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); handleProcessRestart('${p.id}')">Перезапустить</button>
+    </div>
+  </div>`;
+}
+
+function extractError(p) {
+  if (p.result?.error) return p.result.error;
+  if (p.result?.summary) return p.result.summary.slice(0, 120);
+  if (typeof p.result === 'string') return p.result.slice(0, 120);
+  return '';
+}
+
+// ── History ──────────────────────────────────────────────
+
+function populateFilters() {
+  const typeSelect = document.getElementById('filterType');
+  const productSelect = document.getElementById('filterProduct');
+
+  // Preserve current values
+  const curType = typeSelect.value;
+  const curProduct = productSelect.value;
+
+  const types = [...new Set(allProcesses.map(p => p.type))].sort();
+  const products = [...new Map(allProcesses.map(p => [p.product_id, p.product_name])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
+
+  typeSelect.innerHTML = '<option value="">Все типы</option>' +
+    types.map(t => `<option value="${t}" ${t === curType ? 'selected' : ''}>${t}</option>`).join('');
+
+  productSelect.innerHTML = '<option value="">Все продукты</option>' +
+    products.map(([id, name]) => `<option value="${id}" ${id === curProduct ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+}
+
+function getFilteredHistory(history) {
+  let filtered = history;
+
+  const typeFilter = document.getElementById('filterType').value;
+  if (typeFilter) filtered = filtered.filter(p => p.type === typeFilter);
+
+  const productFilter = document.getElementById('filterProduct').value;
+  if (productFilter) filtered = filtered.filter(p => p.product_id === productFilter);
+
+  const periodFilter = document.getElementById('filterPeriod').value;
+  if (periodFilter !== 'all') {
+    const days = periodFilter === '7d' ? 7 : 30;
+    const cutoff = Date.now() - days * 86400000;
+    filtered = filtered.filter(p => new Date(p.created_at).getTime() > cutoff);
+  }
+
+  return filtered;
+}
+
+function renderHistory(history) {
+  const section = document.getElementById('sectionHistory');
+  const countEl = document.getElementById('countHistory');
+  const tbody = document.getElementById('historyBody');
+  const paginationEl = document.getElementById('historyPagination');
+
+  const filtered = getFilteredHistory(history);
+  countEl.textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    section.style.display = history.length > 0 ? '' : 'none';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:20px">Нет записей</td></tr>';
+    paginationEl.innerHTML = '';
+    return;
+  }
+
+  section.style.display = '';
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  if (historyPage > totalPages) historyPage = totalPages;
+
+  const pageItems = filtered.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
+
+  tbody.innerHTML = pageItems.map(p => `
     <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
       <td>${escapeHtml(p.product_name)}</td>
       <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
-      <td>${escapeHtml(p.model_name)}</td>
-      <td><span class="badge badge-process-${p.status}">${p.status}</span>${isQueued ? `<span class="queue-position" data-id="${p.id}"></span>` : ''}</td>
+      <td>${p.model_name ? escapeHtml(p.model_name) : '<span style="color:var(--text-dim)">local</span>'}</td>
+      <td style="white-space:nowrap">${p.duration_ms ? formatDuration(p.duration_ms) : '—'}</td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
-      <td style="white-space:nowrap">${liveDuration(p)}</td>
-      <td style="white-space:nowrap">${suggestionsInfo(p)}</td>
-      <td style="white-space:nowrap">
-        ${isRoadmapDone ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.location.href='/roadmap.html?process_id=${p.id}&product_id=${p.product_id}'">Дорожная карта</button>` : ''}
-        ${isQueued ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelProcess('${p.id}')">Отменить</button>` : ''}
-        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Уд.</button>
-      </td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
+
+  // Pagination
+  if (totalPages <= 1) {
+    paginationEl.innerHTML = '';
+    return;
+  }
+
+  let btns = '';
+  if (historyPage > 1) btns += `<button class="proc-page-btn" onclick="goHistoryPage(${historyPage - 1})">‹</button>`;
+
+  const start = Math.max(1, historyPage - 3);
+  const end = Math.min(totalPages, historyPage + 3);
+  for (let i = start; i <= end; i++) {
+    btns += `<button class="proc-page-btn ${i === historyPage ? 'active' : ''}" onclick="goHistoryPage(${i})">${i}</button>`;
+  }
+
+  if (historyPage < totalPages) btns += `<button class="proc-page-btn" onclick="goHistoryPage(${historyPage + 1})">›</button>`;
+  paginationEl.innerHTML = btns;
+}
+
+window.goHistoryPage = function (page) {
+  historyPage = page;
+  const { history } = classify();
+  renderHistory(history);
+};
+
+// ── Live duration timer ──────────────────────────────────
+
+// Typical duration thresholds per process type (ms)
+const DURATION_THRESHOLDS = {
+  improve: 5 * 60_000,
+  prepare_spec: 10 * 60_000,
+  develop_release: 30 * 60_000,
+  form_release: 5 * 60_000,
+  run_tests: 10 * 60_000,
+  update_docs: 15 * 60_000,
+  deploy: 10 * 60_000,
+  prepare_press_release: 5 * 60_000,
+  roadmap_from_doc: 5 * 60_000,
+};
+
+function getThreshold(type) {
+  return DURATION_THRESHOLDS[type] || 15 * 60_000;
 }
 
 function liveDuration(p) {
   if (p.duration_ms) return formatDuration(p.duration_ms);
   if (p.status === 'queued') return '<span style="color:#fb923c">в очереди</span>';
-  if ((p.status === 'running' || p.status === 'pending') && p.started_at) {
-    const elapsed = Date.now() - new Date(p.started_at).getTime();
-    return `<span style="color:var(--yellow)">${formatDuration(elapsed)}…</span>`;
+  const startedAt = p.started_at || p.created_at;
+  if ((p.status === 'running' || p.status === 'pending') && startedAt) {
+    const elapsed = Date.now() - new Date(startedAt).getTime();
+    const threshold = getThreshold(p.type);
+    if (elapsed > threshold) {
+      return `<span class="proc-hung-warning">${formatDuration(elapsed)}… ⚠ возможно завис</span>`;
+    }
+    return formatDuration(elapsed) + '…';
   }
   return '—';
 }
 
-function suggestionsInfo(p) {
-  if (p.type === 'roadmap_from_doc' && p.result && p.result.roadmap) {
-    const r = p.result;
-    const info = `${r.total_releases || 0} р. / ${r.total_issues || 0} з.`;
-    return p.approved_count ? `${p.approved_count} созд. (${info})` : info;
-  }
-  if (p.type === 'prepare_spec' && p.result && p.result.char_count) {
-    return `${p.result.char_count} сим.`;
-  }
-  const total = p.result ? p.result.length : 0;
-  if (!total) return '—';
-  const approved = p.approved_count || 0;
-  if (approved > 0) return `${approved}/${total}`;
-  return `${total}`;
+function startDurationTimer(activeProcesses) {
+  if (durationTimer) clearInterval(durationTimer);
+  if (activeProcesses.length === 0) return;
+
+  durationTimer = setInterval(() => {
+    document.querySelectorAll('.proc-card-duration[data-started-at]').forEach(el => {
+      const started = el.dataset.startedAt;
+      if (!started) return;
+      const elapsed = Date.now() - new Date(started).getTime();
+      const type = el.dataset.type || '';
+      const threshold = getThreshold(type);
+      if (elapsed > threshold) {
+        el.innerHTML = `<span class="proc-hung-warning">${formatDuration(elapsed)}… ⚠ возможно завис</span>`;
+      } else {
+        el.textContent = formatDuration(elapsed) + '…';
+      }
+    });
+  }, 1000);
 }
 
 // ── Polling ──────────────────────────────────────────────
 
-const POLL_FAST = 4000;   // при активных процессах
-const POLL_SLOW = 10000;  // фоновое обновление
+const POLL_FAST = 4000;
+const POLL_SLOW = 10000;
 
 function updatePolling() {
-  const hasActive = processesList.some(p => ['pending', 'queued', 'running'].includes(p.status));
+  const hasActive = allProcesses.some(p => ['pending', 'queued', 'running'].includes(p.status));
   const interval = hasActive ? POLL_FAST : POLL_SLOW;
-
   if (pollingTimer) clearInterval(pollingTimer);
   pollingTimer = setInterval(loadProcesses, interval);
 }
 
+// ── Section collapse ─────────────────────────────────────
+
+window.toggleSection = function (sectionId) {
+  document.getElementById(sectionId).classList.toggle('collapsed');
+};
+
 // ── Process detail ───────────────────────────────────────
 
 window.showProcessDetail = async function (id) {
-  const cachedProc = processesList.find(p => p.id === id);
-  if (cachedProc && cachedProc.type === 'roadmap_from_doc') {
+  const cachedProc = allProcesses.find(p => p.id === id);
+  if (cachedProc?.type === 'roadmap_from_doc') {
     window.location.href = `/roadmap.html?process_id=${id}&product_id=${cachedProc.product_id}`;
     return;
   }
@@ -143,12 +357,8 @@ window.showProcessDetail = async function (id) {
 };
 
 window.toggleAllProcessSuggestions = (state) => toggleAllSuggestions('processSuggestionsList', state);
-
 window.updateProcessApproveCount = () => updateApproveCount('processSuggestionsList', 'processApproveBtn');
-
-window.handleProcessApprove = (processId) => approveProcess(processId, 'processSuggestionsList', {
-  modalId: 'processDetailModal',
-});
+window.handleProcessApprove = (processId) => approveProcess(processId, 'processSuggestionsList', { modalId: 'processDetailModal' });
 
 window.handleProcessRestart = async function (processId) {
   try {
@@ -173,28 +383,27 @@ window.cancelProcess = async function (id) {
   }
 };
 
-// ── Delete ───────────────────────────────────────────────
+// ── Expose closeModal ────────────────────────────────────
 
-window.deleteProcess = async function (id) {
-  const ok = await confirm('Удалить процесс?');
-  if (!ok) return;
-  try {
-    await api(`/processes/${id}`, { method: 'DELETE' });
-    toast('Процесс удалён');
-    loadProcesses();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-};
-
-// ── Filter ───────────────────────────────────────────────
-
-restoreFilterFromUrl('filterStatus', 'status');
-syncFilterToUrl('filterStatus', 'status');
-document.getElementById('filterStatus').addEventListener('change', loadProcesses);
-
-// Expose closeModal globally
 window.closeModal = closeModal;
+
+// ── Filter event listeners ───────────────────────────────
+
+document.getElementById('filterType').addEventListener('change', () => {
+  historyPage = 1;
+  const { history } = classify();
+  renderHistory(history);
+});
+document.getElementById('filterProduct').addEventListener('change', () => {
+  historyPage = 1;
+  const { history } = classify();
+  renderHistory(history);
+});
+document.getElementById('filterPeriod').addEventListener('change', () => {
+  historyPage = 1;
+  const { history } = classify();
+  renderHistory(history);
+});
 
 // ── Init ─────────────────────────────────────────────────
 

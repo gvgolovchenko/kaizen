@@ -5,6 +5,7 @@ import * as products from './db/products.js';
 import * as releases from './db/releases.js';
 import * as rcSync from './rc-sync.js';
 import { notify, getNotifyOpts } from './notifier.js';
+import { pool } from './db/pool.js';
 
 /**
  * Scheduler — планировщик выполнения планов и автоматизации.
@@ -17,6 +18,7 @@ export class Scheduler {
     this.tickInterval = 30_000;
     this._timer = null;
     this._automationCounter = 0; // проверяем автоматизацию каждые 2 минуты (4 тика)
+    this._cleanupCounter = 0;    // очистка логов раз в 24 часа (2880 тиков по 30с)
   }
 
   start() {
@@ -42,6 +44,13 @@ export class Scheduler {
       if (this._automationCounter >= 4) {
         this._automationCounter = 0;
         await this._runAutomation();
+      }
+
+      // Очистка старых логов — раз в 24 часа
+      this._cleanupCounter++;
+      if (this._cleanupCounter >= 2880) {
+        this._cleanupCounter = 0;
+        await this._cleanupOldLogs();
       }
     } catch (err) {
       console.error('Scheduler tick error:', err.message);
@@ -360,6 +369,19 @@ export class Scheduler {
       await this._processActivePlans();
     } catch (err) {
       console.error('Scheduler onProcessComplete error:', err.message);
+    }
+  }
+
+  async _cleanupOldLogs() {
+    try {
+      const { rowCount } = await pool.query(`
+        DELETE FROM opii.kaizen_process_logs
+        WHERE created_at < NOW() - INTERVAL '90 days'`);
+      if (rowCount > 0) {
+        console.log(`Scheduler cleanup: ${rowCount} old log(s) deleted (>90 days)`);
+      }
+    } catch (err) {
+      console.error('Scheduler _cleanupOldLogs error:', err.message);
     }
   }
 }

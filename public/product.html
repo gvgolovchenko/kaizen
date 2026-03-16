@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kaizen — Продукт</title>
   <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <nav class="nav-bar">
@@ -42,6 +43,7 @@
       <div class="tab" data-tab="processes">Процессы <span class="tab-count" id="tabProcessesCount"></span></div>
       <div class="tab" data-tab="plans">Планы <span class="tab-count" id="tabPlansCount"></span></div>
       <div class="tab" data-tab="rc-tickets" id="tabRcTickets" style="display:none">Тикеты RC <span class="tab-count" id="tabRcTicketsCount"></span></div>
+      <div class="tab" data-tab="gitlab-issues" id="tabGitlabIssues" style="display:none">GitLab Issues <span class="tab-count" id="tabGitlabIssuesCount"></span></div>
       <div class="tab" data-tab="automation">Автоматизация</div>
       <div class="tab" data-tab="deploy">Деплой</div>
     </div>
@@ -202,6 +204,47 @@
       </div>
     </div>
   </div>
+
+    <!-- Panel: GitLab Issues -->
+    <div class="tab-panel" id="panel-gitlab-issues">
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div class="filters" id="glIssueFilters">
+              <button class="btn btn-ghost btn-sm active" data-sync-status="">Все</button>
+              <button class="btn btn-ghost btn-sm" data-sync-status="new">Новые</button>
+              <button class="btn btn-ghost btn-sm" data-sync-status="imported">Импортированные</button>
+              <button class="btn btn-ghost btn-sm" data-sync-status="ignored">Игнорированные</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="handleGlSync()" id="glSyncBtn">Синхронизировать</button>
+            <button class="btn btn-primary btn-sm" onclick="handleGlImportSelected()" id="glImportBtn" style="display:none">Импортировать (<span id="glSelectedCount">0</span>)</button>
+            <button class="btn btn-ghost btn-sm" onclick="handleGlIgnoreSelected()" id="glIgnoreBtn" style="display:none">Игнорировать</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:36px"><input type="checkbox" id="glSelectAll" onchange="handleGlSelectAll(this.checked)"></th>
+                <th>#</th>
+                <th>Тема</th>
+                <th>Labels</th>
+                <th>Milestone</th>
+                <th>Автор</th>
+                <th>Дата</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody id="glIssuesBody"></tbody>
+          </table>
+        </div>
+        <div id="glIssuesEmpty" class="empty" style="display:none">
+          <p>Нет issues. Нажмите «Синхронизировать» для загрузки из GitLab.</p>
+        </div>
+      </div>
+    </div>
 
     <!-- Panel: Automation -->
     <div class="tab-panel" id="panel-automation">
@@ -476,6 +519,24 @@
             <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="testNotification()">Тест уведомления</button>
           </div>
         </div>
+
+        <!-- AI Config: context_files + critical_paths -->
+        <div style="margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <h4 style="margin:0 0 4px">Контекст для AI-разработки</h4>
+          <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:12px">
+            Эти настройки вставляются в промпт develop_release, помогая AI лучше понять проект.
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Обязательные файлы для чтения (JSON)</label>
+            <textarea id="aiContextFiles" style="min-height:80px;font-family:'SF Mono','Fira Code',monospace;font-size:0.8rem" placeholder='[{"path": "src/config.js", "description": "Конфигурация приложения"}]'>[]</textarea>
+            <div style="font-size:0.75rem;color:var(--text-dim)">Массив объектов: {"path": "...", "description": "..."}</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Критичные модули (не ломать!)</label>
+            <textarea id="aiCriticalPaths" style="min-height:80px;font-family:'SF Mono','Fira Code',monospace;font-size:0.8rem" placeholder='[{"path": "server/auth.js", "description": "Аутентификация — не трогать без причины"}]'>[]</textarea>
+            <div style="font-size:0.75rem;color:var(--text-dim)">Массив объектов: {"path": "...", "description": "..."}</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -577,6 +638,42 @@
             <button class="btn btn-sm" onclick="handleGenerateDockerfile()">Сгенерировать Dockerfile</button>
           </div>
           <pre id="deployGeneratedFile" style="display:none;margin-top:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;max-height:300px;overflow-y:auto;white-space:pre-wrap"></pre>
+        </div>
+
+        <!-- Smoke Test -->
+        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <h4 style="margin:0 0 4px">Smoke Test (проверка фронтенда)</h4>
+          <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:12px">
+            После develop_release автоматически запускает dev-сервер и проверяет страницы через headless-браузер (Playwright).
+            Если на странице есть JS-ошибки, HTTP 4xx/5xx или пустой контент — процесс помечается как failed.
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:12px">
+            <input type="checkbox" id="smokeEnabled" style="width:auto;accent-color:var(--accent)">
+            Включить Smoke Test после разработки релиза
+          </label>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Команда запуска dev-сервера</label>
+            <input type="text" id="smokeStartCommand" value="npm run dev" placeholder="npm run dev">
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>URL сервера</label>
+            <input type="text" id="smokeUrl" placeholder="http://localhost:3000">
+            <div style="font-size:0.8rem;color:var(--text-dim)">Локальный URL, по которому dev-сервер будет доступен</div>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Страницы для проверки (по одной на строку)</label>
+            <textarea id="smokePages" style="min-height:60px" placeholder="/&#10;/login&#10;/dashboard">/</textarea>
+          </div>
+          <div style="display:flex;gap:10px">
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label>Таймаут готовности сервера (мс)</label>
+              <input type="number" id="smokeReadyTimeout" value="20000">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label>Таймаут проверки страницы (мс)</label>
+              <input type="number" id="smokeCheckTimeout" value="10000">
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -798,7 +895,7 @@
     <div class="modal" style="max-width:780px">
       <h2 id="specViewTitle">Спецификация</h2>
       <div id="specViewMeta" style="margin-bottom:14px;font-size:0.85rem;color:var(--text-dim);display:flex;gap:12px;flex-wrap:wrap"></div>
-      <pre id="specViewContent" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:0.85rem;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-wrap:break-word;font-family:'SF Mono','Fira Code',monospace;line-height:1.5"></pre>
+      <div id="specViewContent" class="markdown-body" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:0.85rem;max-height:60vh;overflow-y:auto;line-height:1.6"></div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal('specViewModal')">Закрыть</button>
         <button type="button" class="btn btn-ghost" onclick="handleCopySpec()">Скопировать</button>

@@ -102,6 +102,26 @@ export function detectTestCommand(techStack) {
 }
 
 /**
+ * Validate and sanitize a git branch name.
+ * @param {string} name
+ * @returns {string} sanitized name
+ * @throws {Error} if name is invalid
+ */
+export function validateBranchName(name) {
+  if (!name || typeof name !== 'string') throw new Error('Branch name is required');
+  const trimmed = name.trim();
+  // Only allow alphanumeric, dots, hyphens, underscores, slashes
+  if (!/^[a-zA-Z0-9._\/-]+$/.test(trimmed)) {
+    throw new Error(`Invalid branch name: "${trimmed}". Allowed: letters, digits, . _ - /`);
+  }
+  // Disallow dangerous patterns
+  if (trimmed.startsWith('-') || trimmed.includes('..') || trimmed.includes('~') || trimmed.endsWith('.lock')) {
+    throw new Error(`Invalid branch name: "${trimmed}"`);
+  }
+  return trimmed;
+}
+
+/**
  * Mask api_key in model object for API responses.
  * @param {object} model
  * @returns {object}
