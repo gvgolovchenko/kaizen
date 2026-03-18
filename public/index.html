@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kaizen — Обзор системы</title>
   <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <nav class="nav-bar">
@@ -26,13 +27,26 @@
     </header>
 
     <!-- Section 1: Summary (5 widgets) -->
-    <div id="dashSummary" class="dashboard-summary"></div>
+    <div id="dashSummary" class="dashboard-summary">
+      <div class="skeleton skeleton-widget"></div>
+      <div class="skeleton skeleton-widget"></div>
+      <div class="skeleton skeleton-widget"></div>
+      <div class="skeleton skeleton-widget"></div>
+      <div class="skeleton skeleton-widget"></div>
+    </div>
 
     <!-- Section 2: Details (3 widgets) -->
-    <div id="dashDetails" class="dashboard-details"></div>
+    <div id="dashDetails" class="dashboard-details">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
 
     <!-- Section 3: Health (full width) -->
-    <div id="dashHealth" class="dashboard-health"></div>
+    <div id="dashHealth" class="dashboard-health">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
   </div>
 
   <script type="module" src="/js/dashboard.js"></script>

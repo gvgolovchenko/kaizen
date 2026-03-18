@@ -35,22 +35,22 @@ a:hover { text-decoration: underline; }
 .container {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 24px 20px;
+  padding: 16px 20px;
 }
 
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 32px;
+  margin-bottom: 20px;
 }
 
 header h1 {
-  font-size: 1.6rem;
+  font-size: 1.4rem;
   font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 header h1 span { font-size: 1.4rem; }
@@ -113,28 +113,28 @@ header h1 span { font-size: 1.4rem; }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 12px 14px;
 }
 
 .widget-title {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .widget-numbers {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .widget-stat { display: flex; flex-direction: column; }
 
 .widget-number {
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -149,10 +149,10 @@ header h1 span { font-size: 1.4rem; }
 
 .stacked-bar {
   display: flex;
-  height: 6px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: 2px;
   overflow: hidden;
-  margin-top: 12px;
+  margin-top: 8px;
   background: var(--border);
 }
 
@@ -164,14 +164,14 @@ header h1 span { font-size: 1.4rem; }
 .widget-activity {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 .activity-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.78rem;
+  gap: 6px;
+  font-size: 0.75rem;
 }
 
 .activity-type { color: var(--text); font-weight: 500; }
@@ -324,6 +324,10 @@ header h1 span { font-size: 1.4rem; }
 .badge-draft { background: rgba(136,144,164,0.15); color: var(--text-dim); }
 .badge-in_progress { background: rgba(251,191,36,0.15); color: var(--yellow); }
 .badge-released { background: rgba(52,211,153,0.15); color: var(--green); }
+.badge-published { background: rgba(52,211,153,0.15); color: var(--green); }
+.badge-spec { background: rgba(129,140,248,0.15); color: var(--accent); }
+.badge-developing { background: rgba(251,191,36,0.15); color: var(--yellow); }
+.badge-developed { background: rgba(96,165,250,0.15); color: var(--blue); }
 .badge-active { background: rgba(52,211,153,0.15); color: var(--green); }
 .badge-archived { background: rgba(136,144,164,0.15); color: var(--text-dim); }
 
@@ -524,10 +528,14 @@ tr:hover td { background: var(--bg-hover); }
   gap: 0;
   border-bottom: 2px solid var(--border);
   margin-top: 24px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
-  padding: 10px 20px;
-  font-size: 0.9rem;
+  padding: 10px 16px;
+  font-size: 0.85rem;
   font-weight: 500;
   color: var(--text-dim);
   cursor: pointer;
@@ -535,6 +543,8 @@ tr:hover td { background: var(--bg-hover); }
   margin-bottom: -2px;
   transition: color 0.15s, border-color 0.15s;
   user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .tab:hover { color: var(--text); }
 .tab.active {
@@ -720,8 +730,8 @@ tr:hover td { background: var(--bg-hover); }
 .nav-bar {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  padding: 14px 0;
-  margin-bottom: 24px;
+  padding: 10px 0;
+  margin-bottom: 16px;
 }
 
 .nav-bar .nav-inner {
@@ -1171,6 +1181,7 @@ tr:hover td { background: var(--bg-hover); }
 .badge-mode-claude-code { background: rgba(129,140,248,0.15); color: var(--accent); }
 .badge-mode-standalone { background: rgba(96,165,250,0.15); color: var(--blue); }
 .badge-process-log { background: rgba(96,165,250,0.15); color: var(--blue); font-size: 0.7rem; }
+.badge-process-validate_product { background: rgba(52,211,153,0.15); color: var(--green); }
 
 /* ── Process logs ────────────────────────────────────── */
 
@@ -1688,8 +1699,8 @@ tr:hover td { background: var(--bg-hover); }
 .dashboard-summary {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .dashboard-summary:empty { display: none; }
@@ -1706,8 +1717,8 @@ tr:hover td { background: var(--bg-hover); }
 .dashboard-details {
   display: grid;
   grid-template-columns: 1.2fr 0.8fr 1fr;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .dashboard-details:empty { display: none; }
@@ -1720,9 +1731,9 @@ tr:hover td { background: var(--bg-hover); }
 
 .dashboard-health {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 24px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .dashboard-health:empty { display: none; }
@@ -1748,9 +1759,9 @@ tr:hover td { background: var(--bg-hover); }
 
 .widget-week-stats {
   display: flex;
-  gap: 10px;
-  margin-top: 10px;
-  font-size: 0.75rem;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 0.7rem;
   color: var(--text-dim);
 }
 
@@ -1793,12 +1804,12 @@ tr:hover td { background: var(--bg-hover); }
 
 .mini-table th {
   font-size: 0.7rem;
-  padding: 6px 8px;
+  padding: 4px 6px;
 }
 
 .mini-table td {
-  font-size: 0.8rem;
-  padding: 6px 8px;
+  font-size: 0.78rem;
+  padding: 4px 6px;
 }
 
 .mini-table tr:hover td {
@@ -1808,7 +1819,7 @@ tr:hover td { background: var(--bg-hover); }
 /* ── Widget large (double height for table) ──────────── */
 
 .widget-large {
-  min-height: 200px;
+  min-height: 140px;
 }
 
 /* ── CSS Bar Chart (vertical) ────────────────────────── */
@@ -1866,7 +1877,7 @@ tr:hover td { background: var(--bg-hover); }
 .health-stats {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 .health-row {
@@ -1877,7 +1888,7 @@ tr:hover td { background: var(--bg-hover); }
 }
 
 .health-metric-label {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: var(--text-dim);
 }
 
@@ -1892,22 +1903,22 @@ tr:hover td { background: var(--bg-hover); }
 .health-bar-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 6px;
+  margin-bottom: 2px;
 }
 
 .health-bar-label {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--text-dim);
-  min-width: 90px;
+  min-width: 80px;
   text-align: right;
 }
 
 .health-bar-track {
   flex: 1;
-  height: 8px;
+  height: 6px;
   background: var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
@@ -2189,3 +2200,46 @@ tr:hover td { background: var(--bg-hover); }
   margin: 8px 0;
 }
 .markdown-body a { color: var(--accent); }
+
+/* ── Skeleton loading ────────────────────────────────── */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-widget {
+  height: 100px;
+}
+
+.skeleton-card {
+  height: 160px;
+}
+
+.skeleton-row {
+  height: 44px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+}
+
+.skeleton-text {
+  height: 14px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  max-width: 60%;
+}
+
+.skeleton-text-short {
+  height: 14px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  max-width: 30%;
+}

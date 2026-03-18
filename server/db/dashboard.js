@@ -21,10 +21,11 @@ export async function getStats() {
       (SELECT count(*) FROM opii.kaizen_processes WHERE status = 'completed' AND updated_at >= CURRENT_DATE - INTERVAL '7 days') AS processes_completed_this_week,
       (SELECT coalesce(avg(duration_ms), 0)::int FROM opii.kaizen_processes WHERE status = 'completed' AND updated_at >= CURRENT_DATE - INTERVAL '30 days') AS processes_avg_duration_ms,
       -- Releases
-      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'draft') AS releases_draft,
-      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'released') AS releases_released,
-      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'released' AND released_at >= CURRENT_DATE - INTERVAL '7 days') AS releases_this_week,
-      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'released' AND released_at >= CURRENT_DATE - INTERVAL '30 days') AS releases_this_month,
+      (SELECT count(*) FROM opii.kaizen_releases WHERE status IN ('draft', 'spec')) AS releases_draft,
+      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'published') AS releases_published,
+      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'developed') AS releases_developed,
+      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'published' AND released_at >= CURRENT_DATE - INTERVAL '7 days') AS releases_this_week,
+      (SELECT count(*) FROM opii.kaizen_releases WHERE status = 'published' AND released_at >= CURRENT_DATE - INTERVAL '30 days') AS releases_this_month,
       -- Plans
       (SELECT count(*) FROM opii.kaizen_plans WHERE status IN ('active', 'scheduled')) AS plans_active,
       (SELECT count(*) FROM opii.kaizen_plans WHERE status = 'completed') AS plans_completed,
@@ -70,10 +71,12 @@ export async function getStats() {
     SELECT p.id, p.name,
       (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open')::int AS open_issues,
       (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.status IN ('running', 'queued'))::int AS active_processes,
+      (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.updated_at >= CURRENT_DATE - INTERVAL '7 days')::int AS recent_processes,
+      (SELECT count(*) FROM opii.kaizen_releases r WHERE r.product_id = p.id AND r.updated_at >= CURRENT_DATE - INTERVAL '7 days')::int AS recent_releases,
       p.last_pipeline_at
     FROM opii.kaizen_products p
     WHERE p.status = 'active'
-    ORDER BY open_issues DESC, active_processes DESC
+    ORDER BY active_processes DESC, recent_processes DESC, recent_releases DESC, open_issues DESC
     LIMIT 5
   `);
 
@@ -100,14 +103,15 @@ export async function getStats() {
     GROUP BY type ORDER BY count DESC
   `);
 
-  // Release velocity (last 8 weeks)
+  // Release velocity (last 8 weeks) — by latest activity (updated_at)
   const { rows: velocity } = await pool.query(`
     SELECT
-      date_trunc('week', released_at)::date AS week,
-      count(*)::int AS count
+      date_trunc('week', updated_at)::date AS week,
+      count(*)::int AS count,
+      count(*) FILTER (WHERE status = 'published')::int AS published,
+      count(*) FILTER (WHERE status = 'developed')::int AS developed
     FROM opii.kaizen_releases
-    WHERE status = 'released'
-      AND released_at >= CURRENT_DATE - INTERVAL '8 weeks'
+    WHERE updated_at >= CURRENT_DATE - INTERVAL '8 weeks'
     GROUP BY 1 ORDER BY 1
   `);
 
@@ -161,7 +165,8 @@ export async function getStats() {
     },
     releases: {
       draft: parseInt(stats.releases_draft),
-      released: parseInt(stats.releases_released),
+      developed: parseInt(stats.releases_developed),
+      published: parseInt(stats.releases_published),
       this_week: parseInt(stats.releases_this_week),
       this_month: parseInt(stats.releases_this_month),
       velocity,

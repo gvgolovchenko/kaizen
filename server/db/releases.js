@@ -38,8 +38,8 @@ export async function create({ product_id, version, name, description, issue_ids
     await client.query('BEGIN');
 
     const { rows } = await client.query(
-      `INSERT INTO ${TABLE} (product_id, version, name, description)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
+      `INSERT INTO ${TABLE} (product_id, version, name, description, status)
+       VALUES ($1, $2, $3, $4, 'draft') RETURNING *`,
       [product_id, version, name, description || null]
     );
     const release = rows[0];
@@ -76,7 +76,6 @@ export async function update(id, { version, name, description, status, add_issue
   try {
     await client.query('BEGIN');
 
-    // Update release fields
     const sets = [];
     const vals = [];
     let i = 1;
@@ -93,7 +92,6 @@ export async function update(id, { version, name, description, status, add_issue
       );
     }
 
-    // Add issues
     let addedCount = 0;
     if (add_issue_ids && add_issue_ids.length > 0) {
       for (const issueId of add_issue_ids) {
@@ -109,7 +107,6 @@ export async function update(id, { version, name, description, status, add_issue
       }
     }
 
-    // Remove issues
     let removedCount = 0;
     if (remove_issue_ids && remove_issue_ids.length > 0) {
       for (const issueId of remove_issue_ids) {
@@ -142,13 +139,11 @@ export async function remove(id) {
   try {
     await client.query('BEGIN');
 
-    // Count issues that will be returned to open
     const { rows: [{ count: issuesToOpen }] } = await client.query(
       `SELECT count(*)::int AS count FROM ${LINK_TABLE} WHERE release_id = $1`,
       [id]
     );
 
-    // Return issues to open status
     await client.query(
       `UPDATE ${ISSUES_TABLE} SET status = 'open'
        WHERE id IN (SELECT issue_id FROM ${LINK_TABLE} WHERE release_id = $1)`,
@@ -168,8 +163,9 @@ export async function remove(id) {
 }
 
 export async function saveSpec(id, spec) {
+  // Save spec AND transition status draft → spec
   const { rows } = await pool.query(
-    `UPDATE ${TABLE} SET spec = $1 WHERE id = $2 RETURNING *`,
+    `UPDATE ${TABLE} SET spec = $1, status = CASE WHEN status = 'draft' THEN 'spec' ELSE status END WHERE id = $2 RETURNING *`,
     [spec, id]
   );
   return rows[0] || null;
@@ -188,12 +184,11 @@ export async function getPublishedByProduct(productId, limit = 3) {
     `SELECT r.*,
        (SELECT count(*) FROM ${LINK_TABLE} ri WHERE ri.release_id = r.id) AS issue_count
      FROM ${TABLE} r
-     WHERE r.product_id = $1 AND r.status = 'released'
+     WHERE r.product_id = $1 AND r.status = 'published'
      ORDER BY r.released_at DESC
      LIMIT $2`,
     [productId, limit]
   );
-  // Load issues for each release
   for (const r of rows) {
     const issuesResult = await pool.query(
       `SELECT i.* FROM ${ISSUES_TABLE} i
@@ -211,9 +206,16 @@ export async function updateDevInfo(id, { dev_branch, dev_commit, dev_status }) 
   const sets = [];
   const vals = [];
   let i = 1;
-  if (dev_branch  !== undefined) { sets.push(`dev_branch  = $${i++}`); vals.push(dev_branch); }
-  if (dev_commit  !== undefined) { sets.push(`dev_commit  = $${i++}`); vals.push(dev_commit); }
-  if (dev_status  !== undefined) { sets.push(`dev_status  = $${i++}`); vals.push(dev_status); }
+  if (dev_branch !== undefined) { sets.push(`dev_branch = $${i++}`); vals.push(dev_branch); }
+  if (dev_commit !== undefined) { sets.push(`dev_commit = $${i++}`); vals.push(dev_commit); }
+  // Map dev_status to linear status
+  if (dev_status !== undefined) {
+    sets.push(`dev_status = $${i++}`); vals.push(dev_status);
+    if (dev_status === 'in_progress') { sets.push(`status = 'developing'`); }
+    else if (dev_status === 'done') { sets.push(`status = 'developed'`); }
+    else if (dev_status === 'failed') { sets.push(`status = 'failed'`); }
+    else if (dev_status === null) { sets.push(`status = 'spec'`); }
+  }
   if (sets.length === 0) return null;
   vals.push(id);
   const { rows } = await pool.query(
@@ -228,14 +230,13 @@ export async function publish(id) {
   try {
     await client.query('BEGIN');
 
-    // Count issues that will move to done
     const { rows: [{ count: issuesToDone }] } = await client.query(
       `SELECT count(*)::int AS count FROM ${LINK_TABLE} WHERE release_id = $1`,
       [id]
     );
 
     await client.query(
-      `UPDATE ${TABLE} SET status = 'released', released_at = now() WHERE id = $1`,
+      `UPDATE ${TABLE} SET status = 'published', released_at = now() WHERE id = $1`,
       [id]
     );
 
@@ -247,7 +248,7 @@ export async function publish(id) {
 
     await client.query('COMMIT');
     const result = await getById(id);
-    result.status_changes = { release_to_released: true, issues_to_done: issuesToDone };
+    result.status_changes = { release_to_published: true, issues_to_done: issuesToDone };
     return result;
   } catch (err) {
     await client.query('ROLLBACK');

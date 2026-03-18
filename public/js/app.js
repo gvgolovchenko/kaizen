@@ -1,16 +1,43 @@
 // ── API helper ─────────────────────────────────────────
 
 export async function api(path, opts = {}) {
-  const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`/api${path}`, {
+      headers: { 'Content-Type': 'application/json', ...opts.headers },
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+  } catch (fetchErr) {
+    throw new Error(humanizeError(fetchErr.message));
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || 'Request failed');
+    throw new Error(humanizeError(err.error || `HTTP ${res.status}`));
   }
   return res.json();
+}
+
+const ERROR_MAP = [
+  [/ETIMEDOUT|ECONNABORTED|timeout/i, 'Превышено время ожидания. Сервер не отвечает — попробуйте позже.'],
+  [/ECONNREFUSED/i, 'Не удалось подключиться к серверу. Проверьте, что сервис запущен.'],
+  [/ENOTFOUND|EAI_AGAIN/i, 'Сервер не найден. Проверьте подключение к сети.'],
+  [/Failed to fetch|NetworkError|ERR_NETWORK/i, 'Ошибка сети. Проверьте интернет-соединение.'],
+  [/rate.?limit|429/i, 'Слишком много запросов. Подождите немного и попробуйте снова.'],
+  [/503|502|Service Unavailable/i, 'Сервис временно недоступен. Попробуйте через пару минут.'],
+  [/401|Unauthorized/i, 'Требуется авторизация.'],
+  [/403|Forbidden/i, 'Нет доступа к этому ресурсу.'],
+  [/404|Not found/i, 'Ресурс не найден.'],
+  [/500|Internal Server Error/i, 'Внутренняя ошибка сервера. Попробуйте позже.'],
+  [/JSON.*parse|Unexpected token/i, 'Ошибка формата данных от сервера.'],
+];
+
+function humanizeError(msg) {
+  if (!msg) return 'Неизвестная ошибка';
+  for (const [pattern, human] of ERROR_MAP) {
+    if (pattern.test(msg)) return human;
+  }
+  return msg;
 }
 
 // ── Date formatting ────────────────────────────────────

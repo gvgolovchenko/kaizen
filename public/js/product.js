@@ -317,9 +317,12 @@ document.getElementById('viewToggle').addEventListener('click', (e) => {
   if (btn && btn.dataset.view) switchView(btn.dataset.view);
 });
 
-// Priority filter handler
-document.getElementById('issuePriorityFilter').addEventListener('change', (e) => {
-  currentPriorityFilter = e.target.value;
+// Priority filter handler (chips)
+document.getElementById('issuePriorityFilter').addEventListener('click', (e) => {
+  if (!e.target.matches('.btn')) return;
+  document.querySelectorAll('#issuePriorityFilter .btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  currentPriorityFilter = e.target.dataset.priority || '';
   if (currentView === 'kanban') renderKanban();
   else renderFilteredTable();
 });
@@ -366,23 +369,11 @@ function detectTestCommandFE(techStack) {
   return 'npm test';
 }
 
-function findActiveDevProcess(releaseId) {
-  return processesList.find(p =>
-    p.type === 'develop_release' && p.release_id === releaseId &&
-    (p.status === 'pending' || p.status === 'running')
-  );
-}
-
 function renderDevStatus(r) {
-  const activeProc = findActiveDevProcess(r.id);
-
-  if (activeProc || r.dev_status === 'in_progress') {
-    return `<div class="dev-status dev-status-running">
-      &#9203; Разработка в процессе...
-    </div>`;
+  if (r.status === 'developing') {
+    return `<div class="dev-status dev-status-running">&#9203; Разработка в процессе...</div>`;
   }
-
-  if (r.dev_status === 'done') {
+  if (r.status === 'developed') {
     const short = r.dev_commit ? r.dev_commit.slice(0, 7) : '';
     return `<div class="dev-status dev-status-done">
       &#10004; <strong>${escapeHtml(r.dev_branch || '')}</strong>
@@ -390,27 +381,18 @@ function renderDevStatus(r) {
       &middot; тесты &#10004;
     </div>`;
   }
-
-  if (r.dev_status === 'failed') {
+  if (r.status === 'failed') {
     return `<div class="dev-status dev-status-failed">
       &#10060; Ошибка разработки
-      ${r.status !== 'released'
-        ? ` <button class="btn btn-ghost btn-sm" onclick="showDevelopModal('${r.id}')">Повторить</button>`
-        : ''}
+      <button class="btn btn-ghost btn-sm" onclick="showDevelopModal('${r.id}')">Повторить</button>
     </div>`;
   }
-
   return '';
 }
 
 function getDevButton(r) {
-  if (r.dev_status === 'in_progress' || findActiveDevProcess(r.id)) return '';
-  if (r.dev_status === 'done') return '';
-  if (r.dev_status === 'failed') return '';
-  if (r.status === 'released') return '';
-
-  const hasSpec = !!r.spec;
-  if (hasSpec) {
+  if (['developing', 'developed', 'failed', 'published'].includes(r.status)) return '';
+  if (r.status === 'spec') {
     return `<button class="btn btn-primary btn-sm" onclick="showDevelopModal('${r.id}')">Разработать</button>`;
   }
   return `<button class="btn btn-ghost btn-sm" disabled title="Сначала подготовьте спецификацию">Разработать</button>`;
@@ -429,24 +411,27 @@ function renderReleases() {
   }
   empty.style.display = 'none';
 
+  const STATUS_LABELS = { draft: 'Черновик', spec: 'Спецификация', developing: 'Разработка', developed: 'Готов', failed: 'Ошибка', published: 'Опубликован' };
+
   el.innerHTML = releases.map(r => {
     const specBtn = getSpecButton(r);
     const devBtn = getDevButton(r);
     const prBtn = getPressReleaseButton(r);
     const devStatus = renderDevStatus(r);
+    const canPublish = r.status === 'developed';
+    const canDelete = r.status !== 'published';
+    const statusLabel = STATUS_LABELS[r.status] || r.status;
     return `
     <div class="release-card">
       <div class="release-card-header">
         <h3>
-          <span class="badge badge-${r.status}">${r.status}</span>
+          <span class="badge badge-${r.status}">${statusLabel}</span>
           ${escapeHtml(r.version)} — ${escapeHtml(r.name)}
-          ${r.spec ? '<span class="badge badge-improvement" style="font-size:0.6rem;margin-left:4px">Spec</span>' : ''}
-          ${r.dev_status === 'done' ? '<span class="badge badge-done" style="font-size:0.6rem;margin-left:4px">Dev</span>' : r.dev_status === 'in_progress' ? '<span class="badge badge-in_progress" style="font-size:0.6rem;margin-left:4px">Dev</span>' : r.dev_status === 'failed' ? '<span class="badge badge-failed" style="font-size:0.6rem;margin-left:4px">Dev</span>' : ''}
           ${r.press_release ? '<span class="badge badge-process-prepare_press_release" style="font-size:0.6rem;margin-left:4px">PR</span>' : ''}
         </h3>
         <div style="display:flex;gap:6px">
-          ${r.status === 'draft' ? `<button class="btn btn-green btn-sm" onclick="publishRelease('${r.id}')">Опубликовать</button>` : ''}
-          ${r.status !== 'released' ? `<button class="btn btn-danger btn-sm" onclick="deleteRelease('${r.id}')">Удалить</button>` : ''}
+          ${canPublish ? `<button class="btn btn-green btn-sm" onclick="publishRelease('${r.id}')">Опубликовать</button>` : ''}
+          ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteRelease('${r.id}')">Удалить</button>` : ''}
         </div>
       </div>
       ${r.description ? `<p style="color:var(--text-dim);font-size:0.875rem;margin-bottom:8px">${escapeHtml(r.description)}</p>` : ''}
@@ -461,7 +446,7 @@ function renderReleases() {
         ${prBtn}
         ${r.dev_branch ? `<button class="btn btn-ghost btn-sm" onclick="showReleaseDiff('${r.id}')">Diff</button>` : ''}
         ${r.dev_branch ? `<button class="btn btn-ghost btn-sm" onclick="createReleaseMR('${r.id}')">MR</button>` : ''}
-        ${r.dev_branch && r.status !== 'released' ? `<button class="btn btn-danger btn-sm" onclick="rollbackRelease('${r.id}')">Откатить</button>` : ''}
+        ${r.dev_branch && r.status !== 'published' ? `<button class="btn btn-danger btn-sm" onclick="rollbackRelease('${r.id}')">Откатить</button>` : ''}
       </div>
       ${devStatus}
       <div class="release-issues" id="release-${r.id}" style="display:none"></div>
@@ -492,7 +477,7 @@ function getPressReleaseButton(r) {
   if (r.press_release) {
     return `<button class="btn btn-ghost btn-sm" onclick="showPressReleaseView('${r.id}')" style="color:var(--accent)">Открыть пресс-релиз</button>`;
   }
-  if (r.status === 'released') {
+  if (r.status === 'published') {
     return `<button class="btn btn-primary btn-sm" onclick="showPreparePressReleaseModal('${r.id}')">Пресс-релиз</button>`;
   }
   return '';
@@ -807,7 +792,7 @@ window.publishRelease = async function (id) {
     notifyStatusChanges({
       action: 'Релиз опубликован',
       details: [
-        'Статус релиза → released',
+        'Статус релиза → published',
         changes.issues_to_done ? `${changes.issues_to_done} задач(и) → done` : null,
       ].filter(Boolean)
     });
@@ -2460,6 +2445,42 @@ window.handleGenerateDockerfile = async function () {
     pre.style.display = '';
     pre.textContent = `# Dockerfile\n\n${res.dockerfile}\n# docker-compose.yml\n\n${res.docker_compose}\n# .dockerignore\n\n${res.dockerignore}`;
     toast('Dockerfile сгенерирован');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Validate Product ────────────────────────────────────
+
+window.showValidateModal = async function () {
+  // Populate model select
+  const select = document.getElementById('valModelId');
+  try {
+    const models = await api('/ai-models');
+    select.innerHTML = '<option value="">Без AI (только базовые)</option>' +
+      models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+  } catch {}
+  openModal('validateModal');
+};
+
+window.handleValidateProduct = async function () {
+  const checks = [];
+  if (document.getElementById('valCheckBuild').checked) checks.push('build');
+  if (document.getElementById('valCheckTests').checked) checks.push('tests');
+  if (document.getElementById('valCheckSmoke').checked) checks.push('smoke');
+  if (document.getElementById('valCheckLint').checked) checks.push('lint');
+  if (document.getElementById('valCheckAiReview').checked) checks.push('ai_review');
+
+  const model_id = document.getElementById('valModelId').value || null;
+
+  try {
+    const result = await api(`/products/${productId}/validate`, {
+      method: 'POST',
+      body: { model_id, checks },
+    });
+    toast('Проверка запущена');
+    closeModal('validateModal');
+    loadProcesses();
   } catch (err) {
     toast(err.message, 'error');
   }

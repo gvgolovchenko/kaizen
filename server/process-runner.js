@@ -5,7 +5,7 @@ import * as releases from './db/releases.js';
 import * as issues from './db/issues.js';
 import * as aiModels from './db/ai-models.js';
 import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
-import { parseJsonFromAI, detectTestCommand, detectBuildCommand, validateBranchName } from './utils.js';
+import { parseJsonFromAI, detectTestCommand, detectBuildCommand, detectLintCommand, validateBranchName } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { pushToGitlab, pushToDefaultBranch, waitForPipeline, getPipelineStatus } from './gitlab-client.js';
@@ -322,6 +322,10 @@ export async function runProcess(processId, options = {}) {
     }
     if (proc.type === 'deploy') {
       await runDeploy(processId, proc, product, startTime, timeoutMs);
+      return;
+    }
+    if (proc.type === 'validate_product') {
+      await runValidateProduct(processId, proc, product, startTime, timeoutMs);
       return;
     }
 
@@ -1619,6 +1623,36 @@ ${issuesList}`;
     data: resultObj,
   });
 
+  // 10b. Validate build (if build command is available)
+  const buildCmd = config.build_command || detectBuildCommand(product.tech_stack);
+  if (resultObj.tests_passed && buildCmd && product.project_path) {
+    try {
+      await processLogs.create({
+        process_id: processId,
+        step: 'validate_build_start',
+        message: `Проверка сборки: ${buildCmd}`,
+      });
+      const buildOpts = { cwd: product.project_path, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 };
+      const { stdout, stderr } = await execFileAsync('sh', ['-c', buildCmd], buildOpts);
+      await processLogs.create({
+        process_id: processId,
+        step: 'validate_build_ok',
+        message: 'Сборка успешна',
+        data: { command: buildCmd, output: (stdout + stderr).slice(0, 2000) },
+      });
+    } catch (buildErr) {
+      resultObj.tests_passed = false;
+      resultObj.build_failed = true;
+      resultObj.summary = (resultObj.summary || '') + `\n\nBuild FAILED: ${buildErr.message.slice(0, 500)}`;
+      await processLogs.create({
+        process_id: processId,
+        step: 'validate_build_failed',
+        message: `Сборка провалена: ${buildErr.message.slice(0, 200)}`,
+        data: { command: buildCmd, error: buildErr.message.slice(0, 2000) },
+      });
+    }
+  }
+
   // 11. GitLab push (if configured)
   if (product.deploy?.gitlab?.remote_url && product.deploy?.gitlab?.access_token) {
     try {
@@ -2043,6 +2077,171 @@ ${channelInstructions.join('\n')}
   await processes.update(processId, {
     status: 'completed',
     result: { mode, channels: Object.keys(normalizedChannels), has_images: !!normalizedData.image_prompts },
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+}
+
+// ── Validate Product ──────────────────────────────────────
+
+async function runValidateProduct(processId, proc, product, startTime, timeoutMs) {
+  const cwd = product.project_path;
+  if (!cwd) throw new Error('Product has no project_path configured');
+
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+
+  const checks = config.checks || ['build', 'tests', 'smoke'];
+  const lintCommand = config.lint_command || detectLintCommand(product.tech_stack);
+  const buildCommand = config.build_command || detectBuildCommand(product.tech_stack);
+  const testCommand = config.test_command || detectTestCommand(product.tech_stack);
+
+  const log = async (step, message, data) => {
+    await processLogs.create({ process_id: processId, step, message, data });
+  };
+
+  await log('validate_start', `Комплексная проверка: ${checks.join(', ')}`, { checks, cwd });
+
+  const result = { checks: {}, summary: '' };
+  let allOk = true;
+
+  // 1. Git pull
+  try {
+    await log('validate_git', 'Git pull...');
+    const { stdout } = await execFileAsync('git', ['pull', '--ff-only'], { cwd, timeout: 30_000 });
+    result.checks.git = { status: 'ok', output: stdout.trim() };
+  } catch (err) {
+    result.checks.git = { status: 'warn', error: err.message.slice(0, 300) };
+    await log('validate_git_warn', `Git pull warning: ${err.message.slice(0, 200)}`);
+  }
+
+  // 2. Lint
+  if (checks.includes('lint') && lintCommand) {
+    try {
+      await log('validate_lint', `Lint: ${lintCommand}`);
+      const { stdout, stderr } = await execFileAsync('sh', ['-c', lintCommand], { cwd, timeout: 60_000, maxBuffer: 2 * 1024 * 1024 });
+      result.checks.lint = { status: 'ok', output: (stdout + stderr).slice(0, 1000) };
+      await log('validate_lint_ok', 'Lint пройден');
+    } catch (err) {
+      result.checks.lint = { status: 'warn', error: err.message.slice(0, 500) };
+      await log('validate_lint_warn', `Lint warnings: ${err.message.slice(0, 200)}`);
+    }
+  }
+
+  // 3. Build
+  if (checks.includes('build') && buildCommand) {
+    try {
+      await log('validate_build', `Build: ${buildCommand}`);
+      const { stdout, stderr } = await execFileAsync('sh', ['-c', buildCommand], { cwd, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+      result.checks.build = { status: 'ok', output: (stdout + stderr).slice(0, 1000) };
+      await log('validate_build_ok', 'Сборка успешна');
+    } catch (err) {
+      allOk = false;
+      result.checks.build = { status: 'fail', error: err.message.slice(0, 500) };
+      await log('validate_build_fail', `Сборка провалена: ${err.message.slice(0, 200)}`);
+    }
+  }
+
+  // 4. Unit tests
+  if (checks.includes('tests') && testCommand) {
+    try {
+      await log('validate_tests', `Tests: ${testCommand}`);
+      const { stdout, stderr } = await execFileAsync('sh', ['-c', testCommand], { cwd, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+      const output = stdout + stderr;
+      // Parse test results
+      const passedMatch = output.match(/(\d+)\s*(pass|passed|ok)/i);
+      const failedMatch = output.match(/(\d+)\s*(fail|failed|error)/i);
+      result.checks.tests = {
+        status: 'ok',
+        passed: passedMatch ? parseInt(passedMatch[1]) : null,
+        failed: failedMatch ? parseInt(failedMatch[1]) : 0,
+        output: output.slice(0, 1000),
+      };
+      await log('validate_tests_ok', `Тесты пройдены${passedMatch ? ': ' + passedMatch[1] + ' passed' : ''}`);
+    } catch (err) {
+      allOk = false;
+      result.checks.tests = { status: 'fail', error: err.message.slice(0, 500) };
+      await log('validate_tests_fail', `Тесты провалены: ${err.message.slice(0, 200)}`);
+    }
+  }
+
+  // 5. Smoke test (Playwright)
+  if (checks.includes('smoke') && product.project_path) {
+    try {
+      await log('validate_smoke', 'Smoke test (Playwright)...');
+      const smokeResult = await runSmokeTests({
+        smokeConfig: product.smoke_test || {},
+        projectPath: product.project_path,
+        techStack: product.tech_stack,
+        log,
+      });
+      result.checks.smoke = {
+        status: smokeResult.passed ? 'ok' : 'fail',
+        pages: smokeResult.results.length,
+        errors: smokeResult.results.filter(r => !r.ok).map(r => `${r.page}: ${r.errors.join('; ')}`),
+      };
+      if (!smokeResult.passed) allOk = false;
+    } catch (err) {
+      result.checks.smoke = { status: 'fail', error: err.message.slice(0, 300) };
+      allOk = false;
+      await log('validate_smoke_error', `Smoke error: ${err.message.slice(0, 200)}`);
+    }
+  }
+
+  // 6. AI analysis (if model is set)
+  if (checks.includes('ai_review') && proc.model_id) {
+    try {
+      const model = await aiModels.getById(proc.model_id);
+      if (model) {
+        await log('validate_ai', `AI-анализ: ${model.name}`);
+        // Get recent git diff
+        let diff = '';
+        try {
+          const { stdout } = await execFileAsync('git', ['diff', 'HEAD~5..HEAD', '--stat'], { cwd, timeout: 10_000 });
+          diff = stdout;
+        } catch { diff = 'Не удалось получить diff'; }
+
+        const systemPrompt = `Ты — senior code reviewer. Проанализируй последние изменения в проекте и результаты проверок. Ответь в формате JSON:
+{ "issues": [{ "severity": "high|medium|low", "file": "path", "issue": "описание" }], "recommendations": ["рекомендация1", "рекомендация2"] }`;
+
+        const userPrompt = `Проект: ${product.name} (${product.tech_stack || ''})
+
+Результаты проверок:
+${JSON.stringify(result.checks, null, 2)}
+
+Последние изменения (git diff --stat):
+${diff}
+
+Найди потенциальные проблемы: баги, уязвимости безопасности, пропущенные edge cases.`;
+
+        const aiResponse = await callAI(model, systemPrompt, userPrompt, { cwd });
+        const parsed = parseJsonFromAI(aiResponse);
+        if (parsed && parsed[0]) {
+          result.checks.ai_review = { status: 'ok', ...parsed[0] };
+          const highCount = (parsed[0].issues || []).filter(i => i.severity === 'high').length;
+          if (highCount > 0) result.checks.ai_review.status = 'warn';
+          await log('validate_ai_done', `AI: ${(parsed[0].issues || []).length} issues, ${(parsed[0].recommendations || []).length} рекомендаций`);
+        } else {
+          result.checks.ai_review = { status: 'ok', raw: aiResponse.slice(0, 2000) };
+        }
+      }
+    } catch (err) {
+      result.checks.ai_review = { status: 'warn', error: err.message.slice(0, 300) };
+      await log('validate_ai_error', `AI error: ${err.message.slice(0, 200)}`);
+    }
+  }
+
+  // 7. Compile summary
+  const checkStatuses = Object.entries(result.checks).map(([name, c]) => `${c.status === 'ok' ? '✅' : c.status === 'warn' ? '⚠️' : '❌'} ${name}`);
+  result.summary = checkStatuses.join(' | ');
+  result.all_ok = allOk;
+
+  const durationMs = Date.now() - startTime;
+  await log('validate_complete', result.summary, result);
+
+  await processes.update(processId, {
+    status: 'completed',
+    result,
     completed_at: new Date().toISOString(),
     duration_ms: durationMs,
   });

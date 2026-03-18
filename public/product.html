@@ -33,6 +33,7 @@
         <button class="btn btn-primary btn-sm" onclick="showImproveModal()">Улучшение продукта</button>
         <button class="btn btn-primary btn-sm" onclick="showFormReleaseModal()" id="formReleaseBtn" style="display:none">Сформировать релиз (AI)</button>
         <button class="btn btn-ghost btn-sm" onclick="showRoadmapModal()">Дорожная карта из документа</button>
+        <button class="btn btn-ghost btn-sm" onclick="showValidateModal()">Проверить</button>
       </div>
     </div>
 
@@ -60,13 +61,13 @@
               <button class="btn btn-ghost btn-sm" data-status="done">Done</button>
               <button class="btn btn-ghost btn-sm" data-status="closed">Closed</button>
             </div>
-            <select id="issuePriorityFilter" style="padding:5px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.8rem">
-              <option value="">Все приоритеты</option>
-              <option value="critical">Critical</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
-            </select>
+            <div class="filters" id="issuePriorityFilter">
+              <button class="btn btn-ghost btn-sm active" data-priority="">Все</button>
+              <button class="btn btn-ghost btn-sm" data-priority="critical" style="color:var(--red)">Critical</button>
+              <button class="btn btn-ghost btn-sm" data-priority="high" style="color:var(--yellow)">High</button>
+              <button class="btn btn-ghost btn-sm" data-priority="medium" style="color:var(--accent)">Medium</button>
+              <button class="btn btn-ghost btn-sm" data-priority="low" style="color:var(--text-dim)">Low</button>
+            </div>
             <div class="view-toggle" id="viewToggle">
               <button class="btn btn-ghost btn-sm active" data-view="table" title="Таблица">☰</button>
               <button class="btn btn-ghost btn-sm" data-view="kanban" title="Kanban">▥</button>
@@ -208,16 +209,14 @@
     <!-- Panel: GitLab Issues -->
     <div class="tab-panel" id="panel-gitlab-issues">
       <div class="section">
-        <div class="section-header">
-          <div style="display:flex;gap:8px;align-items:center">
-            <div class="filters" id="glIssueFilters">
-              <button class="btn btn-ghost btn-sm active" data-sync-status="">Все</button>
-              <button class="btn btn-ghost btn-sm" data-sync-status="new">Новые</button>
-              <button class="btn btn-ghost btn-sm" data-sync-status="imported">Импортированные</button>
-              <button class="btn btn-ghost btn-sm" data-sync-status="ignored">Игнорированные</button>
-            </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+          <div class="filters" id="glIssueFilters">
+            <button class="btn btn-ghost btn-sm active" data-sync-status="">Все</button>
+            <button class="btn btn-ghost btn-sm" data-sync-status="new">Новые</button>
+            <button class="btn btn-ghost btn-sm" data-sync-status="imported">Импортированные</button>
+            <button class="btn btn-ghost btn-sm" data-sync-status="ignored">Игнорированные</button>
           </div>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-ghost btn-sm" onclick="handleGlSync()" id="glSyncBtn">Синхронизировать</button>
             <button class="btn btn-primary btn-sm" onclick="handleGlImportSelected()" id="glImportBtn" style="display:none">Импортировать (<span id="glSelectedCount">0</span>)</button>
             <button class="btn btn-ghost btn-sm" onclick="handleGlIgnoreSelected()" id="glIgnoreBtn" style="display:none">Игнорировать</button>
@@ -1090,6 +1089,38 @@
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal('rcTicketDetailModal')">Закрыть</button>
         <button type="button" class="btn btn-primary" id="rcTicketImportBtn" onclick="handleRcImportSingle()">Импортировать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Validate Product Modal -->
+  <div class="modal-overlay" id="validateModal">
+    <div class="modal">
+      <h2>Комплексная проверка продукта</h2>
+      <div class="form-group">
+        <label>Базовые проверки</label>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem"><input type="checkbox" id="valCheckBuild" checked style="width:auto"> Сборка (build)</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem"><input type="checkbox" id="valCheckTests" checked style="width:auto"> Юнит-тесты</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem"><input type="checkbox" id="valCheckSmoke" checked style="width:auto"> Smoke-тест (Playwright)</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem"><input type="checkbox" id="valCheckLint" style="width:auto"> Lint</label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>AI-анализ (опционально)</label>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem"><input type="checkbox" id="valCheckAiReview" style="width:auto"> Code review + безопасность</label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Модель ИИ (для AI-анализа)</label>
+        <select id="valModelId" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9rem">
+          <option value="">Без AI (только базовые)</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal('validateModal')">Отмена</button>
+        <button class="btn btn-primary" onclick="handleValidateProduct()">Запустить</button>
       </div>
     </div>
   </div>

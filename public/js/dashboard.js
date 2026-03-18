@@ -121,8 +121,12 @@ function renderSummary(d) {
           <span class="widget-label">черновики</span>
         </div>
         <div class="widget-stat">
-          <span class="widget-number text-green">${d.releases.released}</span>
-          <span class="widget-label">опубликовано</span>
+          <span class="widget-number" style="color:var(--blue)">${d.releases.developed}</span>
+          <span class="widget-label">готовы</span>
+        </div>
+        <div class="widget-stat">
+          <span class="widget-number text-green">${d.releases.published}</span>
+          <span class="widget-label">опубл.</span>
         </div>
       </div>
       <div class="widget-week-stats">
@@ -155,12 +159,12 @@ function renderDetails(d) {
   const el = document.getElementById('dashDetails');
 
   // Top-5 active products table
-  const topRows = (d.products.top_active || []).map(p => `
+  const topRows = (d.products.top_active || []).slice(0, 3).map(p => `
     <tr onclick="location.href='product.html?id=${p.id}'" style="cursor:pointer">
       <td>${escapeHtml(p.name)}</td>
+      <td>${p.recent_processes || 0}</td>
+      <td>${p.recent_releases || 0}</td>
       <td>${p.open_issues}</td>
-      <td>${p.active_processes}</td>
-      <td class="activity-time">${p.last_pipeline_at ? formatDate(p.last_pipeline_at) : '—'}</td>
     </tr>`).join('');
 
   // Weekly bar chart
@@ -169,7 +173,7 @@ function renderDetails(d) {
   const barChart = renderWeeklyChart(velocityData, maxVel);
 
   // Activity feed
-  const activityList = (d.recent_activity || []).slice(0, 10).map(a => `
+  const activityList = (d.recent_activity || []).slice(0, 5).map(a => `
     <div class="activity-item">
       <span class="badge badge-${a.status === 'completed' ? 'done' : 'failed'}" style="font-size:0.65rem">${a.status === 'completed' ? 'OK' : 'ERR'}</span>
       <span class="activity-type">${escapeHtml(a.type)}</span>
@@ -184,7 +188,7 @@ function renderDetails(d) {
       <div class="mini-table-wrap">
         <table class="mini-table">
           <thead>
-            <tr><th>Продукт</th><th>Задачи</th><th>Процессы</th><th>Pipeline</th></tr>
+            <tr><th>Продукт</th><th>Проц. 7д</th><th>Рел. 7д</th><th>Задачи</th></tr>
           </thead>
           <tbody>${topRows}</tbody>
         </table>
@@ -193,10 +197,9 @@ function renderDetails(d) {
 
     <div class="widget">
       <div class="widget-title">Динамика релизов (8 недель)</div>
-      ${velocityData.length > 0 ? `
-      <div class="bar-chart">
-        ${barChart}
-      </div>` : '<div class="widget-label" style="padding:20px 0;text-align:center">Нет данных</div>'}
+      <div style="height:90px;position:relative">
+        <canvas id="velocityChart"></canvas>
+      </div>
     </div>
 
     <div class="widget">
@@ -206,6 +209,49 @@ function renderDetails(d) {
       </div>
     </div>
   `;
+
+  // Render Chart.js velocity chart
+  if (typeof Chart !== 'undefined' && velocityData.length > 0) {
+    requestAnimationFrame(() => {
+      const ctx = document.getElementById('velocityChart');
+      if (!ctx) return;
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: velocityData.map(v => new Date(v.week).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })),
+          datasets: [
+            {
+              label: 'Опубликовано',
+              data: velocityData.map(v => v.published || 0),
+              backgroundColor: 'rgba(52,211,153,0.6)',
+              borderRadius: 4,
+            },
+            {
+              label: 'Готовы',
+              data: velocityData.map(v => v.developed || 0),
+              backgroundColor: 'rgba(96,165,250,0.6)',
+              borderRadius: 4,
+            },
+            {
+              label: 'Прочие',
+              data: velocityData.map(v => (v.count || 0) - (v.published || 0) - (v.developed || 0)),
+              backgroundColor: 'rgba(136,144,164,0.4)',
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: true, labels: { color: '#8890a4', boxWidth: 10, font: { size: 10 } } } },
+          scales: {
+            y: { beginAtZero: true, stacked: true, ticks: { color: '#8890a4', stepSize: 1 }, grid: { color: '#2e313d' } },
+            x: { stacked: true, ticks: { color: '#8890a4' }, grid: { display: false } },
+          },
+        },
+      });
+    });
+  }
 }
 
 function renderWeeklyChart(velocity, maxVal) {
@@ -278,38 +324,26 @@ function renderHealth(d) {
       <div class="widget-title">Автоматизация</div>
       <div class="health-stats">
         <div class="health-row">
-          <span class="health-metric-label">Продуктов с Pipeline</span>
+          <span class="health-metric-label">Pipeline</span>
           <span class="health-metric-value">${d.automation.products_with_pipeline}</span>
         </div>
         <div class="health-row">
-          <span class="health-metric-label">Продуктов с RC-sync</span>
+          <span class="health-metric-label">RC-sync</span>
           <span class="health-metric-value">${d.automation.products_with_rc_sync}</span>
         </div>
       </div>
-      ${pipelineRuns ? `
-      <div style="margin-top:10px">
-        <div class="widget-label" style="margin-bottom:6px">Последние запуски pipeline</div>
-        <div class="health-tags">${pipelineRuns}</div>
-      </div>` : ''}
-      ${processTypeBars ? `
-      <div style="margin-top:14px">
-        <div class="widget-label" style="margin-bottom:8px">Процессы по типам</div>
-        ${processTypeBars}
-      </div>` : ''}
+      ${pipelineRuns ? `<div style="margin-top:6px" class="health-tags">${pipelineRuns}</div>` : ''}
     </div>
 
     <div class="widget">
-      <div class="widget-title">Задачи — аналитика</div>
-      ${issueTypeBars ? `
-      <div>
-        <div class="widget-label" style="margin-bottom:8px">По типу</div>
-        ${issueTypeBars}
-      </div>` : ''}
-      ${issuePriorityBars ? `
-      <div style="margin-top:14px">
-        <div class="widget-label" style="margin-bottom:8px">По приоритету</div>
-        ${issuePriorityBars}
-      </div>` : ''}
+      <div class="widget-title">Процессы по типам</div>
+      ${processTypeBars || '<div class="widget-label">Нет данных</div>'}
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">Задачи</div>
+      ${issueTypeBars ? `<div style="margin-bottom:6px">${issueTypeBars}</div>` : ''}
+      ${issuePriorityBars || ''}
     </div>
   `;
 }

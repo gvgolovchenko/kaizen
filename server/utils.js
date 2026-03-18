@@ -101,6 +101,21 @@ export function detectTestCommand(techStack) {
   return 'npm test';
 }
 
+export function detectLintCommand(techStack) {
+  const s = (techStack || '').toLowerCase();
+  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue') || s.includes('nuxt'))
+    return 'npm run lint';
+  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
+    return 'flake8 .';
+  if (s.includes('go'))
+    return 'golangci-lint run';
+  if (s.includes('dotnet') || s.includes('c#') || s.includes('asp'))
+    return 'dotnet format --verify-no-changes';
+  if (s.includes('rust'))
+    return 'cargo clippy --all-targets';
+  return null;
+}
+
 /**
  * Validate and sanitize a git branch name.
  * @param {string} name

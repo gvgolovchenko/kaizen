@@ -282,7 +282,7 @@ router.post('/releases/:id/prepare-spec', async (req, res) => {
   try {
     const release = await releases.getById(req.params.id);
     if (!release) return res.status(404).json({ error: 'Release not found' });
-    if (release.status === 'released') return res.status(400).json({ error: 'Release is already published' });
+    if (release.status === 'published') return res.status(400).json({ error: 'Release is already published' });
     if (!release.issues || release.issues.length === 0) return res.status(400).json({ error: 'Release has no issues' });
 
     const { model_id, timeout_min } = req.body;
@@ -319,7 +319,7 @@ router.post('/releases/:id/develop', async (req, res) => {
     if (!release) return res.status(404).json({ error: 'Release not found' });
 
     // Preconditions
-    if (release.status === 'released')
+    if (release.status === 'published')
       return res.status(400).json({ error: 'Release already published' });
     if (!release.spec)
       return res.status(400).json({ error: 'Release spec is required. Run prepare-spec first.' });
@@ -392,7 +392,7 @@ router.post('/releases/:id/prepare-press-release', async (req, res) => {
   try {
     const release = await releases.getById(req.params.id);
     if (!release) return res.status(404).json({ error: 'Release not found' });
-    if (release.status !== 'released') return res.status(400).json({ error: 'Release must be published first' });
+    if (release.status !== 'published') return res.status(400).json({ error: 'Release must be published first' });
     if (!release.issues || release.issues.length === 0) return res.status(400).json({ error: 'Release has no issues' });
 
     const { model_id, channels, tone, audiences, generate_images, key_points, timeout_min } = req.body;
@@ -641,7 +641,7 @@ router.post('/processes', async (req, res) => {
     const { product_id, model_id, type, prompt, template_id, count, timeout_min, config } = req.body;
 
     if (!product_id) return res.status(400).json({ error: 'product_id is required' });
-    if (!model_id && type !== 'run_tests') return res.status(400).json({ error: 'model_id is required' });
+    if (!model_id && type !== 'run_tests' && type !== 'validate_product') return res.status(400).json({ error: 'model_id is required' });
 
     const product = await products.getById(product_id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
@@ -654,12 +654,12 @@ router.post('/processes', async (req, res) => {
     if (type === 'roadmap_from_doc' && !prompt) {
       return res.status(400).json({ error: 'prompt (document text) is required for roadmap_from_doc' });
     }
-    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && !prompt && !template_id) {
+    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && type !== 'validate_product' && !prompt && !template_id) {
       return res.status(400).json({ error: 'prompt or template_id is required' });
     }
 
     // For form_release/run_tests, store config as JSON in input_prompt
-    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs')
+    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs' || type === 'validate_product')
       ? JSON.stringify(config || {}) : (prompt || null);
 
     const proc = await processes.create({
@@ -1708,6 +1708,39 @@ router.get('/products/:id/pipeline-status', async (req, res) => {
     if (!sha) return res.status(400).json({ error: 'sha parameter required' });
     const status = await getPipelineStatus(product.deploy, sha);
     res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Validate Product ─────────────────────────────────────
+
+router.post('/products/:id/validate', async (req, res) => {
+  try {
+    const product = await products.getById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    if (!product.project_path) return res.status(400).json({ error: 'Product has no project_path' });
+
+    const { model_id, checks, timeout_min } = req.body;
+    const config = {
+      checks: checks || ['build', 'tests', 'smoke'],
+      ...(req.body.lint_command && { lint_command: req.body.lint_command }),
+      ...(req.body.build_command && { build_command: req.body.build_command }),
+      ...(req.body.test_command && { test_command: req.body.test_command }),
+    };
+
+    const proc = await processes.create({
+      product_id: product.id,
+      model_id: model_id || null,
+      type: 'validate_product',
+      input_prompt: JSON.stringify(config),
+    });
+
+    const qm = getQueueManager(req);
+    const timeoutMs = (timeout_min || 10) * 60 * 1000;
+    const queueResult = await qm.enqueue(proc.id, { timeoutMs });
+
+    res.status(201).json({ ...proc, queue: queueResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
