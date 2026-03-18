@@ -2,6 +2,56 @@
 
 ---
 
+## v1.15.0 — Линейные статусы релизов, комплексная проверка, UI Polish (2026-03-18)
+
+**Упрощение жизненного цикла релизов, новый тип процесса validate_product, автоматическая проверка сборки, улучшения UI.**
+
+### Линейные статусы релизов (миграция 019)
+
+- Единый статус вместо двух полей (status + dev_status): `draft → spec → developing → developed → failed → published`
+- Кнопка «Опубликовать» появляется только для `developed` (код готов, тесты прошли)
+- Русские метки статусов: Черновик, Спецификация, Разработка, Готов, Ошибка, Опубликован
+- `saveSpec()` автоматически переводит `draft → spec`
+- `updateDevInfo()` синхронизирует dev_status с линейным status
+- Dashboard: виджет релизов показывает черновики / готовы / опубликованы
+
+### Комплексная проверка продукта (validate_product)
+
+- Новый тип процесса: git pull → lint → build → tests → smoke → AI review
+- 5 проверок (чекбоксы): сборка, юнит-тесты, smoke-тест (Playwright), lint, AI code review
+- AI-анализ (опционально): подключение Ollama/Anthropic/Claude для code review и поиска уязвимостей
+- Провайдер `local` (без AI) или с моделью из реестра
+- `POST /products/:id/validate` — удобный API endpoint
+- `detectLintCommand()` — автоопределение lint для Node.js, Python, Go, .NET, Rust
+- UI: кнопка «Проверить» на странице продукта + модал с чекбоксами и выбором модели
+
+### validate_build
+
+- Автоматическая проверка сборки (`npm run build` / `dotnet build`) после develop_release
+- Шаг 10b между парсингом результата и GitLab push
+- Если build failed → `tests_passed = false`, процесс не авто-публикуется
+
+### UI Polish
+
+- Фильтр задач по приоритету: цветные chips (Critical/High/Medium/Low) вместо select
+- Скелетоны загрузки (shimmer-анимация) для Dashboard и Процессов
+- Человекочитаемые ошибки: 11 паттернов (ETIMEDOUT → «Превышено время ожидания»)
+- Chart.js: интерактивный stacked bar chart на Dashboard (published/developed/прочие)
+- Компактный Dashboard: помещается в 1 экран (viewport 900px)
+- Табы продукта: compact, no-wrap, horizontal scroll
+- ТОП-5 продуктов: сортировка по реальной активности (процессы и релизы за 7 дней)
+- Динамика релизов: по `updated_at` вместо `created_at`
+
+### API
+
+- `POST /products/:id/validate` — запуск комплексной проверки
+
+### БД (миграция 019)
+
+- `019_release_linear_status.sql`: миграция данных из status+dev_status в единый линейный status
+
+---
+
 ## v1.14.0 — Smoke-тесты, GitLab Issues, операционный центр, Develop UX (2026-03-16)
 
 **Smoke-тесты Playwright с автообнаружением, интеграция с GitLab Issues, переработка страницы процессов, git diff/MR/rollback из UI.**
