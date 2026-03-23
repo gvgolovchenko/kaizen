@@ -30,6 +30,10 @@ export async function callAI(model, systemPrompt, userPrompt, options = {}) {
       return callMLX(model_id, systemPrompt, userPrompt, timeoutMs);
     case 'claude-code':
       return callClaudeCode(model_id, systemPrompt, userPrompt, options);
+    case 'qwen-code':
+      return callQwenCode(model_id, systemPrompt, userPrompt, options);
+    case 'kilo-code':
+      return callKiloCode(model_id, systemPrompt, userPrompt, options);
     case 'anthropic':
       return callAnthropic(model_id, api_key, systemPrompt, userPrompt, timeoutMs);
     case 'openai':
@@ -105,6 +109,100 @@ async function callMLX(modelId, systemPrompt, userPrompt, timeoutMs) {
   return data.choices?.[0]?.message?.content || '';
 }
 
+// ── Kilo Code (CLI) ───────────────────────────────────
+
+async function callKiloCode(modelId, systemPrompt, userPrompt, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      'run',
+      '--format', 'default',
+      '--auto',
+    ];
+    if (modelId) args.push('--model', modelId);
+    if (opts.cwd) args.push('--dir', opts.cwd);
+
+    // System prompt + user prompt combined as message
+    args.push('--', `${systemPrompt}\n\n${userPrompt}`);
+
+    const env = { ...process.env };
+
+    const timeout = opts.timeoutMs || 20 * 60 * 1000;
+    const maxBuffer = (opts.maxBufferMb || 10) * 1024 * 1024;
+    const execOpts = { timeout, env, maxBuffer };
+
+    const child = execFile('kilo', args, execOpts, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`Kilo Code error: ${err.message}`));
+      resolve(stdout || '');
+    });
+    child.stdin.end();
+  });
+}
+
+/**
+ * Call Kilo Code CLI with streaming JSON output.
+ */
+export async function callKiloCodeStreaming(modelId, systemPrompt, userPrompt, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      'run',
+      '--format', 'json',
+      '--auto',
+    ];
+    if (modelId) args.push('--model', modelId);
+    if (opts.cwd) args.push('--dir', opts.cwd);
+
+    args.push('--', `${systemPrompt}\n\n${userPrompt}`);
+
+    const env = { ...process.env };
+
+    const timeout = opts.timeoutMs || 20 * 60 * 1000;
+    const spawnOpts = { env };
+
+    const child = spawn('kilo', args, spawnOpts);
+    const events = [];
+    let lastText = '';
+
+    const rl = createInterface({ input: child.stdout });
+    rl.on('line', (line) => {
+      try {
+        const event = JSON.parse(line);
+        events.push(event);
+        if (opts.onEvent) opts.onEvent(event);
+        // Capture text from text events
+        if (event.type === 'text' && event.part?.text) {
+          lastText = event.part.text;
+        }
+        // Capture result event if present
+        if (event.type === 'result' && event.result) {
+          lastText = event.result;
+        }
+      } catch { /* skip non-JSON lines */ }
+    });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`Kilo Code timeout (${Math.round(timeout / 60000)} мин)`));
+    }, timeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      rl.close();
+      if (code !== 0 && !lastText) {
+        return reject(new Error(`Kilo Code exited with code ${code}`));
+      }
+      resolve({ text: lastText, events });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      rl.close();
+      reject(new Error(`Kilo Code spawn error: ${err.message}`));
+    });
+
+    child.stdin.end();
+  });
+}
+
 // ── Claude Code (CLI) ──────────────────────────────────
 
 async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
@@ -136,6 +234,101 @@ async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
       if (err) return reject(new Error(`Claude Code error: ${err.message}`));
       resolve(stdout || '');
     });
+    child.stdin.end();
+  });
+}
+
+// ── Qwen Code (CLI) ────────────────────────────────────
+
+async function callQwenCode(modelId, systemPrompt, userPrompt, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const tools = opts.allowedTools || ['Read', 'Glob', 'Grep'];
+
+    const args = [
+      '--output-format', 'text',
+      '--yolo',
+      '--allowed-tools', ...tools,
+      '--max-session-turns', '50',
+    ];
+    if (modelId) args.push('--model', modelId);
+
+    const env = { ...process.env };
+    // Pass API keys if set on the model
+    if (opts.apiKey) env.OPENAI_API_KEY = opts.apiKey;
+
+    const timeout = opts.timeoutMs || 20 * 60 * 1000;
+    const maxBuffer = (opts.maxBufferMb || 10) * 1024 * 1024;
+    const execOpts = { timeout, env, maxBuffer };
+    if (opts.cwd) execOpts.cwd = opts.cwd;
+
+    const child = execFile('qwen', args, execOpts, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`Qwen Code error: ${err.message}`));
+      resolve(stdout || '');
+    });
+    child.stdin.write(`${systemPrompt}\n\n${userPrompt}`);
+    child.stdin.end();
+  });
+}
+
+/**
+ * Call Qwen Code CLI with streaming NDJSON output.
+ */
+export async function callQwenCodeStreaming(modelId, systemPrompt, userPrompt, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const tools = opts.allowedTools || ['Read', 'Glob', 'Grep'];
+    const args = [
+      '--output-format', 'stream-json',
+      '--yolo',
+      '--allowed-tools', ...tools,
+      '--max-session-turns', '50',
+    ];
+    if (modelId) args.push('--model', modelId);
+
+    const env = { ...process.env };
+    if (opts.apiKey) env.OPENAI_API_KEY = opts.apiKey;
+
+    const timeout = opts.timeoutMs || 20 * 60 * 1000;
+    const spawnOpts = { env, cwd: opts.cwd || process.cwd() };
+
+    const child = spawn('qwen', args, spawnOpts);
+    child.stdin.write(`${systemPrompt}\n\n${userPrompt}`);
+    child.stdin.end();
+    const events = [];
+    let lastText = '';
+
+    const rl = createInterface({ input: child.stdout });
+    rl.on('line', (line) => {
+      try {
+        const event = JSON.parse(line);
+        events.push(event);
+        if (opts.onEvent) opts.onEvent(event);
+        // Capture last text result
+        if (event.type === 'result' && event.result) lastText = event.result;
+        if (event.type === 'assistant' && event.message?.content) {
+          const textBlock = event.message.content.find(b => b.type === 'text');
+          if (textBlock) lastText = textBlock.text;
+        }
+      } catch { /* skip non-JSON lines */ }
+    });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`Qwen Code timeout (${Math.round(timeout / 60000)} мин)`));
+    }, timeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && !lastText) {
+        return reject(new Error(`Qwen Code exited with code ${code}`));
+      }
+      resolve({ text: lastText, events });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error(`Qwen Code spawn error: ${err.message}`));
+    });
+
     child.stdin.end();
   });
 }

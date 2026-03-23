@@ -69,14 +69,15 @@ export async function getStats() {
   // Top-5 most active products
   const { rows: topActive } = await pool.query(`
     SELECT p.id, p.name,
-      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open')::int AS open_issues,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status IN ('open', 'in_release'))::int AS active_issues,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id)::int AS total_issues,
       (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.status IN ('running', 'queued'))::int AS active_processes,
       (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.updated_at >= CURRENT_DATE - INTERVAL '7 days')::int AS recent_processes,
       (SELECT count(*) FROM opii.kaizen_releases r WHERE r.product_id = p.id AND r.updated_at >= CURRENT_DATE - INTERVAL '7 days')::int AS recent_releases,
       p.last_pipeline_at
     FROM opii.kaizen_products p
     WHERE p.status = 'active'
-    ORDER BY active_processes DESC, recent_processes DESC, recent_releases DESC, open_issues DESC
+    ORDER BY active_processes DESC, recent_processes DESC, recent_releases DESC, active_issues DESC
     LIMIT 5
   `);
 
@@ -96,6 +97,30 @@ export async function getStats() {
     GROUP BY priority ORDER BY count DESC
   `);
 
+  // Issues per product — open only, broken down by type and priority
+  const { rows: issuesByProduct } = await pool.query(`
+    SELECT
+      p.id AS product_id,
+      p.name AS product_name,
+      count(*)::int AS total,
+      count(*) FILTER (WHERE i.type = 'bug')::int AS bugs,
+      count(*) FILTER (WHERE i.type = 'improvement')::int AS improvements,
+      count(*) FILTER (WHERE i.type = 'feature')::int AS features,
+      count(*) FILTER (WHERE i.priority = 'critical')::int AS critical,
+      count(*) FILTER (WHERE i.priority = 'high')::int AS high,
+      count(*) FILTER (WHERE i.priority = 'medium')::int AS medium,
+      count(*) FILTER (WHERE i.priority = 'low')::int AS low
+    FROM opii.kaizen_issues i
+    JOIN opii.kaizen_products p ON p.id = i.product_id
+    WHERE i.status = 'open' AND p.status = 'active'
+    GROUP BY p.id, p.name
+    HAVING count(*) > 0
+    ORDER BY
+      count(*) FILTER (WHERE i.priority = 'critical') DESC,
+      count(*) FILTER (WHERE i.priority = 'high') DESC,
+      count(*) DESC
+  `);
+
   // Processes by type
   const { rows: processesByType } = await pool.query(`
     SELECT type, count(*)::int AS count
@@ -103,16 +128,31 @@ export async function getStats() {
     GROUP BY type ORDER BY count DESC
   `);
 
-  // Release velocity (last 8 weeks) — by latest activity (updated_at)
+  // Release velocity (last 7 days) — by latest activity (updated_at)
   const { rows: velocity } = await pool.query(`
     SELECT
-      date_trunc('week', updated_at)::date AS week,
+      updated_at::date AS day,
       count(*)::int AS count,
       count(*) FILTER (WHERE status = 'published')::int AS published,
       count(*) FILTER (WHERE status = 'developed')::int AS developed
     FROM opii.kaizen_releases
-    WHERE updated_at >= CURRENT_DATE - INTERVAL '8 weeks'
+    WHERE updated_at >= CURRENT_DATE - INTERVAL '7 days'
     GROUP BY 1 ORDER BY 1
+  `);
+
+  // Release heatmap: products × days (last 7 days)
+  const { rows: heatmap } = await pool.query(`
+    SELECT
+      p.id AS product_id,
+      p.name AS product_name,
+      r.updated_at::date AS day,
+      count(*)::int AS count,
+      count(*) FILTER (WHERE r.status = 'published')::int AS published
+    FROM opii.kaizen_releases r
+    JOIN opii.kaizen_products p ON p.id = r.product_id
+    WHERE r.updated_at >= CURRENT_DATE - INTERVAL '7 days'
+    GROUP BY p.id, p.name, r.updated_at::date
+    ORDER BY p.name, day
   `);
 
   // Last 5 pipeline runs
@@ -124,15 +164,33 @@ export async function getStats() {
     LIMIT 5
   `);
 
-  // Recent activity: last 10 completed/failed processes
+  // Recent activity: last 15 completed/failed processes + published releases (mixed feed)
   const { rows: activity } = await pool.query(`
-    SELECT pr.id, pr.type, pr.status, pr.updated_at,
-      p.name AS product_name, p.id AS product_id
-    FROM opii.kaizen_processes pr
-    LEFT JOIN opii.kaizen_products p ON p.id = pr.product_id
-    WHERE pr.status IN ('completed', 'failed')
-    ORDER BY pr.updated_at DESC
-    LIMIT 10
+    SELECT
+      id, type, status, updated_at, product_name, product_id, result,
+      EXTRACT(EPOCH FROM (updated_at - started_at))::int AS duration_sec,
+      approved_count
+    FROM (
+      SELECT pr.id, pr.type, pr.status, pr.updated_at, pr.result,
+        pr.started_at, pr.approved_count,
+        p.name AS product_name, p.id AS product_id
+      FROM opii.kaizen_processes pr
+      LEFT JOIN opii.kaizen_products p ON p.id = pr.product_id
+      WHERE pr.status IN ('completed', 'failed')
+      UNION ALL
+      SELECT
+        r.id, 'release_published' AS type, 'completed' AS status, r.released_at AS updated_at,
+        jsonb_build_object('release_name', r.name, 'issues_count',
+          (SELECT count(*) FROM opii.kaizen_release_issues ri WHERE ri.release_id = r.id)
+        ) AS result,
+        r.released_at AS started_at, NULL AS approved_count,
+        p.name AS product_name, p.id AS product_id
+      FROM opii.kaizen_releases r
+      JOIN opii.kaizen_products p ON p.id = r.product_id
+      WHERE r.status = 'published' AND r.released_at IS NOT NULL
+    ) combined
+    ORDER BY updated_at DESC
+    LIMIT 15
   `);
 
   return {
@@ -150,6 +208,7 @@ export async function getStats() {
       done: parseInt(stats.issues_done),
       by_type: issuesByType,
       by_priority: issuesByPriority,
+      by_product: issuesByProduct,
       created_this_week: parseInt(stats.issues_created_this_week),
       closed_this_week: parseInt(stats.issues_closed_this_week),
     },
@@ -170,6 +229,7 @@ export async function getStats() {
       this_week: parseInt(stats.releases_this_week),
       this_month: parseInt(stats.releases_this_month),
       velocity,
+      heatmap,
     },
     plans: {
       active: parseInt(stats.plans_active),

@@ -1,4 +1,5 @@
 import { api, escapeHtml, formatDate } from './app.js';
+import { procTypeLabel } from './process-detail.js';
 
 let refreshTimer = null;
 
@@ -7,7 +8,7 @@ async function loadDashboard() {
     const d = await api('/dashboard');
     renderSummary(d);
     renderDetails(d);
-    renderHealth(d);
+    renderIssuesByProduct(d);
 
     // Auto-refresh every 30s if there are running processes
     clearInterval(refreshTimer);
@@ -156,108 +157,132 @@ function renderSummary(d) {
 }
 
 function renderDetails(d) {
-  const el = document.getElementById('dashDetails');
+  // Top-5 active products
+  const topProducts = (d.products.top_active || []).slice(0, 5);
+  const maxActivity = Math.max(...topProducts.map(p => (p.recent_processes || 0) + (p.recent_releases || 0)), 1);
 
-  // Top-5 active products table
-  const topRows = (d.products.top_active || []).slice(0, 3).map(p => `
-    <tr onclick="location.href='product.html?id=${p.id}'" style="cursor:pointer">
-      <td>${escapeHtml(p.name)}</td>
-      <td>${p.recent_processes || 0}</td>
-      <td>${p.recent_releases || 0}</td>
-      <td>${p.open_issues}</td>
-    </tr>`).join('');
-
-  // Weekly bar chart
-  const velocityData = d.releases.velocity || [];
-  const maxVel = Math.max(...velocityData.map(v => v.count), 1);
-  const barChart = renderWeeklyChart(velocityData, maxVel);
-
-  // Activity feed
-  const activityList = (d.recent_activity || []).slice(0, 5).map(a => `
-    <div class="activity-item">
-      <span class="badge badge-${a.status === 'completed' ? 'done' : 'failed'}" style="font-size:0.65rem">${a.status === 'completed' ? 'OK' : 'ERR'}</span>
-      <span class="activity-type">${escapeHtml(a.type)}</span>
-      ${a.product_name ? `<a href="product.html?id=${a.product_id}" class="activity-product" onclick="event.stopPropagation()">${escapeHtml(a.product_name)}</a>` : ''}
-      <span class="activity-time">${formatDate(a.updated_at)}</span>
-    </div>`).join('');
-
-  el.innerHTML = `
+  document.getElementById('dashTopProducts').innerHTML = `
     <div class="widget widget-large">
       <div class="widget-title">Продукты — ТОП-5 по активности</div>
-      ${topRows ? `
-      <div class="mini-table-wrap">
-        <table class="mini-table">
-          <thead>
-            <tr><th>Продукт</th><th>Проц. 7д</th><th>Рел. 7д</th><th>Задачи</th></tr>
-          </thead>
-          <tbody>${topRows}</tbody>
-        </table>
-      </div>` : '<div class="widget-label">Нет активных продуктов</div>'}
-    </div>
+      ${topProducts.length ? `<div class="top-products">${topProducts.map(p => {
+        const activity = (p.recent_processes || 0) + (p.recent_releases || 0);
+        const pct = Math.round((activity / maxActivity) * 100);
+        return `
+        <a href="product.html?id=${p.id}" class="top-product-card">
+          <div class="top-product-header">
+            <span class="top-product-name">${escapeHtml(p.name)}</span>
+            ${p.active_processes > 0 ? '<span class="top-product-pulse"></span>' : ''}
+          </div>
+          <div class="top-product-bar">
+            <div class="top-product-bar-fill" style="width:${Math.max(pct, 3)}%">
+              <div class="top-product-bar-proc" style="width:${activity ? Math.round((p.recent_processes || 0) / activity * 100) : 0}%"></div>
+            </div>
+          </div>
+          <div class="top-product-stats">
+            <span title="Процессы за 7 дней">${p.recent_processes || 0} проц.</span>
+            <span title="Релизы за 7 дней">${p.recent_releases || 0} рел.</span>
+            <span title="Активные / всего задач" ${p.active_issues > 0 ? 'style="color:var(--yellow)"' : ''}>${p.active_issues}/${p.total_issues} задач</span>
+          </div>
+        </a>`;
+      }).join('')}</div>` : '<div class="widget-label">Нет активных продуктов</div>'}
+    </div>`;
 
+  // Heatmap
+  document.getElementById('dashHeatmap').innerHTML = `
     <div class="widget">
-      <div class="widget-title">Динамика релизов (8 недель)</div>
-      <div style="height:90px;position:relative">
-        <canvas id="velocityChart"></canvas>
-      </div>
-    </div>
+      <div class="widget-title">Релизы по продуктам (7 дней)</div>
+      ${renderReleaseHeatmap(d.releases.heatmap || [], d.releases.velocity || [])}
+    </div>`;
 
+  // Activity feed
+  document.getElementById('dashActivity').innerHTML = `
     <div class="widget">
       <div class="widget-title">Лента активности</div>
       <div class="widget-activity">
-        ${activityList || '<div class="widget-label">Нет активности</div>'}
+        ${renderActivityFeed(d.recent_activity || [])}
       </div>
-    </div>
-  `;
+    </div>`;
+}
 
-  // Render Chart.js velocity chart
-  if (typeof Chart !== 'undefined' && velocityData.length > 0) {
-    requestAnimationFrame(() => {
-      const ctx = document.getElementById('velocityChart');
-      if (!ctx) return;
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: velocityData.map(v => new Date(v.week).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })),
-          datasets: [
-            {
-              label: 'Опубликовано',
-              data: velocityData.map(v => v.published || 0),
-              backgroundColor: 'rgba(52,211,153,0.6)',
-              borderRadius: 4,
-            },
-            {
-              label: 'Готовы',
-              data: velocityData.map(v => v.developed || 0),
-              backgroundColor: 'rgba(96,165,250,0.6)',
-              borderRadius: 4,
-            },
-            {
-              label: 'Прочие',
-              data: velocityData.map(v => (v.count || 0) - (v.published || 0) - (v.developed || 0)),
-              backgroundColor: 'rgba(136,144,164,0.4)',
-              borderRadius: 4,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: true, labels: { color: '#8890a4', boxWidth: 10, font: { size: 10 } } } },
-          scales: {
-            y: { beginAtZero: true, stacked: true, ticks: { color: '#8890a4', stepSize: 1 }, grid: { color: '#2e313d' } },
-            x: { stacked: true, ticks: { color: '#8890a4' }, grid: { display: false } },
-          },
-        },
-      });
-    });
+function renderReleaseHeatmap(heatmap, velocity) {
+  // Build last 7 days ending with today
+  const now = new Date();
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    days.push(`${yyyy}-${mm}-${dd}`);
   }
+
+  // Build products list and data grid
+  const productMap = new Map();
+  for (const row of heatmap) {
+    if (!productMap.has(row.product_id)) {
+      productMap.set(row.product_id, { name: row.product_name, id: row.product_id, cells: {} });
+    }
+    const rd = new Date(row.day);
+    const dayKey = `${rd.getFullYear()}-${String(rd.getMonth()+1).padStart(2,'0')}-${String(rd.getDate()).padStart(2,'0')}`;
+    productMap.get(row.product_id).cells[dayKey] = { count: row.count, published: row.published };
+  }
+
+  const products = [...productMap.values()];
+  if (products.length === 0) {
+    return '<div style="font-size:0.85rem;color:var(--text-dim);padding:8px">Нет данных за последние 7 дней</div>';
+  }
+
+  const maxCount = Math.max(...heatmap.map(r => r.count), 1);
+
+  const DAY_NAMES = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+  // Day headers
+  const dayHeaders = days.map(w => {
+    const d = new Date(w);
+    const dayName = DAY_NAMES[d.getDay()];
+    const dateStr = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+    return `<th class="heatmap-th">${dayName}<br><span style="font-weight:400;opacity:0.7">${dateStr}</span></th>`;
+  }).join('');
+
+  // Totals row from velocity
+  const totalsRow = days.map(w => {
+    const v = velocity.find(vv => { const d = new Date(vv.day); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` === w; });
+    const count = v?.count || 0;
+    return `<td class="heatmap-cell"><span class="heatmap-total">${count || ''}</span></td>`;
+  }).join('');
+
+  // Product rows
+  const rows = products.map(p => {
+    const cells = days.map(w => {
+      const cell = p.cells[w];
+      if (!cell) return '<td class="heatmap-cell"><span class="heatmap-dot heatmap-dot-0"></span></td>';
+      const intensity = Math.min(Math.ceil((cell.count / maxCount) * 4), 4);
+      const allPublished = cell.published === cell.count;
+      const cls = allPublished ? 'heatmap-dot-pub' : `heatmap-dot-${intensity}`;
+      return `<td class="heatmap-cell" title="${cell.count} рел.${cell.published ? `, ${cell.published} опубл.` : ''}"><span class="heatmap-dot ${cls}">${cell.count}</span></td>`;
+    }).join('');
+    return `<tr>
+      <td class="heatmap-product"><a href="product.html?id=${p.id}">${escapeHtml(p.name)}</a></td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="heatmap-wrap">
+      <table class="heatmap-table">
+        <thead><tr><th class="heatmap-th"></th>${dayHeaders}</tr></thead>
+        <tbody>
+          ${rows}
+          <tr class="heatmap-totals"><td class="heatmap-product" style="font-weight:600">Итого</td>${totalsRow}</tr>
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function renderWeeklyChart(velocity, maxVal) {
   return velocity.map(v => {
     const pct = Math.round((v.count / maxVal) * 100);
-    const weekLabel = new Date(v.week).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+    const weekLabel = new Date(v.day).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
     return `
       <div class="bar-chart-col">
         <div class="bar-chart-value">${v.count}</div>
@@ -267,6 +292,161 @@ function renderWeeklyChart(velocity, maxVal) {
         <div class="bar-chart-label">${weekLabel}</div>
       </div>`;
   }).join('');
+}
+
+function activityResultSummary(a) {
+  const r = a.result;
+  if (!r) return '';
+  if (a.type === 'release_published') {
+    const name = r.release_name ? escapeHtml(r.release_name) : '';
+    const issues = r.issues_count ? ` · ${r.issues_count} задач` : '';
+    return `<span class="activity-result">${name}${issues}</span>`;
+  }
+  if (a.type === 'improve') {
+    const total = Array.isArray(r) ? r.length : 0;
+    if (!total) return '';
+    const approved = a.approved_count || 0;
+    return `<span class="activity-result">${approved > 0 ? `${approved}/${total}` : total} предл.</span>`;
+  }
+  if (a.type === 'develop_release' && r.branch) {
+    const icon = r.tests_passed ? '✓' : '✗';
+    return `<span class="activity-result" style="color:${r.tests_passed ? 'var(--green)' : 'var(--red)'}">${icon} ${escapeHtml(r.branch)}</span>`;
+  }
+  if (a.type === 'prepare_spec' && r.char_count) {
+    return `<span class="activity-result">${r.char_count.toLocaleString()} сим.</span>`;
+  }
+  if (a.type === 'form_release' && r.releases) {
+    return `<span class="activity-result">${r.releases.length} рел.${r.auto_approved ? ' (авто)' : ''}</span>`;
+  }
+  if (a.type === 'roadmap_from_doc' && r.roadmap) {
+    return `<span class="activity-result">${r.total_releases || 0} р. / ${r.total_issues || 0} з.</span>`;
+  }
+  if (a.type === 'prepare_press_release' && r.channels) {
+    return `<span class="activity-result">${r.channels.length} кан.</span>`;
+  }
+  return '';
+}
+
+function activityDuration(sec) {
+  if (!sec || sec < 2) return '';
+  if (sec < 60) return `${sec}с`;
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return s > 0 ? `${m}м ${s}с` : `${m}м`;
+}
+
+function renderActivityFeed(items) {
+  items = items.slice(0, 10);
+  if (!items.length) return '<div class="widget-label">Нет активности</div>';
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+
+  const groups = [
+    { label: 'Сегодня', items: [] },
+    { label: 'Вчера', items: [] },
+    { label: 'Ранее', items: [] },
+  ];
+
+  for (const a of items) {
+    const d = new Date(a.updated_at); d.setHours(0, 0, 0, 0);
+    if (d >= today) groups[0].items.push(a);
+    else if (d >= yesterday) groups[1].items.push(a);
+    else groups[2].items.push(a);
+  }
+
+  return groups.filter(g => g.items.length).map(g => `
+    <div class="activity-group-label">${g.label}</div>
+    ${g.items.map(a => {
+      const ok = a.status === 'completed';
+      const isRelease = a.type === 'release_published';
+      const icon = isRelease ? '🚀' : (ok ? '<span class="activity-ok">✓</span>' : '<span class="activity-err">✗</span>');
+      const label = isRelease ? 'Релиз опубликован' : procTypeLabel(a.type);
+      const dur = activityDuration(a.duration_sec);
+      const result = activityResultSummary(a);
+      const href = a.product_id ? `product.html?id=${a.product_id}` : '#';
+      return `
+      <a href="${href}" class="activity-item activity-item-link">
+        <span class="activity-icon">${icon}</span>
+        <div class="activity-body">
+          <div class="activity-row1">
+            <span class="activity-type">${label}</span>
+            ${result}
+          </div>
+          <div class="activity-row2">
+            ${a.product_name ? `<span class="activity-product">${escapeHtml(a.product_name)}</span>` : ''}
+            <span class="activity-time">${formatDate(a.updated_at)}</span>
+            ${dur ? `<span class="activity-dur">${dur}</span>` : ''}
+          </div>
+        </div>
+      </a>`;
+    }).join('')}
+  `).join('');
+}
+
+function renderIssuesByProduct(d) {
+  const el = document.getElementById('dashIssues');
+  if (!el) return;
+
+  const items = (d.issues.by_product || []);
+  const total = d.issues.open || 0;
+
+  if (!items.length) {
+    el.innerHTML = `<div class="widget"><div class="widget-title">Задачи по продуктам</div><div class="widget-label">Нет открытых задач</div></div>`;
+    return;
+  }
+
+  const maxTotal = Math.max(...items.map(p => p.total), 1);
+
+  const rows = items.map(p => {
+    const bugPct   = Math.round((p.bugs        / p.total) * 100);
+    const impPct   = Math.round((p.improvements / p.total) * 100);
+    const featPct  = Math.round((p.features    / p.total) * 100);
+    const barWidth = Math.round((p.total / maxTotal) * 100);
+
+    const critBadge = p.critical ? `<span class="ip-badge ip-crit">${p.critical}</span>` : `<span class="ip-badge ip-empty">—</span>`;
+    const highBadge = p.high     ? `<span class="ip-badge ip-high">${p.high}</span>`     : `<span class="ip-badge ip-empty">—</span>`;
+    const medBadge  = p.medium   ? `<span class="ip-badge ip-med">${p.medium}</span>`    : `<span class="ip-badge ip-empty">—</span>`;
+    const lowBadge  = p.low      ? `<span class="ip-badge ip-low">${p.low}</span>`       : `<span class="ip-badge ip-empty">—</span>`;
+
+    const typeParts = [
+      p.bugs         ? `<span class="ip-type-dot ip-type-bug"></span>${p.bugs} баг${p.bugs > 1 ? 'а' : ''}` : '',
+      p.improvements ? `<span class="ip-type-dot ip-type-imp"></span>${p.improvements} улучш.` : '',
+      p.features     ? `<span class="ip-type-dot ip-type-feat"></span>${p.features} фич${p.features > 1 ? 'и' : 'а'}` : '',
+    ].filter(Boolean).join(' ');
+
+    return `
+    <a href="product.html?id=${p.product_id}#issues" class="ip-row">
+      <div class="ip-name">${escapeHtml(p.product_name)}</div>
+      <div class="ip-bar-wrap">
+        <div class="ip-bar-track">
+          <div class="ip-bar" style="width:${barWidth}%">
+            <div class="ip-bar-bug"  style="width:${bugPct}%"></div>
+            <div class="ip-bar-imp"  style="width:${impPct}%"></div>
+            <div class="ip-bar-feat" style="width:${featPct}%"></div>
+          </div>
+        </div>
+        <span class="ip-total">${p.total}</span>
+        <span class="ip-types">${typeParts}</span>
+      </div>
+      <div class="ip-priorities">
+        ${critBadge}${highBadge}${medBadge}${lowBadge}
+      </div>
+    </a>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="widget widget-full">
+      <div class="widget-title">Задачи по продуктам <span class="widget-title-count">${total} открытых</span></div>
+      <div class="ip-header">
+        <span class="ip-col-name"></span>
+        <span class="ip-col-bar"></span>
+        <span class="ip-col-pri">CRIT</span>
+        <span class="ip-col-pri">HIGH</span>
+        <span class="ip-col-pri">MED</span>
+        <span class="ip-col-pri">LOW</span>
+      </div>
+      <div class="ip-list">${rows}</div>
+    </div>`;
 }
 
 function renderHealth(d) {

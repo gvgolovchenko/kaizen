@@ -4,7 +4,7 @@ import * as products from './db/products.js';
 import * as releases from './db/releases.js';
 import * as issues from './db/issues.js';
 import * as aiModels from './db/ai-models.js';
-import { callAI, callClaudeCodeStreaming } from './ai-caller.js';
+import { callAI, callClaudeCodeStreaming, callQwenCodeStreaming, callKiloCodeStreaming } from './ai-caller.js';
 import { parseJsonFromAI, detectTestCommand, detectBuildCommand, detectLintCommand, validateBranchName } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
@@ -14,6 +14,12 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFileCb);
+
+function _pickStreamingCaller(provider) {
+  if (provider === 'qwen-code') return callQwenCodeStreaming;
+  if (provider === 'kilo-code') return callKiloCodeStreaming;
+  return callClaudeCodeStreaming;
+}
 
 /**
  * Generate context_files prompt section from product automation config.
@@ -332,7 +338,7 @@ export async function runProcess(processId, options = {}) {
     const model = await aiModels.getById(proc.model_id);
     if (!model) throw new Error('Model not found');
 
-    if (model.deployment === 'cloud' && model.provider !== 'claude-code' && !model.api_key) {
+    if (model.deployment === 'cloud' && !['claude-code', 'qwen-code', 'kilo-code'].includes(model.provider) && !model.api_key) {
       throw new Error('API key required for cloud model');
     }
 
@@ -362,9 +368,10 @@ export async function runProcess(processId, options = {}) {
       return;
     }
     const taskCount = Math.min(Math.max(parseInt(proc.input_count) || 5, 1), 10);
+    const outputMode = proc.config?.output_mode || 'tasks';
 
     // 3. Build prompts
-    const isClaudeCode = model.provider === 'claude-code';
+    const isClaudeCode = model.provider === 'claude-code' || model.provider === 'qwen-code' || model.provider === 'kilo-code';
     const hasProjectPath = !!product.project_path;
     const useInteractiveTools = isClaudeCode && hasProjectPath;
     const useCollectedContext = !isClaudeCode && hasProjectPath;
@@ -391,15 +398,48 @@ export async function runProcess(processId, options = {}) {
       }
     }
 
-    const systemPrompt = `Ты — эксперт по улучшению программных продуктов. Анализируй продукт и генерируй конкретные, реализуемые задачи.
-
-Продукт: ${product.name}
+    const productContext = `Продукт: ${product.name}
 ${product.description ? `Описание: ${product.description}` : ''}
 ${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
 ${!hasProjectPath && product.repo_url ? `Репозиторий: ${product.repo_url}` : ''}
 ${product.owner ? `Ответственный: ${product.owner}` : ''}
 ${useInteractiveTools ? `\nПроект находится в текущей директории. Начни с чтения CLAUDE.md и файлов из docs/ — там контекст проекта, архитектура, API, схема БД, бизнес-логика. Затем используй инструменты Read, Glob, Grep чтобы изучить код и структуру файлов. Основывай предложения на реальном коде и документации проекта.` : ''}
-${fileContext ? `\nНиже приведён контекст проекта (файлы, документация, структура). Используй его для анализа и генерации предложений на основе реального кода.\n\n${fileContext}` : ''}
+${fileContext ? `\nНиже приведён контекст проекта (файлы, документация, структура). Используй его для анализа и генерации предложений на основе реального кода.\n\n${fileContext}` : ''}`;
+
+    let systemPrompt;
+    if (outputMode === 'releases') {
+      systemPrompt = `Ты — эксперт по улучшению программных продуктов. Анализируй продукт и генерируй конкретные, реализуемые задачи, сгруппированные в логические релизы (этапы).
+
+${productContext}
+
+ВАЖНО: Верни ответ ТОЛЬКО как JSON указанного формата. Никакого текста, рассуждений или тегов до или после JSON. Не используй <think> блоки.
+Формат:
+{
+  "summary": "Краткое описание дорожной карты (2-4 предложения)",
+  "total_releases": <число>,
+  "total_issues": <число>,
+  "roadmap": [
+    {
+      "version": "1.0.0",
+      "name": "Название релиза",
+      "description": "Что войдёт в этот релиз и какую ценность принесёт",
+      "issues": [
+        {
+          "title": "Краткое название задачи (до 150 символов)",
+          "description": "Подробное описание что нужно сделать и зачем",
+          "type": "feature | improvement | bug",
+          "priority": "critical | high | medium | low"
+        }
+      ]
+    }
+  ]
+}
+
+Сгенерируй примерно ${taskCount} задач, распределённых по релизам. Каждый релиз должен быть самодостаточным.`;
+    } else {
+      systemPrompt = `Ты — эксперт по улучшению программных продуктов. Анализируй продукт и генерируй конкретные, реализуемые задачи.
+
+${productContext}
 
 ВАЖНО: Верни ответ ТОЛЬКО как JSON-массив из ${taskCount} задач. Никакого текста, рассуждений или тегов до или после JSON. Не используй <think> блоки.
 Формат каждой задачи:
@@ -409,6 +449,7 @@ ${fileContext ? `\nНиже приведён контекст проекта (ф
   "type": "improvement | bug | feature",
   "priority": "critical | high | medium | low"
 }`;
+    }
 
     const userPrompt = proc.input_prompt || IMPROVE_TEMPLATES[proc.input_template_id] || IMPROVE_TEMPLATES.general;
 
@@ -466,38 +507,81 @@ ${fileContext ? `\nНиже приведён контекст проекта (ф
       throw new Error('Failed to parse AI response as JSON');
     }
 
-    // 8. Log: parse_result
-    await processLogs.create({
-      process_id: processId,
-      step: 'parse_result',
-      message: `JSON распарсен: ${parsed.length} элементов`,
-      data: { count: parsed.length },
-    });
-
-    // 9. Validate and normalize
     const validTypes = ['improvement', 'bug', 'feature'];
     const validPriorities = ['critical', 'high', 'medium', 'low'];
 
-    const suggestions = parsed.slice(0, taskCount).map(s => ({
-      title: String(s.title || '').slice(0, 200),
-      description: String(s.description || ''),
-      type: validTypes.includes(s.type) ? s.type : 'improvement',
-      priority: validPriorities.includes(s.priority) ? s.priority : 'medium',
-    })).filter(s => s.title.length > 0);
+    let finalResult;
 
-    // 10. Log: issues_ready
-    await processLogs.create({
-      process_id: processId,
-      step: 'issues_ready',
-      message: `Подготовлено предложений: ${suggestions.length}`,
-      data: { count: suggestions.length },
-    });
+    if (outputMode === 'releases') {
+      // Roadmap-style result
+      if (!Array.isArray(parsed.roadmap) || parsed.roadmap.length === 0) {
+        await processLogs.create({
+          process_id: processId,
+          step: 'error',
+          message: 'Невалидная структура дорожной карты в ответе модели',
+          data: { raw_response: rawResponse.slice(0, 2000) },
+        });
+        throw new Error('Invalid roadmap structure in AI response');
+      }
+
+      const roadmap = parsed.roadmap.map(release => ({
+        version: String(release.version || '').slice(0, 20),
+        name: String(release.name || '').slice(0, 100),
+        description: String(release.description || ''),
+        issues: Array.isArray(release.issues) ? release.issues
+          .map(i => ({
+            title: String(i.title || '').slice(0, 200),
+            description: String(i.description || ''),
+            type: validTypes.includes(i.type) ? i.type : 'improvement',
+            priority: validPriorities.includes(i.priority) ? i.priority : 'medium',
+          }))
+          .filter(i => i.title.length > 0) : [],
+      })).filter(r => r.version.length > 0 && r.name.length > 0);
+
+      finalResult = {
+        summary: String(parsed.summary || ''),
+        total_releases: roadmap.length,
+        total_issues: roadmap.reduce((sum, r) => sum + r.issues.length, 0),
+        roadmap,
+      };
+
+      await processLogs.create({
+        process_id: processId,
+        step: 'parse_result',
+        message: `Дорожная карта: ${finalResult.total_releases} релизов, ${finalResult.total_issues} задач`,
+        data: { total_releases: finalResult.total_releases, total_issues: finalResult.total_issues },
+      });
+    } else {
+      // Flat tasks result (default)
+      const items = Array.isArray(parsed) ? parsed : (parsed.issues || parsed.suggestions || []);
+
+      await processLogs.create({
+        process_id: processId,
+        step: 'parse_result',
+        message: `JSON распарсен: ${items.length} элементов`,
+        data: { count: items.length },
+      });
+
+      finalResult = items.slice(0, taskCount).map(s => ({
+        title: String(s.title || '').slice(0, 200),
+        description: String(s.description || ''),
+        type: validTypes.includes(s.type) ? s.type : 'improvement',
+        priority: validPriorities.includes(s.priority) ? s.priority : 'medium',
+      })).filter(s => s.title.length > 0);
+
+      await processLogs.create({
+        process_id: processId,
+        step: 'issues_ready',
+        message: `Подготовлено предложений: ${finalResult.length}`,
+        data: { count: finalResult.length },
+      });
+    }
 
     // 11. Update process → completed
     const durationMs = Date.now() - startTime;
     await processes.update(processId, {
       status: 'completed',
-      result: suggestions,
+      result: finalResult,
       completed_at: new Date().toISOString(),
       duration_ms: durationMs,
     });
@@ -613,7 +697,7 @@ async function runPrepareSpec(processId, proc, product, model, startTime, timeou
   const publishedReleases = await releases.getPublishedByProduct(product.id, 3);
 
   // 2. Determine mode (same pattern as improve)
-  const isClaudeCode = model.provider === 'claude-code';
+  const isClaudeCode = model.provider === 'claude-code' || model.provider === 'qwen-code' || model.provider === 'kilo-code';
   const hasProjectPath = !!product.project_path;
   const useInteractiveTools = isClaudeCode && hasProjectPath;
   const useCollectedContext = !isClaudeCode && hasProjectPath;
@@ -786,11 +870,12 @@ async function runRoadmapFromDoc(processId, proc, product, model, startTime, tim
   if (!docText) throw new Error('Document text is empty');
 
   // 1. Determine mode
-  const isClaudeCode = model.provider === 'claude-code';
+  const isClaudeCode = model.provider === 'claude-code' || model.provider === 'qwen-code' || model.provider === 'kilo-code';
   const hasProjectPath = !!product.project_path;
   const useInteractiveTools = isClaudeCode && hasProjectPath;
   const useCollectedContext = !isClaudeCode && hasProjectPath;
   const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+  const outputMode = proc.config?.output_mode || 'releases';
 
   // 2. Collect project context for standalone mode
   let fileContext = '';
@@ -833,7 +918,27 @@ ${product.owner ? `Ответственный: ${product.owner}` : ''}`;
   systemPrompt += `\n\nВАЖНО: Верни ответ ТОЛЬКО как JSON указанного формата. Никакого текста вне JSON. Не используй <think> блоки.`;
 
   // 4. Build user prompt
-  const userPrompt = `Проанализируй следующий документ с требованиями и создай дорожную карту разработки.
+  let userPrompt;
+  if (outputMode === 'tasks') {
+    userPrompt = `Проанализируй следующий документ с требованиями и создай список задач.
+
+=== ДОКУМЕНТ ===
+${docText}
+=== КОНЕЦ ДОКУМЕНТА ===
+
+Извлеки все требования и преврати их в конкретные задачи для разработки. Каждая задача должна быть самодостаточной.
+
+Верни JSON строго как массив задач:
+[
+  {
+    "title": "Краткое название задачи (до 150 символов)",
+    "description": "Подробное описание что нужно сделать и зачем",
+    "type": "feature | improvement | bug",
+    "priority": "critical | high | medium | low"
+  }
+]`;
+  } else {
+    userPrompt = `Проанализируй следующий документ с требованиями и создай дорожную карту разработки.
 
 === ДОКУМЕНТ ===
 ${docText}
@@ -862,6 +967,7 @@ ${docText}
     }
   ]
 }`;
+  }
 
   // 5. Log: request_sent
   const logData = {
@@ -906,47 +1012,78 @@ ${docText}
 
   // 8. Parse and validate
   const parsed = parseJsonFromAI(rawResponse);
-  if (!parsed || !Array.isArray(parsed.roadmap) || parsed.roadmap.length === 0) {
+  if (!parsed) {
     await processLogs.create({
       process_id: processId,
       step: 'error',
-      message: 'Невалидная структура дорожной карты в ответе модели',
+      message: 'Не удалось распарсить JSON из ответа модели',
       data: { raw_response: rawResponse.slice(0, 2000) },
     });
-    throw new Error('Invalid roadmap structure in AI response');
+    throw new Error('Failed to parse AI response as JSON');
   }
 
   const validTypes = ['feature', 'improvement', 'bug'];
   const validPriorities = ['critical', 'high', 'medium', 'low'];
 
-  const roadmap = parsed.roadmap.map(release => ({
-    version: String(release.version || '').slice(0, 20),
-    name: String(release.name || '').slice(0, 100),
-    description: String(release.description || ''),
-    issues: Array.isArray(release.issues) ? release.issues
-      .map(i => ({
-        title: String(i.title || '').slice(0, 200),
-        description: String(i.description || ''),
-        type: validTypes.includes(i.type) ? i.type : 'feature',
-        priority: validPriorities.includes(i.priority) ? i.priority : 'medium',
-      }))
-      .filter(i => i.title.length > 0) : [],
-  })).filter(r => r.version.length > 0 && r.name.length > 0);
+  let result;
 
-  const result = {
-    summary: String(parsed.summary || ''),
-    total_releases: roadmap.length,
-    total_issues: roadmap.reduce((sum, r) => sum + r.issues.length, 0),
-    roadmap,
-  };
+  if (outputMode === 'tasks') {
+    // Flat tasks result
+    const items = Array.isArray(parsed) ? parsed : (parsed.issues || parsed.suggestions || []);
 
-  // 9. Log: parse_result
-  await processLogs.create({
-    process_id: processId,
-    step: 'parse_result',
-    message: `Дорожная карта: ${result.total_releases} релизов, ${result.total_issues} задач`,
-    data: { total_releases: result.total_releases, total_issues: result.total_issues },
-  });
+    result = items.map(s => ({
+      title: String(s.title || '').slice(0, 200),
+      description: String(s.description || ''),
+      type: validTypes.includes(s.type) ? s.type : 'feature',
+      priority: validPriorities.includes(s.priority) ? s.priority : 'medium',
+    })).filter(s => s.title.length > 0);
+
+    await processLogs.create({
+      process_id: processId,
+      step: 'parse_result',
+      message: `Задачи из документа: ${result.length} задач`,
+      data: { count: result.length },
+    });
+  } else {
+    // Roadmap result (default)
+    if (!Array.isArray(parsed.roadmap) || parsed.roadmap.length === 0) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'error',
+        message: 'Невалидная структура дорожной карты в ответе модели',
+        data: { raw_response: rawResponse.slice(0, 2000) },
+      });
+      throw new Error('Invalid roadmap structure in AI response');
+    }
+
+    const roadmap = parsed.roadmap.map(release => ({
+      version: String(release.version || '').slice(0, 20),
+      name: String(release.name || '').slice(0, 100),
+      description: String(release.description || ''),
+      issues: Array.isArray(release.issues) ? release.issues
+        .map(i => ({
+          title: String(i.title || '').slice(0, 200),
+          description: String(i.description || ''),
+          type: validTypes.includes(i.type) ? i.type : 'feature',
+          priority: validPriorities.includes(i.priority) ? i.priority : 'medium',
+        }))
+        .filter(i => i.title.length > 0) : [],
+    })).filter(r => r.version.length > 0 && r.name.length > 0);
+
+    result = {
+      summary: String(parsed.summary || ''),
+      total_releases: roadmap.length,
+      total_issues: roadmap.reduce((sum, r) => sum + r.issues.length, 0),
+      roadmap,
+    };
+
+    await processLogs.create({
+      process_id: processId,
+      step: 'parse_result',
+      message: `Дорожная карта: ${result.total_releases} релизов, ${result.total_issues} задач`,
+      data: { total_releases: result.total_releases, total_issues: result.total_issues },
+    });
+  }
 
   // 10. Save result
   const durationMs = Date.now() - startTime;
@@ -1124,12 +1261,14 @@ ${releaseContext ? `=== РЕЛИЗЫ ===${releaseContext}\n` : ''}
   const onEvent = createCheckpointTracker(processId);
   const watchdogMs = timeoutMs + 60_000;
   const { text: rawResponse, events } = await withWatchdog(
-    callClaudeCodeStreaming(model?.model_id || 'claude-sonnet-4-6', systemPrompt, userPrompt, {
-      cwd,
-      timeoutMs,
-      allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
-      onEvent,
-    }),
+    _pickStreamingCaller(model?.provider)(
+      model?.model_id || 'claude-sonnet-4-6', systemPrompt, userPrompt, {
+        cwd,
+        timeoutMs,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
+        onEvent,
+      }
+    ),
     watchdogMs,
     `update_docs/${model?.name || 'claude-code'}`,
   );
@@ -1418,12 +1557,17 @@ function createCheckpointTracker(processId) {
         const cmd = input.command || '';
         if (/git\s+(checkout|pull|fetch|branch)/.test(cmd)) detectedPhase = 'repo';
         else if (/git\s+(commit|push)/.test(cmd)) detectedPhase = 'commit';
-        else if (/(npm\s+test|vitest|jest|playwright|node\s+--test)/.test(cmd)) detectedPhase = 'test_run';
+        else if (/(npm\s+test|npx\s+vitest|vitest|jest|playwright|node\s+--test|dotnet\s+test)/.test(cmd)) detectedPhase = 'test_run';
+        else if (/(cat\s+<<|cat\s*>|echo\s.*>|tee\s|sed\s+-i|mkdir\s+-p)/.test(cmd) && currentPhase && currentPhase !== 'commit') {
+          // Bash-based file writes — detect phase by context
+          writeCount++;
+          if (!detectedPhase && (!currentPhase || currentPhase === 'repo' || currentPhase === 'study')) detectedPhase = 'implement';
+        }
       } else if (tool === 'Write' || tool === 'Edit') {
         writeCount++;
         const path = input.file_path || '';
-        if (/\.(test|spec)\./.test(path)) detectedPhase = 'tests';
-        else if (/docs\//.test(path)) detectedPhase = 'docs';
+        if (/\.(test|spec)\./.test(path) || /[Tt]ests?\//.test(path)) detectedPhase = 'tests';
+        else if (/docs?\/|README|CHANGELOG/i.test(path)) detectedPhase = 'docs';
         else if (!currentPhase || currentPhase === 'repo' || currentPhase === 'study') detectedPhase = 'implement';
       } else if (['Read', 'Glob', 'Grep'].includes(tool) && (!currentPhase || currentPhase === 'repo')) {
         detectedPhase = 'study';
@@ -1433,6 +1577,20 @@ function createCheckpointTracker(processId) {
         const detectedIdx = CHECKPOINT_PHASES.indexOf(detectedPhase);
         const currentIdx = currentPhase ? CHECKPOINT_PHASES.indexOf(currentPhase) : -1;
         if (detectedIdx > currentIdx) {
+          // Fill skipped phases if jump is > 1 step
+          if (detectedIdx - currentIdx > 1) {
+            for (let fi = currentIdx + 1; fi < detectedIdx; fi++) {
+              const skippedPhase = CHECKPOINT_PHASES[fi];
+              if (skippedPhase && skippedPhase !== currentPhase) {
+                await processLogs.create({
+                  process_id: processId,
+                  step: 'checkpoint',
+                  message: CHECKPOINT_MESSAGES[skippedPhase],
+                  data: { phase: skippedPhase, tool_count: toolCount, write_count: writeCount, inferred: true },
+                }).catch(() => {});
+              }
+            }
+          }
           currentPhase = detectedPhase;
           await processLogs.create({
             process_id: processId,
@@ -1473,7 +1631,7 @@ async function runDevelopRelease(processId, proc, product, model, startTime, tim
   const rawBranch   = config.git_branch  || `kaizen/release-${release.version}`;
   const branchName  = validateBranchName(rawBranch);
   const testCommand = config.test_command || detectTestCommand(product.tech_stack);
-  const buildCommand = config.build_command || detectBuildCommand(product.tech_stack);
+  const buildCommand = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack);
 
   // 3. Mark release as in_progress
   await releases.updateDevInfo(release.id, { dev_status: 'in_progress' });
@@ -1579,12 +1737,14 @@ ${issuesList}`;
   const onEvent = createCheckpointTracker(processId);
   const watchdogMs = timeoutMs + 60_000;
   const { text: rawResponse, events } = await withWatchdog(
-    callClaudeCodeStreaming(model.model_id, systemPrompt, userPrompt, {
-      cwd: product.project_path,
-      timeoutMs,
-      allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
-      onEvent,
-    }),
+    _pickStreamingCaller(model.provider)(
+      model.model_id, systemPrompt, userPrompt, {
+        cwd: product.project_path,
+        timeoutMs,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
+        onEvent,
+      }
+    ),
     watchdogMs,
     `develop_release/${model.name}`,
   );
@@ -1624,7 +1784,7 @@ ${issuesList}`;
   });
 
   // 10b. Validate build (if build command is available)
-  const buildCmd = config.build_command || detectBuildCommand(product.tech_stack);
+  const buildCmd = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack);
   if (resultObj.tests_passed && buildCmd && product.project_path) {
     try {
       await processLogs.create({
@@ -1685,6 +1845,7 @@ ${issuesList}`;
         };
         const smokeResult = await runSmokeTests({
           smokeConfig,
+          devPorts: product.deploy?.dev_ports || {},
           projectPath: product.project_path,
           techStack: product.tech_stack,
           log: smokeLog,
@@ -1871,7 +2032,27 @@ async function runDeploy(processId, proc, product, startTime, timeoutMs) {
     duration_ms: durationMs,
   });
 
-  // 5. Notify
+  // 5. Auto-publish release on successful deploy
+  if (success && release && release.status !== 'released' && deploy?.auto_publish?.on_deploy_success) {
+    try {
+      await releases.publish(release.id);
+      await processLogs.create({
+        process_id: processId,
+        step: 'auto_published',
+        message: `Релиз ${release.version} автоматически опубликован после успешного деплоя`,
+        data: { release_id: release.id, version: release.version },
+      });
+    } catch (err) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'auto_publish_failed',
+        message: `Не удалось авто-опубликовать релиз: ${err.message}`,
+        data: { error: err.message },
+      });
+    }
+  }
+
+  // 6. Notify
   notify(success ? 'deploy_completed' : 'deploy_failed', {
     product: product.name,
     version: release?.version || deployBranch,
@@ -1900,7 +2081,7 @@ async function runPreparePressRelease(processId, proc, product, model, startTime
   const keyPoints = params.key_points || '';
 
   // 3. Determine mode
-  const isClaudeCode = model.provider === 'claude-code';
+  const isClaudeCode = model.provider === 'claude-code' || model.provider === 'qwen-code' || model.provider === 'kilo-code';
   const hasProjectPath = !!product.project_path;
   const useInteractiveTools = isClaudeCode && hasProjectPath;
   const useCollectedContext = !isClaudeCode && hasProjectPath;
@@ -2093,7 +2274,7 @@ async function runValidateProduct(processId, proc, product, startTime, timeoutMs
 
   const checks = config.checks || ['build', 'tests', 'smoke'];
   const lintCommand = config.lint_command || detectLintCommand(product.tech_stack);
-  const buildCommand = config.build_command || detectBuildCommand(product.tech_stack);
+  const buildCommand = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack);
   const testCommand = config.test_command || detectTestCommand(product.tech_stack);
 
   const log = async (step, message, data) => {
@@ -2171,6 +2352,7 @@ async function runValidateProduct(processId, proc, product, startTime, timeoutMs
       await log('validate_smoke', 'Smoke test (Playwright)...');
       const smokeResult = await runSmokeTests({
         smokeConfig: product.smoke_test || {},
+        devPorts: product.deploy?.dev_ports || {},
         projectPath: product.project_path,
         techStack: product.tech_stack,
         log,

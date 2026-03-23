@@ -5,7 +5,7 @@
 import * as products from './db/products.js';
 import * as gitlabIssues from './db/gitlab-issues.js';
 import * as issues from './db/issues.js';
-import { getIssues } from './gitlab-client.js';
+import { getIssues, resolveGitlabProjectId } from './gitlab-client.js';
 
 // Label → Kaizen type mapping
 const LABEL_TYPE_MAP = {
@@ -52,15 +52,41 @@ function detectPriority(labels) {
 }
 
 /**
+ * Resolve GitLab config: use deploy.gitlab if available, otherwise auto-detect from repo_url + env.
+ */
+async function resolveGitlab(product) {
+  if (product?.deploy?.gitlab?.project_id && product?.deploy?.gitlab?.access_token) {
+    return product.deploy;
+  }
+  // Try auto-detect from repo_url
+  const gitlabUrl = process.env.GITLAB_URL;
+  const gitlabToken = process.env.GITLAB_TOKEN;
+  if (!gitlabUrl || !gitlabToken || !product?.repo_url) return null;
+  // Only if repo_url points to same GitLab
+  if (!product.repo_url.startsWith(gitlabUrl)) return null;
+  const projectId = await resolveGitlabProjectId(gitlabUrl, gitlabToken, product.repo_url);
+  if (!projectId) return null;
+  return {
+    gitlab: { url: gitlabUrl, project_id: projectId, access_token: gitlabToken, default_branch: 'main' },
+  };
+}
+
+/**
  * Sync issues from GitLab into local cache.
  */
 export async function syncIssues(productId) {
   const product = await products.getById(productId);
-  if (!product?.deploy?.gitlab?.project_id) {
-    throw new Error('GitLab не настроен для этого продукта (deploy.gitlab.project_id)');
+  const deploy = await resolveGitlab(product);
+  if (!deploy?.gitlab?.project_id) {
+    throw new Error('GitLab не настроен для этого продукта (deploy.gitlab.project_id или repo_url)');
   }
 
-  const glIssues = await getIssues(product.deploy, { state: 'opened' });
+  // Sync both opened and closed issues to keep cache up-to-date
+  const [openedIssues, closedIssues] = await Promise.all([
+    getIssues(deploy, { state: 'opened' }),
+    getIssues(deploy, { state: 'closed' }),
+  ]);
+  const glIssues = [...openedIssues, ...closedIssues];
 
   let newCount = 0, updatedCount = 0;
   for (const issue of glIssues) {
@@ -68,7 +94,31 @@ export async function syncIssues(productId) {
     result.is_new ? newCount++ : updatedCount++;
   }
 
-  return { new: newCount, updated: updatedCount, total: glIssues.length };
+  // Update labels in already-imported kaizen_issues
+  let labelsUpdated = 0;
+  try {
+    const { pool } = await import('./db/pool.js');
+    const { rows: linked } = await pool.query(`
+      SELECT gi.gitlab_issue_iid, gi.labels AS gl_labels, i.id AS issue_id, i.labels AS issue_labels
+      FROM opii.kaizen_gitlab_issues gi
+      JOIN opii.kaizen_issues i ON i.gitlab_issue_id = gi.gitlab_issue_iid AND i.product_id = gi.product_id
+      WHERE gi.product_id = $1 AND gi.sync_status = 'imported'
+    `, [productId]);
+
+    for (const row of linked) {
+      const glLabels = Array.isArray(row.gl_labels) ? row.gl_labels : JSON.parse(row.gl_labels || '[]');
+      const issueLabels = Array.isArray(row.issue_labels) ? row.issue_labels : JSON.parse(row.issue_labels || '[]');
+      if (JSON.stringify(glLabels.sort()) !== JSON.stringify(issueLabels.sort())) {
+        await issues.update(row.issue_id, { labels: glLabels });
+        labelsUpdated++;
+      }
+    }
+  } catch (err) {
+    // Labels sync is best-effort
+    console.error('Labels sync error:', err.message);
+  }
+
+  return { new: newCount, updated: updatedCount, total: glIssues.length, labels_updated: labelsUpdated };
 }
 
 /**
@@ -88,6 +138,7 @@ export async function importIssue(glIssueCacheId) {
     type: detectType(labels),
     priority: detectPriority(labels),
     gitlab_issue_id: glIssue.gitlab_issue_iid,
+    labels,
   });
 
   await gitlabIssues.updateSyncStatus(glIssueCacheId, 'imported', issue.id);

@@ -69,9 +69,15 @@ export async function create({ product_id, model_id, type, input_prompt, input_t
     idx++;
   }
 
-  // Store config as JSON in input_prompt if provided (retry info)
-  if (config && !input_prompt) {
-    vals[3] = JSON.stringify(config); // overwrite input_prompt slot
+  if (config && Object.keys(config).length > 0) {
+    cols.push('config');
+    vals.push(JSON.stringify(config));
+    idx++;
+  }
+
+  // Legacy: store config as JSON in input_prompt if no prompt (retry info)
+  if (config && !input_prompt && !cols.includes('config')) {
+    vals[3] = JSON.stringify(config);
   }
 
   const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');

@@ -115,6 +115,13 @@ window.showEditModal = function (id) {
   document.getElementById('productPath').value = p.project_path || '';
   document.getElementById('productRcSystemId').value = p.rc_system_id || '';
   document.getElementById('productRcModuleId').value = p.rc_module_id || '';
+  const devPorts = p.deploy?.dev_ports || {};
+  document.getElementById('productDevFrontPort').value = devPorts.frontend || '';
+  document.getElementById('productDevBackPort').value = devPorts.backend || '';
+  document.getElementById('productDevStartCmd').value = devPorts.start_command || '';
+  const urls = p.deploy?.urls || {};
+  document.getElementById('productProdFrontUrl').value = urls.frontend || '';
+  document.getElementById('productProdBackUrl').value = urls.backend || '';
   openModal('productModal');
 };
 
@@ -125,6 +132,36 @@ window.closeProductModal = function () {
 window.handleProductSubmit = async function (e) {
   e.preventDefault();
   const id = document.getElementById('productId').value;
+  const devFrontPort = parseInt(document.getElementById('productDevFrontPort').value) || null;
+  const devBackPort = parseInt(document.getElementById('productDevBackPort').value) || null;
+  const devStartCmd = document.getElementById('productDevStartCmd').value.trim();
+  const prodFrontUrl = document.getElementById('productProdFrontUrl').value.trim();
+  const prodBackUrl = document.getElementById('productProdBackUrl').value.trim();
+
+  const existingProduct = products.find(x => x.id === document.getElementById('productId').value);
+  const existingDeploy = existingProduct?.deploy || {};
+
+  const devPorts = (devFrontPort || devBackPort || devStartCmd) ? {
+    ...(devFrontPort ? { frontend: devFrontPort } : {}),
+    ...(devBackPort ? { backend: devBackPort } : {}),
+    ...(devStartCmd ? { start_command: devStartCmd } : {}),
+  } : undefined;
+
+  const deployUrls = (prodFrontUrl || prodBackUrl) ? {
+    ...(prodFrontUrl ? { frontend: prodFrontUrl } : {}),
+    ...(prodBackUrl ? { backend: prodBackUrl } : {}),
+  } : undefined;
+
+  const deploy = (devPorts || deployUrls) ? {
+    ...existingDeploy,
+    ...(devPorts ? { dev_ports: devPorts } : {}),
+    ...(deployUrls ? { urls: deployUrls } : {}),
+  } : existingDeploy;
+
+  const smokeTest = devFrontPort
+    ? { ...(existingProduct?.smoke_test || {}), url: `http://localhost:${devFrontPort}` }
+    : existingProduct?.smoke_test;
+
   const body = {
     name: document.getElementById('productName').value,
     description: document.getElementById('productDesc').value,
@@ -134,6 +171,8 @@ window.handleProductSubmit = async function (e) {
     project_path: document.getElementById('productPath').value,
     rc_system_id: parseInt(document.getElementById('productRcSystemId').value) || null,
     rc_module_id: parseInt(document.getElementById('productRcModuleId').value) || null,
+    ...(Object.keys(deploy).length ? { deploy } : {}),
+    ...(smokeTest ? { smoke_test: smokeTest } : {}),
   };
 
   try {

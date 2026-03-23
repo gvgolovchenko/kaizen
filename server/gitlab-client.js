@@ -16,7 +16,12 @@ export function buildAuthUrl(deploy) {
   const gl = deploy?.gitlab;
   if (!gl?.remote_url || !gl?.access_token) return null;
 
-  const url = new URL(gl.remote_url.replace('git@', 'https://').replace(':', '/'));
+  // Convert SSH format (git@host:group/repo.git) to HTTPS if needed
+  let rawUrl = gl.remote_url;
+  if (rawUrl.startsWith('git@')) {
+    rawUrl = rawUrl.replace(/^git@([^:]+):(.+)$/, 'https://$1/$2');
+  }
+  const url = new URL(rawUrl);
   url.username = 'oauth2';
   url.password = gl.access_token;
   return url.toString();
@@ -191,4 +196,80 @@ export async function waitForPipeline(deploy, sha, { timeoutMs = 600_000, interv
   }
 
   throw new Error(`Pipeline timeout (${Math.round(timeoutMs / 60000)} мин)`);
+}
+
+/**
+ * Close a GitLab issue by IID.
+ * @returns {{ closed: boolean, error?: string }}
+ */
+export async function closeIssue(deploy, issueIid) {
+  const gl = deploy?.gitlab;
+  if (!gl?.url || !gl?.project_id || !gl?.access_token) {
+    return { closed: false, error: 'GitLab API не настроен' };
+  }
+
+  try {
+    const res = await fetch(
+      `${gl.url}/api/v4/projects/${gl.project_id}/issues/${issueIid}`,
+      {
+        method: 'PUT',
+        headers: { 'PRIVATE-TOKEN': gl.access_token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state_event: 'close' }),
+      }
+    );
+    if (!res.ok) return { closed: false, error: `HTTP ${res.status}` };
+    return { closed: true };
+  } catch (err) {
+    return { closed: false, error: err.message };
+  }
+}
+
+/**
+ * Add a comment (note) to a GitLab issue by IID.
+ * @returns {{ commented: boolean, error?: string }}
+ */
+export async function commentOnIssue(deploy, issueIid, body) {
+  const gl = deploy?.gitlab;
+  if (!gl?.url || !gl?.project_id || !gl?.access_token) {
+    return { commented: false, error: 'GitLab API не настроен' };
+  }
+
+  try {
+    const res = await fetch(
+      `${gl.url}/api/v4/projects/${gl.project_id}/issues/${issueIid}/notes`,
+      {
+        method: 'POST',
+        headers: { 'PRIVATE-TOKEN': gl.access_token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      }
+    );
+    if (!res.ok) return { commented: false, error: `HTTP ${res.status}` };
+    return { commented: true };
+  } catch (err) {
+    return { commented: false, error: err.message };
+  }
+}
+
+/**
+ * Resolve GitLab project ID from repo_url.
+ * Parses path from URL and searches via GitLab API.
+ * @returns {number|null} project ID or null
+ */
+export async function resolveGitlabProjectId(gitlabUrl, token, repoUrl) {
+  try {
+    // Extract path: http://gitlab.com/group/project.git → group/project
+    const url = new URL(repoUrl);
+    const path = url.pathname.replace(/^\//, '').replace(/\.git$/, '');
+    if (!path) return null;
+
+    const encoded = encodeURIComponent(path);
+    const res = await fetch(`${gitlabUrl}/api/v4/projects/${encoded}`, {
+      headers: { 'PRIVATE-TOKEN': token },
+    });
+    if (!res.ok) return null;
+    const project = await res.json();
+    return project.id || null;
+  } catch {
+    return null;
+  }
 }

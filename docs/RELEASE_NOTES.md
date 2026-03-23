@@ -2,6 +2,32 @@
 
 ---
 
+## v1.16.0 — GitLab Issues Sync + MCP-инструменты (2026-03-18)
+
+**Синхронизация issues из GitLab, 3 новых MCP-инструмента, автосинхронизация в scheduler.**
+
+### GitLab Issues — MCP-инструменты
+
+- `kaizen_gitlab_sync` — синхронизировать issues из GitLab → локальный кэш
+- `kaizen_gitlab_list_issues` — список кэшированных GitLab issues (с фильтром sync_status)
+- `kaizen_gitlab_import_issues` — импортировать GitLab issues → задачи Kaizen
+
+### Автосинхронизация GitLab Issues (Scheduler)
+
+- Новый метод `_autoGitlabSync()` — полный аналог `_autoRcSync()`
+- Настройка: `automation.gitlab_auto_sync` (enabled, interval_hours, auto_import.label_rules)
+- Уведомления в Б24 (`gitlab_sync_done`)
+- Триггер auto_pipeline при `trigger: "on_sync"`
+
+### БД и API
+
+- Миграция `020_gitlab_auto_sync.sql` — поле `last_gitlab_sync_at` в products
+- `products.update()` — поддержка `last_gitlab_sync_at`
+- `getWithAutomation()` — учитывает `gitlab_auto_sync.enabled`
+- 5 функций в api-client.js: `gitlabSync`, `gitlabListIssues`, `gitlabImportBulk`, `gitlabImportIssue`, `gitlabIgnoreIssue`
+
+---
+
 ## v1.15.0 — Линейные статусы релизов, комплексная проверка, UI Polish (2026-03-18)
 
 **Упрощение жизненного цикла релизов, новый тип процесса validate_product, автоматическая проверка сборки, улучшения UI.**

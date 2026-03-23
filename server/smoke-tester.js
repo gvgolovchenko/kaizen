@@ -22,9 +22,18 @@ import { join, extname } from 'node:path';
  * @param {Function} opts.log - async (step, message, data?) => void
  * @returns {{ passed: boolean, results: Array, discoveredConfig: Object|null }}
  */
-export async function runSmokeTests({ smokeConfig, projectPath, techStack, log }) {
+export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techStack, log }) {
   // Auto-discover config if not fully configured
   let config = { ...smokeConfig };
+  const dp = devPorts || {};
+
+  // Apply dev_ports from product deploy config (priority over auto-discovery)
+  if (!config.url && dp.frontend) {
+    config.url = `http://localhost:${dp.frontend}`;
+  }
+  if (!config.start_command && dp.start_command) {
+    config.start_command = dp.start_command;
+  }
 
   if (!config.url || !config.pages?.length || !config.start_command) {
     await log('smoke_autodiscover', 'Автообнаружение настроек smoke test...');
@@ -35,9 +44,23 @@ export async function runSmokeTests({ smokeConfig, projectPath, techStack, log }
     if (!config.pages?.length) config.pages = discovered.pages;
     if (!config.ready_timeout_ms) config.ready_timeout_ms = discovered.ready_timeout_ms;
 
+    // Override discovered port with dev_ports if available
+    if (dp.frontend && config.url) {
+      try {
+        const u = new URL(config.url);
+        u.port = String(dp.frontend);
+        config.url = u.href;
+      } catch { /* keep discovered url */ }
+    }
+    // Inject --port into start_command if dev_ports specifies a port
+    if (dp.frontend && config.start_command && !config.start_command.includes('--port')) {
+      config.start_command += ` --port ${dp.frontend}`;
+    }
+
     await log('smoke_autodiscover_done', `Обнаружено: ${config.start_command} → ${config.url}, ${config.pages.length} страниц`, {
       discovered,
       merged: config,
+      dev_ports: dp,
     });
   }
 
@@ -60,6 +83,8 @@ export async function runSmokeTests({ smokeConfig, projectPath, techStack, log }
   let serverProcess = null;
   try {
     serverProcess = startDevServer(start_command, projectPath);
+    // Save port for cleanup fallback
+    try { serverProcess._smokePort = new URL(url).port; } catch { /* ignore */ }
     await log('smoke_server_starting', `Запуск: ${start_command}`);
 
     // 2. Wait for server to be ready
@@ -390,11 +415,34 @@ function startDevServer(command, cwd) {
 }
 
 function killProcess(proc) {
-  try {
-    process.kill(-proc.pid, 'SIGTERM');
-  } catch {
+  const pid = proc.pid;
+  if (!pid) return;
+
+  // 1. SIGTERM the process group
+  try { process.kill(-pid, 'SIGTERM'); } catch { /* group may not exist */ }
+  try { proc.kill('SIGTERM'); } catch { /* already dead */ }
+
+  // 2. SIGKILL after 3s if still alive
+  setTimeout(() => {
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* already dead */ }
     try { proc.kill('SIGKILL'); } catch { /* already dead */ }
-  }
+
+    // 3. Find and kill any orphaned children by port (last resort)
+    killByPort(proc._smokePort).catch(() => {});
+  }, 3000);
+}
+
+async function killByPort(port) {
+  if (!port) return;
+  try {
+    const { execSync } = await import('node:child_process');
+    const output = execSync(`lsof -ti :${port}`, { encoding: 'utf8', timeout: 3000 }).trim();
+    if (output) {
+      for (const p of output.split('\n').filter(Boolean)) {
+        try { process.kill(parseInt(p), 'SIGKILL'); } catch { /* ignore */ }
+      }
+    }
+  } catch { /* no process on port */ }
 }
 
 async function waitForReady(baseUrl, timeoutMs) {

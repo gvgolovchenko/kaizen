@@ -104,7 +104,7 @@ server.tool(
 
 server.tool(
   'kaizen_list_models',
-  'Список зарегистрированных AI-моделей (ollama, mlx, claude-code, anthropic, openai, google)',
+  'Список зарегистрированных AI-моделей (ollama, mlx, claude-code, qwen-code, kilo-code, anthropic, openai, google)',
   {},
   async () => {
     const models = await api.listModels();
@@ -130,11 +130,14 @@ server.tool(
     prompt: z.string().optional().describe('Произвольный промпт (вместо шаблона)'),
     count: z.number().min(1).max(10).default(5).describe('Количество предложений (1-10)'),
     timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут в минутах'),
+    output_mode: z.enum(['tasks', 'releases']).default('tasks')
+      .describe('Формат результата: tasks (плоский список) или releases (задачи в релизах)'),
   },
-  async ({ product_id, model_id, template_id, prompt, count, timeout_min }) => {
+  async ({ product_id, model_id, template_id, prompt, count, timeout_min, output_mode }) => {
+    const config = output_mode !== 'tasks' ? { output_mode } : undefined;
     const proc = await api.createProcess({
       product_id, model_id, type: 'improve',
-      template_id, prompt, count, timeout_min,
+      template_id, prompt, count, timeout_min, config,
     });
     return { content: [{ type: 'text', text: JSON.stringify(proc, null, 2) }] };
   }
@@ -149,11 +152,14 @@ server.tool(
     model_id: z.string().uuid().describe('UUID AI-модели'),
     document: z.string().describe('Текст документа для парсинга'),
     timeout_min: z.number().min(3).max(60).default(20).describe('Таймаут в минутах'),
+    output_mode: z.enum(['tasks', 'releases']).default('releases')
+      .describe('Формат результата: tasks (плоский список) или releases (задачи в релизах)'),
   },
-  async ({ product_id, model_id, document, timeout_min }) => {
+  async ({ product_id, model_id, document, timeout_min, output_mode }) => {
+    const config = output_mode !== 'releases' ? { output_mode } : undefined;
     const proc = await api.createProcess({
       product_id, model_id, type: 'roadmap_from_doc',
-      prompt: document, timeout_min,
+      prompt: document, timeout_min, config,
     });
     return { content: [{ type: 'text', text: JSON.stringify(proc, null, 2) }] };
   }
@@ -291,12 +297,12 @@ server.tool(
 
 server.tool(
   'kaizen_develop_release',
-  `Запустить автоматическую разработку релиза через claude-code.
-Требуется: спецификация (prepare_spec), claude-code модель, product.project_path.
+  `Запустить автоматическую разработку релиза через code-agent (claude-code, qwen-code, kilo-code).
+Требуется: спецификация (prepare_spec), code-agent модель, product.project_path.
 7 фаз: repo → study → implement → tests → test_run → docs → commit.`,
   {
     release_id: z.string().uuid().describe('UUID релиза'),
-    model_id: z.string().uuid().describe('UUID claude-code модели'),
+    model_id: z.string().uuid().describe('UUID code-agent модели (claude-code, qwen-code или kilo-code)'),
     git_branch: z.string().optional().describe('Название ветки (по умолчанию kaizen/release-{version})'),
     test_command: z.string().optional().describe('Команда запуска тестов (авто-определение по tech_stack)'),
     timeout_min: z.number().min(10).max(480).default(60).describe('Таймаут в минутах'),
@@ -525,7 +531,7 @@ Multi-model: каждый AI-этап может использовать сво
 - model_id — глобальный fallback для всех этапов
 - improve.model_id — модель для генерации предложений
 - spec.model_id — модель для спецификации
-- develop.model_id — модель для разработки (только claude-code)
+- develop.model_id — модель для разработки (claude-code, qwen-code или kilo-code)
 - press_release.model_id — модель для пресс-релиза
 
 Этапы (базовые, всегда выполняются):
@@ -564,7 +570,7 @@ Multi-model: каждый AI-этап может использовать сво
     // ── Опциональные этапы ──
     develop: z.object({
       enabled: z.boolean().default(false),
-      model_id: z.string().uuid().optional().describe('UUID модели для разработки (override, только claude-code)'),
+      model_id: z.string().uuid().optional().describe('UUID модели для разработки (override, claude-code/qwen-code/kilo-code)'),
       git_branch: z.string().optional().describe('Имя ветки (по умолчанию kaizen/release-{version})'),
       test_command: z.string().optional().describe('Команда запуска тестов'),
       auto_publish: z.boolean().default(false).describe('Автоматическая публикация после успешных тестов'),
@@ -865,6 +871,44 @@ server.tool(
 );
 
 // ══════════════════════════════════════════════════════════════
+// GITLAB ISSUES
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_gitlab_sync',
+  'Синхронизировать issues из GitLab для продукта (загрузить в локальный кэш)',
+  { product_id: z.string().describe('UUID продукта Kaizen') },
+  async ({ product_id }) => {
+    const stats = await api.gitlabSync(product_id);
+    return { content: [{ type: 'text', text: `GitLab sync завершена: ${stats.new} новых, ${stats.updated} обновлённых (всего ${stats.total})` }] };
+  }
+);
+
+server.tool(
+  'kaizen_gitlab_list_issues',
+  'Список кэшированных GitLab issues для продукта',
+  {
+    product_id: z.string().describe('UUID продукта Kaizen'),
+    sync_status: z.enum(['new', 'imported', 'ignored']).optional().describe('Фильтр по статусу синхронизации'),
+  },
+  async ({ product_id, sync_status }) => {
+    const data = await api.gitlabListIssues(product_id, sync_status);
+    const issues = data.issues || data;
+    return { content: [{ type: 'text', text: JSON.stringify({ stats: data.stats, issues }, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_gitlab_import_issues',
+  'Импортировать GitLab issues → задачи Kaizen',
+  { issue_ids: z.array(z.string()).describe('Массив UUID кэшированных issues из kaizen_gitlab_issues') },
+  async ({ issue_ids }) => {
+    const issues = await api.gitlabImportBulk(issue_ids);
+    return { content: [{ type: 'text', text: `Импортировано ${issues.length} задач:\n${issues.map(i => `- ${i.title} (${i.type}, ${i.priority})`).join('\n')}` }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
 // FORM RELEASE (AI)
 // ══════════════════════════════════════════════════════════════
 
@@ -953,7 +997,7 @@ server.tool(
 При запуске из плана — автоматически мержит ветки develop_release из depends_on.`,
   {
     product_id: z.string().uuid().describe('UUID продукта'),
-    model_id: z.string().uuid().describe('UUID модели (claude-code)'),
+    model_id: z.string().uuid().describe('UUID модели (claude-code/qwen-code/kilo-code)'),
     doc_files: z.array(z.string()).optional().describe('Файлы для обновления (по умолчанию: USER_GUIDE, MAIN_FUNC, RELEASE_NOTES, DATABASE_SCHEMA)'),
     branches: z.array(z.string()).optional().describe('Ветки для мержа перед обновлением'),
     timeout_min: z.number().optional().default(20),

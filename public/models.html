@@ -58,36 +58,33 @@
 
   <!-- Create/Edit Model Modal -->
   <div class="modal-overlay" id="modelModal">
-    <div class="modal">
+    <div class="modal" style="max-width:580px">
       <h2 id="modelModalTitle">Новая модель</h2>
       <form id="modelForm" onsubmit="return handleModelSubmit(event)">
         <input type="hidden" id="modelEditId">
+
+        <!-- Провайдер — первым, т.к. от него зависят остальные поля -->
         <div class="form-group">
-          <label>Название *</label>
-          <input type="text" id="modelName" required placeholder="Qwen3 Coder 30B">
-        </div>
-        <div class="form-group">
-          <label>Model ID *</label>
-          <input type="text" id="modelModelId" required placeholder="qwen3-coder:30b">
-        </div>
-        <div class="form-group">
-          <label>Провайдер</label>
-          <select id="modelProvider">
-            <option value="ollama">Ollama</option>
-            <option value="mlx">MLX</option>
-            <option value="claude-code">Claude Code</option>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="google">Google</option>
+          <label>Провайдер *</label>
+          <select id="modelProvider" onchange="onProviderChange()">
+            <optgroup label="Локальные (CLI-агенты)">
+              <option value="claude-code">Claude Code</option>
+              <option value="qwen-code">Qwen Code</option>
+              <option value="kilo-code">Kilo Code</option>
+            </optgroup>
+            <optgroup label="Локальные (inference)">
+              <option value="ollama">Ollama</option>
+              <option value="mlx">MLX</option>
+            </optgroup>
+            <optgroup label="Облачные API">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="google">Google</option>
+            </optgroup>
           </select>
         </div>
-        <div class="form-group">
-          <label>Тип развёртывания</label>
-          <select id="modelDeployment">
-            <option value="local">Локальная</option>
-            <option value="cloud">Облачная</option>
-          </select>
-        </div>
+
+        <!-- Discover для ollama/mlx -->
         <div class="discover-section" id="discoverSection" style="display:none">
           <div class="discover-row">
             <button type="button" class="discover-btn" id="discoverBtn" onclick="window._discoverModels()">Обнаружить установленные</button>
@@ -96,22 +93,53 @@
             </select>
           </div>
         </div>
-        <div class="form-group" id="apiKeyGroup" style="display:none">
-          <label>API Key</label>
-          <input type="password" id="modelApiKey" placeholder="sk-...">
+
+        <!-- Название + Model ID в строку -->
+        <div style="display:flex;gap:12px">
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Название *</label>
+            <input type="text" id="modelName" required placeholder="">
+          </div>
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Model ID *</label>
+            <input type="text" id="modelModelId" required placeholder="">
+            <div id="modelIdHint" style="font-size:0.75rem;color:var(--text-dim);margin-top:2px"></div>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Описание</label>
-          <textarea id="modelDescription" placeholder="Описание модели..."></textarea>
+
+        <!-- API Key — только для cloud -->
+        <div class="form-group" id="apiKeyGroup" style="display:none;margin-top:10px">
+          <label>API Key *</label>
+          <input type="password" id="modelApiKey" placeholder="">
         </div>
-        <div class="form-group">
-          <label>Размер параметров</label>
-          <input type="text" id="modelParamsSize" placeholder="30B, 70B...">
+
+        <!-- Deployment скрыт, авто-определяется -->
+        <input type="hidden" id="modelDeployment" value="local">
+
+        <!-- Доп. настройки (сворачиваемые) -->
+        <div class="collapsible" style="margin-top:12px">
+          <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')" style="cursor:pointer">
+            <span class="collapsible-arrow">&#9654;</span>
+            <span style="font-size:0.85rem;color:var(--text-dim)">Доп. настройки</span>
+          </div>
+          <div class="collapsible-body" style="padding-top:8px">
+            <div class="form-group">
+              <label>Описание</label>
+              <textarea id="modelDescription" rows="2" placeholder="Описание модели..."></textarea>
+            </div>
+            <div style="display:flex;gap:12px">
+              <div class="form-group" style="flex:1;margin-bottom:0">
+                <label>Параметры</label>
+                <input type="text" id="modelParamsSize" placeholder="30B, 70B...">
+              </div>
+              <div class="form-group" style="flex:1;margin-bottom:0">
+                <label>Контекст (токены)</label>
+                <input type="number" id="modelContextLength" placeholder="131072">
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Длина контекста (токены)</label>
-          <input type="number" id="modelContextLength" placeholder="131072">
-        </div>
+
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" onclick="closeModal('modelModal')">Отмена</button>
           <button type="submit" class="btn btn-primary" id="modelSubmitBtn">Создать</button>

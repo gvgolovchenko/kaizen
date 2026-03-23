@@ -3,6 +3,25 @@
 
 import { api, toast, escapeHtml, closeModal, formatDate, notifyStatusChanges } from './app.js';
 
+// ── Process type labels ──────────────────────────────────
+
+const PROC_TYPE_LABELS = {
+  improve: 'Генерация задач',
+  prepare_spec: 'Спецификация',
+  develop_release: 'Разработка релиза',
+  roadmap_from_doc: 'Дорожная карта',
+  form_release: 'Формирование релиза',
+  prepare_press_release: 'Пресс-релиз',
+  run_tests: 'Тесты',
+  update_docs: 'Документация',
+  validate_product: 'Анализ продукта',
+  deploy: 'Деплой',
+};
+
+export function procTypeLabel(type) {
+  return PROC_TYPE_LABELS[type] || type;
+}
+
 // ── Format duration ──────────────────────────────────────
 
 export function formatDuration(ms) {
@@ -39,67 +58,77 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
     onShowSpecAttr = '',
   } = options;
 
+  // Populate header meta (outside content div)
+  const metaEl = document.getElementById('processDetailMeta');
+  if (metaEl) {
+    metaEl.innerHTML = `
+      <span class="badge badge-process-${proc.status}">${proc.status}</span>
+      <span class="badge badge-process-${proc.type}">${proc.type}</span>
+      ${showProductName && proc.product_name ? `<span style="font-size:0.8rem;color:var(--text-dim)">${escapeHtml(proc.product_name)}</span>` : ''}`;
+  }
+
   // Extract checkpoint logs for stepper
   const checkpointLogs = logs.filter(l => l.step === 'checkpoint');
   const isDevRelease = proc.type === 'develop_release';
 
+  // Meta info row
+  const createdAt = proc.created_at ? new Date(proc.created_at).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
   let html = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:0.85rem;color:var(--text-dim)">
-      <span class="badge badge-process-${proc.status}">${proc.status}</span>
-      <span class="badge badge-process-${proc.type}">${proc.type}</span>
-      ${showProductName ? `<span>&middot; ${escapeHtml(proc.product_name)}</span>` : ''}
-      <span>&middot; ${escapeHtml(proc.model_name)}</span>
-      ${proc.duration_ms ? `<span>&middot; ${formatDuration(proc.duration_ms)}</span>` : ''}
+    <div class="proc-meta-row">
+      ${proc.model_name ? `<div class="proc-meta-item">🤖 <b>${escapeHtml(proc.model_name)}</b></div>` : ''}
+      <div class="proc-meta-item">📅 <b>${createdAt}</b></div>
+      ${proc.duration_ms ? `<div class="proc-meta-item">⏱ <b>${formatDuration(proc.duration_ms)}</b></div>` : ''}
+      ${proc.queue_position > 0 ? `<div class="proc-meta-item">📋 позиция в очереди: <b>${proc.queue_position}</b></div>` : ''}
     </div>`;
 
-  // Checkpoint stepper for develop_release
+  // Checkpoint stepper for develop_release (horizontal)
   if (isDevRelease && checkpointLogs.length > 0) {
-    html += renderCheckpointStepper(checkpointLogs, proc.status);
-  }
-
-  // Промпт (сворачиваемый)
-  if (proc.input_prompt) {
-    html += `
-      <div class="collapsible" style="margin-bottom:8px">
-        <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')">
-          <span class="collapsible-arrow">&#9654;</span>
-          <span style="font-size:0.85rem;font-weight:600;color:var(--text-dim)">Промпт</span>
-        </div>
-        <div class="collapsible-body">
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:0.85rem;max-height:120px;overflow-y:auto">${escapeHtml(proc.input_prompt)}</div>
-        </div>
-      </div>`;
+    html += renderCheckpointStepperH(checkpointLogs, proc.status);
   }
 
   // Ошибка (всегда видна)
   if (proc.error) {
     html += `
-      <div style="margin-bottom:8px;padding:10px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px">
-        <div style="font-size:0.85rem;font-weight:600;color:var(--red);margin-bottom:4px">Ошибка</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);border-radius:8px;display:flex;gap:8px;align-items:flex-start">
+        <span style="color:var(--red);font-size:1rem;flex-shrink:0">✗</span>
         <div style="font-size:0.85rem;color:var(--red)">${escapeHtml(proc.error)}</div>
       </div>`;
   }
 
-  // Логи (сворачиваемые)
-  if (logs.length > 0) {
+  // Промпт (сворачиваемый)
+  if (proc.input_prompt) {
     html += `
-      <div class="collapsible" style="margin-bottom:12px">
+      <div class="collapsible" style="margin-bottom:10px">
         <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')">
           <span class="collapsible-arrow">&#9654;</span>
-          <span style="font-size:0.85rem;font-weight:600;color:var(--text-dim)">Логи (${logs.length})</span>
+          <span style="font-size:0.82rem;font-weight:600;color:var(--text-dim)">Промпт</span>
         </div>
         <div class="collapsible-body">
-          <div class="process-logs-list">
-            ${logs.map(l => `
-              <div class="process-log-entry ${l.step === 'error' ? 'process-log-error' : ''}">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-                  <span class="badge badge-process-log">${l.step}</span>
-                  <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU')}</span>
-                </div>
-                ${l.message ? `<div style="font-size:0.85rem">${escapeHtml(l.message)}</div>` : ''}
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:0.82rem;max-height:100px;overflow-y:auto;white-space:pre-wrap;color:var(--text-dim)">${escapeHtml(proc.input_prompt)}</div>
+        </div>
+      </div>`;
+  }
+
+  // Логи — timeline
+  if (logs.length > 0) {
+    html += `
+      <div style="margin-bottom:12px">
+        <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim);margin-bottom:6px">Лог выполнения (${logs.length})</div>
+        <div class="proc-log-timeline">
+          ${logs.map(l => {
+            const cls = logStepClass(l.step);
+            const icon = logStepIcon(l.step);
+            const time = new Date(l.created_at).toLocaleTimeString('ru-RU');
+            return `
+            <div class="proc-log-item ${cls}">
+              <div class="proc-log-icon">${icon}</div>
+              <div class="proc-log-body">
+                <div class="proc-log-step">${l.step}</div>
+                ${l.message ? `<div class="proc-log-msg">${escapeHtml(l.message)}</div>` : ''}
               </div>
-            `).join('')}
-          </div>
+              <div class="proc-log-time">${time}</div>
+            </div>`;
+          }).join('')}
         </div>
       </div>`;
   }
@@ -141,9 +170,60 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
     showedDetailSection = true;
   }
 
-  // Предложения (если процесс завершён)
+  // Roadmap result (releases with issues)
   if (!showedDetailSection && !excludeTypes.includes(proc.type) &&
-      proc.status === 'completed' && proc.result && proc.result.length > 0) {
+      proc.status === 'completed' && proc.result && proc.result.roadmap && Array.isArray(proc.result.roadmap)) {
+    const roadmap = proc.result;
+    html += `
+      <div>
+        ${roadmap.summary ? `<div style="font-size:0.85rem;color:var(--text-dim);margin-bottom:12px">${escapeHtml(roadmap.summary)}</div>` : ''}
+        <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Релизы (${roadmap.total_releases}) &middot; Задачи (${roadmap.total_issues})</div>
+        <div class="improve-actions-top">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllProcessSuggestions(true)">Выбрать все</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAllProcessSuggestions(false)">Снять все</button>
+        </div>
+        <div class="improve-suggestions-list" id="processSuggestionsList" style="max-height:400px;overflow-y:auto">
+          ${roadmap.roadmap.map((release, ri) => `
+            <div class="collapsible open" style="margin-bottom:8px">
+              <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')" style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="event.stopPropagation()">
+                  <input type="checkbox" checked data-release-index="${ri}" onchange="toggleRoadmapRelease(this, ${ri})">
+                  <span class="collapsible-arrow">&#9654;</span>
+                  <strong>${escapeHtml(release.version)}</strong>
+                  <span style="color:var(--text-dim)">${escapeHtml(release.name)}</span>
+                  <span class="badge" style="margin-left:auto">${release.issues.length} задач</span>
+                </label>
+              </div>
+              <div class="collapsible-body" style="padding-left:16px;margin-top:4px">
+                ${release.description ? `<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:6px">${escapeHtml(release.description)}</div>` : ''}
+                ${release.issues.map((issue, ii) => `
+                  <label class="improve-suggestion" style="margin-bottom:4px">
+                    <input type="checkbox" checked data-release-index="${ri}" data-issue-index="${ii}" onchange="updateRoadmapApproveCount()">
+                    <div class="improve-suggestion-content">
+                      <div class="improve-suggestion-title">${escapeHtml(issue.title)}</div>
+                      <div style="display:flex;gap:6px;margin:2px 0">
+                        <span class="badge badge-${issue.type}">${issue.type}</span>
+                        <span class="badge badge-${issue.priority}">${issue.priority}</span>
+                      </div>
+                      ${issue.description ? `<div class="improve-suggestion-desc">${escapeHtml(issue.description)}</div>` : ''}
+                    </div>
+                  </label>
+                `).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('${modalId}')">Закрыть</button>
+          <button type="button" class="btn btn-primary" id="processApproveBtn" onclick="handleProcessApproveRoadmap('${proc.id}')">Утвердить (${roadmap.total_issues} задач)</button>
+        </div>
+      </div>`;
+    showedDetailSection = true;
+  }
+
+  // Предложения (если процесс завершён — плоский список)
+  if (!showedDetailSection && !excludeTypes.includes(proc.type) &&
+      proc.status === 'completed' && proc.result && Array.isArray(proc.result) && proc.result.length > 0) {
     html += `
       <div>
         <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Предложения (${proc.result.length})</div>
@@ -241,19 +321,38 @@ export async function approveProcess(processId, containerId, options = {}) {
   }
 }
 
-// ── Checkpoint stepper renderer ──────────────────────────
+// ── Log step helpers ─────────────────────────────────────
+
+function logStepClass(step) {
+  if (['request_sent'].includes(step)) return 'log-send';
+  if (['response_received'].includes(step)) return 'log-receive';
+  if (['error'].includes(step)) return 'log-error';
+  if (['checkpoint'].includes(step)) return 'log-check';
+  return 'log-success';
+}
+
+function logStepIcon(step) {
+  if (step === 'request_sent') return '↑';
+  if (step === 'response_received') return '↓';
+  if (step === 'error') return '✗';
+  if (step === 'checkpoint') return '◆';
+  if (step === 'auto_approved') return '✓✓';
+  return '✓';
+}
+
+// ── Horizontal checkpoint stepper ───────────────────────
 
 const CHECKPOINT_ALL_PHASES = [
-  { key: 'repo',      label: 'Подготовка репозитория' },
-  { key: 'study',     label: 'Изучение кодовой базы' },
-  { key: 'implement', label: 'Реализация задач' },
-  { key: 'tests',     label: 'Написание тестов' },
-  { key: 'test_run',  label: 'Запуск тестов' },
-  { key: 'docs',      label: 'Обновление документации' },
-  { key: 'commit',    label: 'Коммит и push' },
+  { key: 'repo',      label: 'Репо' },
+  { key: 'study',     label: 'Анализ' },
+  { key: 'implement', label: 'Разработка' },
+  { key: 'tests',     label: 'Тесты' },
+  { key: 'test_run',  label: 'Запуск' },
+  { key: 'docs',      label: 'Документы' },
+  { key: 'commit',    label: 'Коммит' },
 ];
 
-function renderCheckpointStepper(checkpointLogs, processStatus) {
+function renderCheckpointStepperH(checkpointLogs, processStatus) {
   const reachedPhases = new Map();
   for (const log of checkpointLogs) {
     const phase = log.data?.phase;
@@ -268,27 +367,27 @@ function renderCheckpointStepper(checkpointLogs, processStatus) {
 
   const items = CHECKPOINT_ALL_PHASES.map(({ key, label }) => {
     const log = reachedPhases.get(key);
-    let stateClass = 'checkpoint-pending';
-    let dotContent = '';
+    let cls = '';
+    let dot = '';
 
     if (log) {
       if (key === lastPhase && !isFinished) {
-        stateClass = 'checkpoint-active';
-        dotContent = '&#9679;';
+        cls = 'cp-active';
+        dot = '●';
       } else {
-        stateClass = 'checkpoint-done';
-        dotContent = '&#10003;';
+        cls = 'cp-done';
+        dot = '✓';
       }
     }
 
     const timeStr = log ? new Date(log.created_at).toLocaleTimeString('ru-RU') : '';
 
-    return `<div class="checkpoint-item ${stateClass}">
-      <div class="checkpoint-dot">${dotContent}</div>
-      <span class="checkpoint-label">${label}</span>
-      ${timeStr ? `<span class="checkpoint-time">${timeStr}</span>` : ''}
+    return `<div class="checkpoint-step-h ${cls}">
+      <div class="checkpoint-dot-h">${dot}</div>
+      <div class="checkpoint-label-h">${label}</div>
+      ${timeStr ? `<div class="checkpoint-time-h">${timeStr}</div>` : ''}
     </div>`;
   }).join('');
 
-  return `<div class="checkpoint-stepper">${items}</div>`;
+  return `<div class="checkpoint-stepper-h">${items}</div>`;
 }

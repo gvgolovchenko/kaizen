@@ -172,6 +172,22 @@ router.get('/issues/:id', async (req, res) => {
 router.put('/issues/:id', async (req, res) => {
   const issue = await issues.update(req.params.id, req.body);
   if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+  // Обратная синхронизация: закрыть GitLab issue при переходе в done
+  if (req.body.status === 'done' && issue.gitlab_issue_id) {
+    try {
+      const product = await products.getById(issue.product_id);
+      if (product?.deploy?.gitlab?.project_id) {
+        const { closeIssue, commentOnIssue } = await import('../gitlab-client.js');
+        const comment = `✅ Задача закрыта в Kaizen`;
+        Promise.allSettled([
+          commentOnIssue(product.deploy, issue.gitlab_issue_id, comment),
+          closeIssue(product.deploy, issue.gitlab_issue_id),
+        ]).catch(() => {});
+      }
+    } catch { /* GitLab sync errors should not block update */ }
+  }
+
   res.json(issue);
 });
 
@@ -257,6 +273,26 @@ router.post('/releases/:id/publish', async (req, res) => {
     release.git_tag_error = tagErr.message;
   }
 
+  // Close corresponding GitLab issues (fire-and-forget)
+  try {
+    if (product?.deploy?.gitlab?.project_id && product?.deploy?.gitlab?.access_token) {
+      const { closeIssue, commentOnIssue } = await import('../gitlab-client.js');
+      const releaseIssues = await issues.getByRelease(release.id);
+      const glIssues = releaseIssues.filter(i => i.gitlab_issue_id);
+      if (glIssues.length > 0) {
+        const comment = `✅ Задача закрыта в [Kaizen](http://localhost:3034/product.html?id=${product.id}) — релиз **${release.version}** (${release.name})`;
+        const results = await Promise.allSettled(
+          glIssues.map(async (i) => {
+            await commentOnIssue(product.deploy, i.gitlab_issue_id, comment);
+            return closeIssue(product.deploy, i.gitlab_issue_id);
+          })
+        );
+        const closed = results.filter(r => r.status === 'fulfilled' && r.value?.closed).length;
+        if (closed > 0) release.gitlab_closed = closed;
+      }
+    }
+  } catch { /* GitLab sync errors should not block publish */ }
+
   // Auto-deploy if configured
   try {
     if (product?.deploy?.auto_deploy?.on_publish && product?.deploy?.gitlab?.remote_url) {
@@ -330,8 +366,8 @@ router.post('/releases/:id/develop', async (req, res) => {
 
     const model = await aiModels.getById(model_id);
     if (!model) return res.status(404).json({ error: 'Model not found' });
-    if (model.provider !== 'claude-code')
-      return res.status(400).json({ error: 'Only claude-code models are supported for development' });
+    if (!['claude-code', 'qwen-code', 'kilo-code'].includes(model.provider))
+      return res.status(400).json({ error: 'Only claude-code, qwen-code or kilo-code models are supported for development' });
 
     const product = await products.getById(release.product_id);
     if (!product?.project_path)
@@ -669,6 +705,7 @@ router.post('/processes', async (req, res) => {
       input_prompt: inputPrompt,
       input_template_id: template_id || null,
       input_count: Math.min(Math.max(parseInt(count) || 5, 1), 10),
+      config: config || null,
     });
 
     // Ставим в очередь (или запускаем сразу если есть слот)
@@ -834,12 +871,12 @@ router.post('/processes/:id/approve-roadmap', async (req, res) => {
   try {
     const proc = await processes.getById(req.params.id);
     if (!proc) return res.status(404).json({ error: 'Process not found' });
-    if (proc.type !== 'roadmap_from_doc') return res.status(400).json({ error: 'Wrong process type' });
+    if (!proc.result?.roadmap) return res.status(400).json({ error: 'Process has no roadmap result' });
     if (proc.status !== 'completed') return res.status(400).json({ error: 'Process not completed' });
 
-    const { releases: selectedReleases } = req.body;
+    const selectedReleases = req.body.releases || req.body.selected_releases;
     if (!Array.isArray(selectedReleases) || selectedReleases.length === 0) {
-      return res.status(400).json({ error: 'releases array is required' });
+      return res.status(400).json({ error: 'releases or selected_releases array is required' });
     }
 
     const roadmap = proc.result?.roadmap || [];

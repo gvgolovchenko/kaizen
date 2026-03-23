@@ -4,6 +4,7 @@ import * as processes from './db/processes.js';
 import * as products from './db/products.js';
 import * as releases from './db/releases.js';
 import * as rcSync from './rc-sync.js';
+import * as gitlabSync from './gitlab-sync.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { pool } from './db/pool.js';
 
@@ -173,6 +174,11 @@ export class Scheduler {
       await this._autoRcSync(product, auto.rc_auto_sync);
     }
 
+    // ── GitLab Auto-Sync ──
+    if (auto.gitlab_auto_sync?.enabled && product.deploy?.gitlab?.project_id) {
+      await this._autoGitlabSync(product, auto.gitlab_auto_sync);
+    }
+
     // ── Auto-Pipeline ──
     if (auto.auto_pipeline?.enabled) {
       await this._autoPipeline(product, auto.auto_pipeline);
@@ -222,6 +228,52 @@ export class Scheduler {
       }
     } catch (err) {
       console.error(`Automation: RC sync error for "${product.name}":`, err.message);
+    }
+  }
+
+  /**
+   * Авто-синхронизация GitLab issues по расписанию.
+   */
+  async _autoGitlabSync(product, config) {
+    try {
+      const intervalMs = (config.interval_hours || 0.5) * 3600_000;
+      const lastSync = product.last_gitlab_sync_at ? new Date(product.last_gitlab_sync_at).getTime() : 0;
+
+      if (Date.now() - lastSync < intervalMs) return; // ещё не пора
+
+      console.log(`Automation: GitLab sync for "${product.name}" (every ${config.interval_hours || 0.5}h)`);
+      const syncResult = await gitlabSync.syncIssues(product.id);
+      console.log(`Automation: GitLab sync done — new: ${syncResult.new}, updated: ${syncResult.updated}`);
+
+      // Обновить время последней синхронизации
+      await products.update(product.id, { last_gitlab_sync_at: new Date().toISOString() });
+
+      // Auto-import по label rules
+      let importedCount = 0;
+      if (config.auto_import?.enabled && config.auto_import.label_rules?.length > 0) {
+        const importResult = await gitlabSync.autoImportByLabels(product.id, config.auto_import.label_rules);
+        importedCount = importResult.imported;
+        if (importedCount > 0) {
+          console.log(`Automation: auto-imported ${importedCount} GitLab issues (labels: ${config.auto_import.label_rules.join(', ')})`);
+        }
+      }
+
+      // Notify: GitLab sync done
+      if (syncResult.new > 0 || importedCount > 0) {
+        notify('gitlab_sync_done', {
+          product: product.name, product_id: product.id,
+          new_count: syncResult.new, updated_count: syncResult.updated,
+          imported_count: importedCount,
+        }, getNotifyOpts(product)).catch(() => {});
+      }
+
+      // Если триггер auto_pipeline = "on_sync" и были новые issues
+      const autoPipeline = product.automation?.auto_pipeline;
+      if (autoPipeline?.enabled && autoPipeline.trigger === 'on_sync' && syncResult.new > 0) {
+        await this._triggerPipeline(product, autoPipeline);
+      }
+    } catch (err) {
+      console.error(`Automation: GitLab sync error for "${product.name}":`, err.message);
     }
   }
 

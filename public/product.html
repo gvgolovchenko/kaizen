@@ -30,9 +30,8 @@
       <div class="product-meta" id="prodMeta"></div>
       <div style="margin-top: 14px; display:flex; gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="showEditProductModal()">Редактировать</button>
-        <button class="btn btn-primary btn-sm" onclick="showImproveModal()">Улучшение продукта</button>
+        <button class="btn btn-primary btn-sm" onclick="showCreateTasksModal()">Создать задачи (AI)</button>
         <button class="btn btn-primary btn-sm" onclick="showFormReleaseModal()" id="formReleaseBtn" style="display:none">Сформировать релиз (AI)</button>
-        <button class="btn btn-ghost btn-sm" onclick="showRoadmapModal()">Дорожная карта из документа</button>
         <button class="btn btn-ghost btn-sm" onclick="showValidateModal()">Проверить</button>
       </div>
     </div>
@@ -79,11 +78,13 @@
           <table>
             <thead>
               <tr>
-                <th>Задача</th>
-                <th>Тип</th>
-                <th>Приоритет</th>
-                <th>Статус</th>
-                <th>Дата</th>
+                <th data-sort="title" onclick="sortIssues('title')" class="sortable-th">Задача<span class="sort-arrow"></span></th>
+                <th data-sort="type" onclick="sortIssues('type')" class="sortable-th">Тип<span class="sort-arrow"></span></th>
+                <th data-sort="priority" onclick="sortIssues('priority')" class="sortable-th">Приоритет<span class="sort-arrow"></span></th>
+                <th data-sort="release_version" onclick="sortIssues('release_version')" class="sortable-th">Релиз<span class="sort-arrow"></span></th>
+                <th data-sort="labels" onclick="sortIssues('labels')" class="sortable-th">Метки<span class="sort-arrow"></span></th>
+                <th data-sort="status" onclick="sortIssues('status')" class="sortable-th">Статус<span class="sort-arrow"></span></th>
+                <th data-sort="created_at" onclick="sortIssues('created_at')" class="sortable-th">Дата<span class="sort-arrow"></span></th>
                 <th></th>
               </tr>
             </thead>
@@ -101,7 +102,11 @@
     <div class="tab-panel" id="panel-releases">
       <div class="section">
         <div class="section-header">
-          <div></div>
+          <div class="filters" id="releaseStatusFilter">
+            <button class="btn btn-ghost btn-sm active" data-status="">Все</button>
+            <button class="btn btn-ghost btn-sm" data-status="open">Открытые</button>
+            <button class="btn btn-ghost btn-sm" data-status="published">Опубликованные</button>
+          </div>
           <button class="btn btn-primary btn-sm" onclick="showReleaseModal()">+ Релиз</button>
         </div>
         <div id="releasesList"></div>
@@ -123,7 +128,7 @@
                 <th>Статус</th>
                 <th>Дата</th>
                 <th>Длительность</th>
-                <th>Предложения</th>
+                <th>Итог</th>
                 <th></th>
               </tr>
             </thead>
@@ -204,7 +209,6 @@
         </div>
       </div>
     </div>
-  </div>
 
     <!-- Panel: GitLab Issues -->
     <div class="tab-panel" id="panel-gitlab-issues">
@@ -227,13 +231,13 @@
             <thead>
               <tr>
                 <th style="width:36px"><input type="checkbox" id="glSelectAll" onchange="handleGlSelectAll(this.checked)"></th>
-                <th>#</th>
-                <th>Тема</th>
-                <th>Labels</th>
-                <th>Milestone</th>
-                <th>Автор</th>
-                <th>Дата</th>
-                <th>Статус</th>
+                <th data-sort="gitlab_issue_iid" onclick="sortGlIssues('gitlab_issue_iid')" class="sortable-th">#<span class="sort-arrow"></span></th>
+                <th data-sort="title" onclick="sortGlIssues('title')" class="sortable-th">Тема<span class="sort-arrow"></span></th>
+                <th data-sort="labels" onclick="sortGlIssues('labels')" class="sortable-th">Метки<span class="sort-arrow"></span></th>
+                <th data-sort="state" onclick="sortGlIssues('state')" class="sortable-th">Состояние<span class="sort-arrow"></span></th>
+                <th data-sort="author" onclick="sortGlIssues('author')" class="sortable-th">Автор<span class="sort-arrow"></span></th>
+                <th data-sort="gl_created_at" onclick="sortGlIssues('gl_created_at')" class="sortable-th">Дата<span class="sort-arrow"></span></th>
+                <th data-sort="sync_status" onclick="sortGlIssues('sync_status')" class="sortable-th">Синхр.<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="glIssuesBody"></tbody>
@@ -538,148 +542,197 @@
         </div>
       </div>
     </div>
-  </div>
 
     <!-- Panel: Deploy -->
     <div class="tab-panel" id="panel-deploy">
       <div class="section">
         <div class="section-header">
-          <h3 style="margin:0">Настройки деплоя (GitLab CI/CD)</h3>
-          <button class="btn btn-primary btn-sm" onclick="handleSaveDeploy()">Сохранить настройки</button>
+          <h3 style="margin:0">Деплой (GitLab CI/CD)</h3>
+          <button class="btn btn-primary btn-sm" onclick="handleSaveDeploy()">Сохранить</button>
         </div>
 
-        <!-- GitLab -->
-        <div style="margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <h4 style="margin:0 0 12px">GitLab</h4>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>URL сервера GitLab</label>
-            <input type="text" id="deployGitlabUrl" placeholder="https://gitlab.rivc-pulkovo.ru">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Project ID</label>
-            <input type="number" id="deployGitlabProjectId" placeholder="42">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Remote URL</label>
-            <input type="text" id="deployGitlabRemoteUrl" placeholder="git@gitlab.rivc-pulkovo.ru:opii/project.git">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Default branch</label>
-            <input type="text" id="deployGitlabDefaultBranch" value="main" placeholder="main">
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label>Access Token</label>
-            <input type="password" id="deployGitlabToken" placeholder="glpat-xxxx">
-            <div style="font-size:0.8rem;color:var(--text-dim)">Personal Access Token с правами api, read_repository, write_repository</div>
-          </div>
-        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
 
-        <!-- Target Server -->
-        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <h4 style="margin:0 0 12px">Сервер деплоя</h4>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Хост</label>
-            <input type="text" id="deployTargetHost" placeholder="192.168.196.213">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Порт SSH</label>
-            <input type="number" id="deployTargetPort" value="22" style="max-width:120px">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Пользователь</label>
-            <input type="text" id="deployTargetUser" placeholder="opii">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Метод деплоя</label>
-            <select id="deployTargetMethod" onchange="toggleDeployMethodFields()">
-              <option value="docker">Docker (docker compose pull + up)</option>
-              <option value="native">Native (git pull + npm ci + pm2 restart)</option>
-            </select>
-          </div>
-          <div id="deployDockerFields">
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Путь к docker-compose.yml</label>
-              <input type="text" id="deployDockerComposePath" placeholder="/opt/project/docker-compose.yml">
+          <!-- GitLab -->
+          <div style="padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+            <div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim);margin-bottom:10px">GitLab</div>
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px">
+              <div class="form-group" style="margin:0">
+                <label>URL сервера</label>
+                <input type="text" id="deployGitlabUrl" placeholder="http://192.168.206.48">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Project ID</label>
+                <input type="number" id="deployGitlabProjectId" placeholder="14" style="width:90px">
+              </div>
             </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label>Имя сервиса</label>
-              <input type="text" id="deployServiceName" placeholder="kaizen">
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px">
+              <div class="form-group" style="margin:0">
+                <label>Remote URL</label>
+                <input type="text" id="deployGitlabRemoteUrl" placeholder="http://gitlab/group/repo.git">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Branch</label>
+                <input type="text" id="deployGitlabDefaultBranch" placeholder="main" style="width:90px">
+              </div>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>Access Token</label>
+              <input type="password" id="deployGitlabToken" placeholder="glpat-xxxx">
             </div>
           </div>
-          <div id="deployNativeFields" style="display:none">
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Путь к проекту на сервере</label>
-              <input type="text" id="deployProjectPathServer" placeholder="/opt/project">
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label>Имя pm2 процесса</label>
-              <input type="text" id="deployPm2Name" placeholder="kaizen">
-            </div>
-          </div>
-        </div>
 
-        <!-- Auto Deploy -->
-        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
-            <input type="checkbox" id="deployAutoOnPublish" style="width:auto;accent-color:var(--accent)">
-            Авто-деплой при публикации релиза
-          </label>
-          <div style="font-size:0.8rem;color:var(--text-dim);margin-top:6px">
-            При публикации релиза автоматически мержить в default branch и запускать GitLab CI/CD pipeline
+          <!-- Сервер деплоя -->
+          <div style="padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+            <div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim);margin-bottom:10px">Сервер деплоя</div>
+            <div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;margin-bottom:8px">
+              <div class="form-group" style="margin:0">
+                <label>Хост</label>
+                <input type="text" id="deployTargetHost" placeholder="192.168.196.213">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>SSH порт</label>
+                <input type="number" id="deployTargetPort" value="22" style="width:70px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Пользователь</label>
+                <input type="text" id="deployTargetUser" placeholder="opii" style="width:80px">
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Метод</label>
+              <select id="deployTargetMethod" onchange="toggleDeployMethodFields()">
+                <option value="docker">Docker (compose pull + up)</option>
+                <option value="native">Native (git pull + pm2)</option>
+              </select>
+            </div>
+            <div id="deployDockerFields">
+              <div style="display:grid;grid-template-columns:1fr auto;gap:8px">
+                <div class="form-group" style="margin:0">
+                  <label>Путь к docker-compose.yml</label>
+                  <input type="text" id="deployDockerComposePath" placeholder="/opt/project/docker-compose.yml">
+                </div>
+                <div class="form-group" style="margin:0">
+                  <label>Сервис</label>
+                  <input type="text" id="deployServiceName" placeholder="app" style="width:90px">
+                </div>
+              </div>
+            </div>
+            <div id="deployNativeFields" style="display:none">
+              <div style="display:grid;grid-template-columns:1fr auto;gap:8px">
+                <div class="form-group" style="margin:0">
+                  <label>Путь к проекту</label>
+                  <input type="text" id="deployProjectPathServer" placeholder="/opt/project">
+                </div>
+                <div class="form-group" style="margin:0">
+                  <label>pm2 имя</label>
+                  <input type="text" id="deployPm2Name" placeholder="app" style="width:90px">
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <!-- Generate CI Files -->
-        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <h4 style="margin:0 0 12px">Генерация файлов</h4>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-sm" onclick="handleGenerateCI()">Сгенерировать .gitlab-ci.yml</button>
-            <button class="btn btn-sm" onclick="handleGenerateDockerfile()">Сгенерировать Dockerfile</button>
+          <!-- Адреса серверов -->
+          <div style="padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+            <div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim);margin-bottom:10px">Адреса серверов</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div class="form-group" style="margin:0">
+                <label>Прод Frontend URL</label>
+                <input type="text" id="deployUrlFrontend" placeholder="http://192.168.196.213:7012">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Прод Backend URL</label>
+                <input type="text" id="deployUrlBackend" placeholder="http://192.168.196.213:7013">
+              </div>
+            </div>
+            <div style="height:1px;background:var(--border);margin-bottom:10px"></div>
+            <div style="display:grid;grid-template-columns:auto auto 1fr;gap:8px">
+              <div class="form-group" style="margin:0">
+                <label>Dev Frontend порт</label>
+                <input type="number" id="devPortFrontend" placeholder="3000" style="width:90px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Dev Backend порт</label>
+                <input type="number" id="devPortBackend" placeholder="5000" style="width:90px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Команда запуска</label>
+                <input type="text" id="devStartCommand" placeholder="cd front && npm run dev">
+              </div>
+            </div>
           </div>
-          <pre id="deployGeneratedFile" style="display:none;margin-top:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;max-height:300px;overflow-y:auto;white-space:pre-wrap"></pre>
+
+          <!-- Автоматизация + Генерация -->
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+              <div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim);margin-bottom:10px">Автоматизация</div>
+              <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;cursor:pointer">
+                <input type="checkbox" id="deployAutoOnPublish" style="width:auto;accent-color:var(--accent);margin-top:2px">
+                <div>
+                  <div style="font-size:0.85rem;font-weight:600">Авто-деплой при публикации</div>
+                  <div style="font-size:0.75rem;color:var(--text-dim)">Публикация → мерж → GitLab CI/CD</div>
+                </div>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="checkbox" id="deployAutoPublishOnSuccess" style="width:auto;accent-color:var(--accent);margin-top:2px">
+                <div>
+                  <div style="font-size:0.85rem;font-weight:600">Авто-публикация при успехе</div>
+                  <div style="font-size:0.75rem;color:var(--text-dim)">Pipeline success → релиз опубликован</div>
+                </div>
+              </label>
+            </div>
+            <div style="padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+              <div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim);margin-bottom:10px">Генерация файлов CI/CD</div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-sm" onclick="handleGenerateCI()">.gitlab-ci.yml</button>
+                <button class="btn btn-sm" onclick="handleGenerateDockerfile()">Dockerfile</button>
+              </div>
+              <pre id="deployGeneratedFile" style="display:none;margin-top:10px;padding:10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:0.75rem;max-height:200px;overflow-y:auto;white-space:pre-wrap"></pre>
+            </div>
+          </div>
+
         </div>
 
         <!-- Smoke Test -->
-        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <h4 style="margin:0 0 4px">Smoke Test (проверка фронтенда)</h4>
-          <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:12px">
-            После develop_release автоматически запускает dev-сервер и проверяет страницы через headless-браузер (Playwright).
-            Если на странице есть JS-ошибки, HTTP 4xx/5xx или пустой контент — процесс помечается как failed.
+        <div style="margin-top:12px;padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim)">Smoke Test</div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;cursor:pointer;margin:0">
+              <input type="checkbox" id="smokeEnabled" style="width:auto;accent-color:var(--accent)">
+              Включить после develop_release
+            </label>
           </div>
-          <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:12px">
-            <input type="checkbox" id="smokeEnabled" style="width:auto;accent-color:var(--accent)">
-            Включить Smoke Test после разработки релиза
-          </label>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Команда запуска dev-сервера</label>
-            <input type="text" id="smokeStartCommand" value="npm run dev" placeholder="npm run dev">
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>URL сервера</label>
-            <input type="text" id="smokeUrl" placeholder="http://localhost:3000">
-            <div style="font-size:0.8rem;color:var(--text-dim)">Локальный URL, по которому dev-сервер будет доступен</div>
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Страницы для проверки (по одной на строку)</label>
-            <textarea id="smokePages" style="min-height:60px" placeholder="/&#10;/login&#10;/dashboard">/</textarea>
-          </div>
-          <div style="display:flex;gap:10px">
-            <div class="form-group" style="margin-bottom:0;flex:1">
-              <label>Таймаут готовности сервера (мс)</label>
-              <input type="number" id="smokeReadyTimeout" value="20000">
+          <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:8px;align-items:end">
+            <div class="form-group" style="margin:0">
+              <label>Команда запуска</label>
+              <input type="text" id="smokeStartCommand" placeholder="npm run dev">
             </div>
-            <div class="form-group" style="margin-bottom:0;flex:1">
-              <label>Таймаут проверки страницы (мс)</label>
-              <input type="number" id="smokeCheckTimeout" value="10000">
+            <div class="form-group" style="margin:0">
+              <label>URL сервера</label>
+              <input type="text" id="smokeUrl" placeholder="http://localhost:3000">
             </div>
+            <div class="form-group" style="margin:0">
+              <label>Таймаут старта (мс)</label>
+              <input type="number" id="smokeReadyTimeout" value="20000" style="width:110px">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>Таймаут страницы (мс)</label>
+              <input type="number" id="smokeCheckTimeout" value="10000" style="width:110px">
+            </div>
+          </div>
+          <div class="form-group" style="margin:8px 0 0">
+            <label>Страницы для проверки (через пробел или строку)</label>
+            <input type="text" id="smokePages" placeholder="/ /login /dashboard /users">
           </div>
         </div>
+
       </div>
     </div>
+  </div><!-- /.container -->
 
   <!-- Edit Product Modal -->
   <div class="modal-overlay" id="editProductModal">
-    <div class="modal">
+    <div class="modal" style="max-width:640px">
       <h2>Редактировать продукт</h2>
       <form id="editProductForm" onsubmit="return handleEditProduct(event)">
         <div class="form-group">
@@ -688,31 +741,37 @@
         </div>
         <div class="form-group">
           <label>Описание</label>
-          <textarea id="epDesc"></textarea>
+          <textarea id="epDesc" rows="2"></textarea>
         </div>
-        <div class="form-group">
-          <label>Репозиторий (URL)</label>
-          <input type="text" id="epRepo">
+        <div style="display:flex;gap:12px">
+          <div class="form-group" style="flex:2;margin-bottom:0">
+            <label>Стек технологий</label>
+            <input type="text" id="epStack">
+          </div>
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Ответственный</label>
+            <input type="text" id="epOwner">
+          </div>
         </div>
-        <div class="form-group">
-          <label>Стек технологий</label>
-          <input type="text" id="epStack">
+        <div style="display:flex;gap:12px;margin-top:10px">
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Репозиторий (URL)</label>
+            <input type="text" id="epRepo">
+          </div>
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Путь к проекту</label>
+            <input type="text" id="epPath" placeholder="/Users/.../project">
+          </div>
         </div>
-        <div class="form-group">
-          <label>Ответственный</label>
-          <input type="text" id="epOwner">
-        </div>
-        <div class="form-group">
-          <label>Путь к проекту</label>
-          <input type="text" id="epPath" placeholder="/Users/rivcmakar1/AIWork/Разработка ПО/...">
-        </div>
-        <div class="form-group">
-          <label>ID системы (Rivc.Connect)</label>
-          <input type="number" id="epRcSystemId" placeholder="Необязательно">
-        </div>
-        <div class="form-group">
-          <label>ID модуля (Rivc.Connect)</label>
-          <input type="number" id="epRcModuleId" placeholder="Необязательно">
+        <div style="display:flex;gap:12px;margin-top:10px">
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>ID системы (RC)</label>
+            <input type="number" id="epRcSystemId" placeholder="—">
+          </div>
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>ID модуля (RC)</label>
+            <input type="number" id="epRcModuleId" placeholder="—">
+          </div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" onclick="closeModal('editProductModal')">Отмена</button>
@@ -724,7 +783,7 @@
 
   <!-- Issue Modal -->
   <div class="modal-overlay" id="issueModal">
-    <div class="modal">
+    <div class="modal" style="max-width:600px">
       <h2 id="issueModalTitle">Новая задача</h2>
       <form id="issueForm" onsubmit="return handleIssueSubmit(event)">
         <input type="hidden" id="issueId">
@@ -734,24 +793,42 @@
         </div>
         <div class="form-group">
           <label>Описание</label>
-          <textarea id="issueDesc"></textarea>
+          <textarea id="issueDesc" rows="6" style="min-height:120px"></textarea>
         </div>
-        <div class="form-group">
-          <label>Тип</label>
-          <select id="issueType">
-            <option value="improvement">Improvement</option>
-            <option value="bug">Bug</option>
-            <option value="feature">Feature</option>
-          </select>
+        <div style="display:flex;gap:12px">
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Тип</label>
+            <select id="issueType">
+              <option value="improvement">Improvement</option>
+              <option value="bug">Bug</option>
+              <option value="feature">Feature</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex:1;margin-bottom:0">
+            <label>Приоритет</label>
+            <select id="issuePriority">
+              <option value="medium">Medium</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Приоритет</label>
-          <select id="issuePriority">
-            <option value="medium">Medium</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="low">Low</option>
-          </select>
+        <div style="display:flex;gap:12px;margin-top:12px" id="issueStatusReleaseRow" style="display:none">
+          <div class="form-group" id="issueStatusGroup" style="flex:1;margin-bottom:0;display:none">
+            <label>Статус</label>
+            <select id="issueStatus">
+              <option value="open">Open</option>
+              <option value="in_release">In Release</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+          <div class="form-group" id="issueReleaseGroup" style="flex:1;margin-bottom:0;display:none">
+            <label>Релиз</label>
+            <select id="issueRelease">
+              <option value="">— Без релиза —</option>
+            </select>
+          </div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" onclick="closeModal('issueModal')">Отмена</button>
@@ -790,77 +867,103 @@
     </div>
   </div>
 
-  <!-- Improve Modal -->
-  <div class="modal-overlay" id="improveModal">
-    <div class="modal" style="max-width:640px">
-      <h2>Улучшение продукта</h2>
-      <div class="form-group">
-        <label>Шаблон промпта</label>
-        <select id="improveTemplate" onchange="handleTemplateChange()">
-          <option value="">— Свой промпт —</option>
-        </select>
+  <!-- Create Tasks Modal (unified: AI-анализ + Из документа) -->
+  <div class="modal-overlay" id="createTasksModal">
+    <div class="modal" style="max-width:600px">
+      <h2>Создать задачи (AI)</h2>
+
+      <!-- Табы источника -->
+      <div class="tabs" style="margin-bottom:12px">
+        <div class="tab active" data-create-tab="ai" onclick="switchCreateTasksTab('ai')">AI-анализ</div>
+        <div class="tab" data-create-tab="doc" onclick="switchCreateTasksTab('doc')">Из документа</div>
       </div>
-      <div class="form-group">
-        <label>Промпт *</label>
-        <textarea id="improvePrompt" rows="4" required placeholder="Опишите, какие улучшения вы хотите получить..."></textarea>
+
+      <!-- Таб: AI-анализ -->
+      <div id="createTasksTabAI">
+        <div class="form-group">
+          <label>Шаблон</label>
+          <select id="createTasksTemplate" onchange="handleCreateTasksTemplateChange()">
+            <option value="">— Свой промпт —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Промпт *</label>
+          <textarea id="createTasksPrompt" rows="3" required placeholder="Опишите, какие улучшения вы хотите получить..."></textarea>
+        </div>
       </div>
-      <div class="form-group">
-        <label>Модель ИИ *</label>
-        <select id="improveModel" required></select>
+
+      <!-- Таб: Из документа -->
+      <div id="createTasksTabDoc" style="display:none">
+        <div class="form-group">
+          <label>Текст документа * <span id="createTasksCharCount" class="char-counter" style="margin-left:8px">0 символов</span></label>
+          <textarea id="createTasksDocText" rows="6" required
+            placeholder="Вставьте текст документа: функциональные требования, BRD, ТЗ..."></textarea>
+        </div>
       </div>
-      <div class="form-group">
-        <label>Количество задач (1–10)</label>
-        <input type="number" id="improveCount" value="5" min="1" max="10">
+
+      <!-- Общие поля: модель + режим в одну строку -->
+      <div style="display:flex;gap:12px;align-items:flex-end">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label>Модель ИИ *</label>
+          <select id="createTasksModel" required onchange="updateCreateTasksModeInfo()"></select>
+        </div>
+        <div id="createTasksModeInfo" style="padding-bottom:6px"></div>
       </div>
-      <div class="form-group">
-        <label>Таймаут (минуты, 3–60)</label>
-        <input type="number" id="improveTimeout" value="20" min="3" max="60">
+
+      <!-- Формат результата -->
+      <div class="form-group" style="margin-top:12px">
+        <label>Формат результата</label>
+        <div style="display:flex;gap:16px;padding:2px 0">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem">
+            <input type="radio" name="createTasksOutputMode" value="tasks" checked> Отдельные задачи
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem">
+            <input type="radio" name="createTasksOutputMode" value="releases"> Задачи в релизах
+          </label>
+        </div>
       </div>
+
+      <!-- Доп. настройки (сворачиваемые) -->
+      <div class="collapsible" style="margin-top:4px">
+        <div class="collapsible-toggle" onclick="this.parentElement.classList.toggle('open')" style="cursor:pointer">
+          <span class="collapsible-arrow">&#9654;</span>
+          <span style="font-size:0.85rem;color:var(--text-dim)">Доп. настройки</span>
+        </div>
+        <div class="collapsible-body" style="padding-top:8px">
+          <div style="display:flex;gap:12px">
+            <div class="form-group" style="flex:1;margin-bottom:0" id="createTasksCountGroup">
+              <label>Количество задач</label>
+              <input type="number" id="createTasksCount" value="5" min="1" max="10">
+            </div>
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label>Таймаут (мин)</label>
+              <input type="number" id="createTasksTimeout" value="20" min="3" max="60">
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" onclick="closeModal('improveModal')">Отмена</button>
-        <button type="button" class="btn btn-primary" onclick="handleImproveGenerate()">Сгенерировать</button>
+        <button type="button" class="btn btn-ghost" onclick="closeModal('createTasksModal')">Отмена</button>
+        <button type="button" class="btn btn-primary" onclick="handleCreateTasksGenerate()">Сгенерировать</button>
       </div>
     </div>
   </div>
 
   <!-- Process Detail Modal -->
   <div class="modal-overlay" id="processDetailModal">
-    <div class="modal" style="max-width:680px">
-      <h2 id="processDetailTitle">Процесс</h2>
+    <div class="modal" style="max-width:800px">
+      <div class="proc-detail-header">
+        <div>
+          <h2 id="processDetailTitle">Процесс</h2>
+          <div class="proc-detail-title-meta" id="processDetailMeta"></div>
+        </div>
+        <button class="proc-detail-close" onclick="closeModal('processDetailModal')">✕</button>
+      </div>
       <div id="processDetailContent"></div>
     </div>
   </div>
 
-  <!-- Roadmap from Doc Modal -->
-  <div class="modal-overlay" id="roadmapModal">
-    <div class="modal" style="max-width:680px">
-      <h2>Дорожная карта из документа</h2>
-      <div class="form-group">
-        <label>Текст документа *</label>
-        <textarea id="roadmapDocText" rows="10" required
-          placeholder="Вставьте текст документа: функциональные требования, BRD, ТЗ..."></textarea>
-        <div id="roadmapCharCount" class="char-counter">0 символов</div>
-      </div>
-      <div class="form-group">
-        <label>Модель ИИ *</label>
-        <select id="roadmapModel" required onchange="updateRoadmapModeInfo()"></select>
-      </div>
-      <div class="form-group">
-        <label>Режим</label>
-        <div id="roadmapModeInfo" style="font-size:0.85rem;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-dim)">
-          Выберите модель для определения режима
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Таймаут (минуты, 3–60)</label>
-        <input type="number" id="roadmapTimeout" value="30" min="3" max="60">
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" onclick="closeModal('roadmapModal')">Отмена</button>
-        <button type="button" class="btn btn-primary" onclick="handleRoadmapGenerate()">Запустить анализ</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Prepare Spec Modal -->
   <div class="modal-overlay" id="prepareSpecModal">

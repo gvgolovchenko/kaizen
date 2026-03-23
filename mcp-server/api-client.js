@@ -98,6 +98,14 @@ export const rcImportTicket = (ticketId) => request('POST', `/rc-tickets/${ticke
 export const rcImportBulk = (ticketIds) => request('POST', '/rc-tickets/import-bulk', { ticket_ids: ticketIds });
 export const rcIgnoreTicket = (ticketId) => request('POST', `/rc-tickets/${ticketId}/ignore`);
 
+// ── GitLab Issues ──
+export const gitlabSync = (productId) => request('POST', `/products/${productId}/gitlab-sync`);
+export const gitlabListIssues = (productId, syncStatus) =>
+  request('GET', `/products/${productId}/gitlab-issues${syncStatus ? `?sync_status=${syncStatus}` : ''}`);
+export const gitlabImportIssue = (issueId) => request('POST', `/gitlab-issues/${issueId}/import`);
+export const gitlabImportBulk = (issueIds) => request('POST', '/gitlab-issues/import-bulk', { issue_ids: issueIds });
+export const gitlabIgnoreIssue = (issueId) => request('POST', `/gitlab-issues/${issueId}/ignore`);
+
 // ── Bulk ──
 export const createIssuesBulk = (items) => request('POST', '/issues/bulk', { issues: items });
 export const createPlanFromReleases = (body) => request('POST', '/plans/from-releases', body);

@@ -75,6 +75,30 @@
           <label>ID модуля (Rivc.Connect)</label>
           <input type="number" id="productRcModuleId" placeholder="Необязательно">
         </div>
+        <div style="margin:16px 0 8px;font-weight:600;font-size:0.85rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Локальная разработка</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group" style="margin:0">
+            <label>Порт фронтенда</label>
+            <input type="number" id="productDevFrontPort" placeholder="3000">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Порт бэкенда</label>
+            <input type="number" id="productDevBackPort" placeholder="5000">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Команда запуска</label>
+          <input type="text" id="productDevStartCmd" placeholder="cd front && npm run dev">
+        </div>
+        <div style="margin:16px 0 8px;font-weight:600;font-size:0.85rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Прод-сервер</div>
+        <div class="form-group">
+          <label>URL фронтенда</label>
+          <input type="text" id="productProdFrontUrl" placeholder="http://192.168.196.213:7012">
+        </div>
+        <div class="form-group">
+          <label>URL бэкенда</label>
+          <input type="text" id="productProdBackUrl" placeholder="http://192.168.196.213:7013">
+        </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" onclick="closeProductModal()">Отмена</button>
           <button type="submit" class="btn btn-primary">Сохранить</button>

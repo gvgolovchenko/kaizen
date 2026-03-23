@@ -74,6 +74,7 @@
       </div>
       <div class="proc-section-body">
         <div class="proc-history-filters">
+          <input type="text" id="filterSearch" placeholder="Поиск по продукту...">
           <select id="filterType"><option value="">Все типы</option></select>
           <select id="filterProduct"><option value="">Все продукты</option></select>
           <select id="filterPeriod">
@@ -86,6 +87,7 @@
           <table>
             <thead>
               <tr>
+                <th style="width:24px"></th>
                 <th>Продукт</th>
                 <th>Тип</th>
                 <th>Модель</th>
@@ -107,8 +109,14 @@
 
   <!-- Process Detail Modal -->
   <div class="modal-overlay" id="processDetailModal">
-    <div class="modal" style="max-width:680px">
-      <h2 id="processDetailTitle">Процесс</h2>
+    <div class="modal" style="max-width:800px">
+      <div class="proc-detail-header">
+        <div>
+          <h2 id="processDetailTitle">Процесс</h2>
+          <div class="proc-detail-title-meta" id="processDetailMeta"></div>
+        </div>
+        <button class="proc-detail-close" onclick="closeModal('processDetailModal')">✕</button>
+      </div>
       <div id="processDetailContent"></div>
     </div>
   </div>

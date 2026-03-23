@@ -15,6 +15,8 @@ export class QueueManager {
       ollama: 1,
       mlx: 1,
       'claude-code': 2,
+      'qwen-code': 2,
+      'kilo-code': 2,
       anthropic: 3,
       openai: 3,
       google: 3,
@@ -92,16 +94,20 @@ export class QueueManager {
    * Взять следующий queued-процесс для данного провайдера и запустить.
    */
   async _dequeueNext(provider) {
-    const active = this._getActive(provider);
-    const limit = this._getLimit(provider);
-    if (active >= limit) return;
+    try {
+      const active = this._getActive(provider);
+      const limit = this._getLimit(provider);
+      if (active >= limit) return;
 
-    const next = provider === 'local'
-      ? await processes.getNextQueuedLocal()
-      : await processes.getNextQueued(provider);
-    if (!next) return;
+      const next = provider === 'local'
+        ? await processes.getNextQueuedLocal()
+        : await processes.getNextQueued(provider);
+      if (!next) return;
 
-    this._execute(next.id, provider, { timeoutMs: 20 * 60 * 1000 });
+      this._execute(next.id, provider, { timeoutMs: 20 * 60 * 1000 });
+    } catch (err) {
+      console.error(`QueueManager._dequeueNext(${provider}): ${err.message}`);
+    }
   }
 
   /**

@@ -37,7 +37,7 @@ function renderModels() {
       <td>${statusBadge(m.status)}</td>
       <td>
         <div class="inline-actions">
-          ${m.deployment === 'local' ? `<button class="warmup-btn" id="warmup-${m.id}" onclick="window._warmup('${m.id}')">Загрузить</button>` : ''}
+          ${m.deployment === 'local' && !['claude-code', 'qwen-code', 'kilo-code'].includes(m.provider) ? `<button class="warmup-btn" id="warmup-${m.id}" onclick="window._warmup('${m.id}')">Загрузить</button>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="window._editModel('${m.id}')">&#9998;</button>
           <button class="btn btn-danger btn-sm" onclick="window._deleteModel('${m.id}')">&#10005;</button>
         </div>
@@ -78,12 +78,39 @@ function formatModelName(modelId) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
-function toggleDiscoverSection() {
-  const deployment = document.getElementById('modelDeployment').value;
-  const section = document.getElementById('discoverSection');
-  section.style.display = deployment === 'local' ? '' : 'none';
-  document.getElementById('apiKeyGroup').style.display = deployment === 'cloud' ? '' : 'none';
-}
+const PROVIDER_INFO = {
+  'claude-code':  { deployment: 'local',  discover: false, apiKey: false, modelHint: 'claude-sonnet-4-6, claude-opus-4-6', namePlaceholder: 'Claude Code (Opus 4.6)' },
+  'qwen-code':    { deployment: 'local',  discover: false, apiKey: false, modelHint: 'qwen3-coder, qwen3-coder:30b', namePlaceholder: 'Qwen Code (0.12)' },
+  'kilo-code':    { deployment: 'local',  discover: false, apiKey: false, modelHint: 'kilo/kilo/auto-free, kilo/giga-potato', namePlaceholder: 'Kilo Code (auto-free)' },
+  'ollama':       { deployment: 'local',  discover: true,  apiKey: false, modelHint: 'llama3:8b, qwen2.5-coder:32b', namePlaceholder: 'Llama 3 8B' },
+  'mlx':          { deployment: 'local',  discover: true,  apiKey: false, modelHint: 'mlx-community/Qwen2.5-Coder', namePlaceholder: 'Qwen 2.5 Coder (MLX)' },
+  'anthropic':    { deployment: 'cloud',  discover: false, apiKey: true,  modelHint: 'claude-sonnet-4-6-20250514', namePlaceholder: 'Claude Sonnet 4.6', apiPlaceholder: 'sk-ant-...' },
+  'openai':       { deployment: 'cloud',  discover: false, apiKey: true,  modelHint: 'gpt-4o, o3-mini', namePlaceholder: 'GPT-4o', apiPlaceholder: 'sk-...' },
+  'google':       { deployment: 'cloud',  discover: false, apiKey: true,  modelHint: 'gemini-2.5-pro', namePlaceholder: 'Gemini 2.5 Pro', apiPlaceholder: 'AIza...' },
+};
+
+window.onProviderChange = function () {
+  const provider = document.getElementById('modelProvider').value;
+  const info = PROVIDER_INFO[provider] || {};
+
+  // Deployment
+  document.getElementById('modelDeployment').value = info.deployment || 'local';
+
+  // Discover section
+  document.getElementById('discoverSection').style.display = info.discover ? '' : 'none';
+
+  // API Key
+  document.getElementById('apiKeyGroup').style.display = info.apiKey ? '' : 'none';
+  if (info.apiPlaceholder) document.getElementById('modelApiKey').placeholder = info.apiPlaceholder;
+
+  // Hints
+  document.getElementById('modelIdHint').textContent = info.modelHint ? `Например: ${info.modelHint}` : '';
+  document.getElementById('modelName').placeholder = info.namePlaceholder || '';
+  document.getElementById('modelModelId').placeholder = info.modelHint?.split(',')[0]?.trim() || '';
+};
+
+// Legacy alias
+function toggleDiscoverSection() { onProviderChange(); }
 
 window._discoverModels = async function () {
   const btn = document.getElementById('discoverBtn');
@@ -192,10 +219,9 @@ window.showModelModal = function () {
   document.getElementById('modelEditId').value = '';
   document.getElementById('modelForm').reset();
   document.getElementById('modelApiKey').value = '';
-  // Reset discover section
   document.getElementById('discoverSelect').innerHTML = '<option value="">— Выберите модель —</option>';
   document.getElementById('discoverSelect').disabled = true;
-  toggleDiscoverSection();
+  onProviderChange();
   openModal('modelModal');
 };
 
@@ -216,7 +242,7 @@ window._editModel = function (id) {
   // Reset discover section
   document.getElementById('discoverSelect').innerHTML = '<option value="">— Выберите модель —</option>';
   document.getElementById('discoverSelect').disabled = true;
-  toggleDiscoverSection();
+  onProviderChange();
   openModal('modelModal');
 };
 

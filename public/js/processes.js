@@ -1,5 +1,5 @@
 import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate } from './app.js';
-import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess } from './process-detail.js';
+import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess, procTypeLabel } from './process-detail.js';
 
 let allProcesses = [];
 let pollingTimer = null;
@@ -58,20 +58,32 @@ function renderAll() {
 function renderSummary({ active, queued, failed, history }) {
   document.getElementById('processSummary').innerHTML = `
     <div class="proc-stat proc-stat-active ${active.length ? 'has-items' : ''}">
-      <div class="proc-stat-number">${active.length}</div>
-      <div class="proc-stat-label">Выполняются</div>
+      <div class="proc-stat-icon">⚙</div>
+      <div class="proc-stat-info">
+        <div class="proc-stat-number">${active.length}</div>
+        <div class="proc-stat-label">Выполняются</div>
+      </div>
     </div>
     <div class="proc-stat proc-stat-queued ${queued.length ? 'has-items' : ''}">
-      <div class="proc-stat-number">${queued.length}</div>
-      <div class="proc-stat-label">В очереди</div>
+      <div class="proc-stat-icon">📋</div>
+      <div class="proc-stat-info">
+        <div class="proc-stat-number">${queued.length}</div>
+        <div class="proc-stat-label">В очереди</div>
+      </div>
     </div>
     <div class="proc-stat proc-stat-completed">
-      <div class="proc-stat-number">${history.length}</div>
-      <div class="proc-stat-label">Завершено</div>
+      <div class="proc-stat-icon">✓</div>
+      <div class="proc-stat-info">
+        <div class="proc-stat-number">${history.length}</div>
+        <div class="proc-stat-label">Завершено</div>
+      </div>
     </div>
     <div class="proc-stat proc-stat-failed ${failed.length ? 'has-items' : ''}">
-      <div class="proc-stat-number">${failed.length}</div>
-      <div class="proc-stat-label">Ошибки</div>
+      <div class="proc-stat-icon">✗</div>
+      <div class="proc-stat-info">
+        <div class="proc-stat-number">${failed.length}</div>
+        <div class="proc-stat-label">Ошибки</div>
+      </div>
     </div>`;
 }
 
@@ -95,19 +107,21 @@ function renderSection(sectionId, cardsId, countId, items, cardFn) {
 // ── Card renderers ───────────────────────────────────────
 
 function renderActiveCard(p) {
+  const started = p.started_at || p.created_at;
   return `
   <div class="proc-card" onclick="showProcessDetail('${p.id}')">
     <div class="proc-card-header">
-      <span class="proc-card-product">${escapeHtml(p.product_name)}</span>
-      <span class="card-active-badge">running</span>
+      <div>
+        <div class="proc-card-type">${procTypeLabel(p.type)}</div>
+        <a class="proc-card-product" href="/product.html?id=${p.product_id}" onclick="event.stopPropagation()">${escapeHtml(p.product_name)}</a>
+      </div>
+      <span class="badge badge-process-running">running</span>
     </div>
     <div class="proc-card-meta">
-      <span class="badge badge-process-${p.type}">${p.type}</span>
-      ${p.model_name ? `<span>${escapeHtml(p.model_name)}</span>` : ''}
+      ${p.model_name ? `<span>🤖 ${escapeHtml(p.model_name)}</span>` : ''}
+      <span style="margin-left:auto">⏱ <span class="proc-card-duration" data-started-at="${started}" data-type="${p.type}">${liveDuration(p)}</span></span>
     </div>
-    <div class="proc-card-duration" data-started-at="${p.started_at || p.created_at}" data-type="${p.type}">
-      ${liveDuration(p)}
-    </div>
+    <div class="proc-card-progress"></div>
   </div>`;
 }
 
@@ -115,12 +129,15 @@ function renderQueueCard(p) {
   return `
   <div class="proc-card" onclick="showProcessDetail('${p.id}')">
     <div class="proc-card-header">
-      <span class="proc-card-product">${escapeHtml(p.product_name)}</span>
-      <span class="badge badge-process-queued">queued</span>
+      <div>
+        <div class="proc-card-type">${procTypeLabel(p.type)}</div>
+        <a class="proc-card-product" href="/product.html?id=${p.product_id}" onclick="event.stopPropagation()">${escapeHtml(p.product_name)}</a>
+      </div>
+      <span class="badge badge-process-queued">в очереди</span>
     </div>
     <div class="proc-card-meta">
-      <span class="badge badge-process-${p.type}">${p.type}</span>
-      ${p.model_name ? `<span>${escapeHtml(p.model_name)}</span>` : ''}
+      ${p.model_name ? `<span>🤖 ${escapeHtml(p.model_name)}</span>` : ''}
+      <span style="margin-left:auto;font-size:0.75rem">${formatDate(p.created_at)}</span>
     </div>
     <div class="proc-card-actions">
       <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelProcess('${p.id}')">Отменить</button>
@@ -133,17 +150,20 @@ function renderFailedCard(p) {
   return `
   <div class="proc-card" onclick="showProcessDetail('${p.id}')">
     <div class="proc-card-header">
-      <span class="proc-card-product">${escapeHtml(p.product_name)}</span>
-      <span class="badge badge-process-failed">failed</span>
+      <div>
+        <div class="proc-card-type">${procTypeLabel(p.type)}</div>
+        <a class="proc-card-product" href="/product.html?id=${p.product_id}" onclick="event.stopPropagation()">${escapeHtml(p.product_name)}</a>
+      </div>
+      <span class="badge badge-process-failed">ошибка</span>
     </div>
     <div class="proc-card-meta">
-      <span class="badge badge-process-${p.type}">${p.type}</span>
-      ${p.model_name ? `<span>${escapeHtml(p.model_name)}</span>` : ''}
+      ${p.model_name ? `<span>🤖 ${escapeHtml(p.model_name)}</span>` : ''}
       <span style="margin-left:auto;font-size:0.75rem">${formatDate(p.updated_at)}</span>
     </div>
     ${errorMsg ? `<div class="proc-card-error" title="${escapeHtml(errorMsg)}">${escapeHtml(errorMsg)}</div>` : ''}
     <div class="proc-card-actions">
       <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); handleProcessRestart('${p.id}')">Перезапустить</button>
+      <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProcess('${p.id}')">Удалить</button>
     </div>
   </div>`;
 }
@@ -169,7 +189,7 @@ function populateFilters() {
   const products = [...new Map(allProcesses.map(p => [p.product_id, p.product_name])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
 
   typeSelect.innerHTML = '<option value="">Все типы</option>' +
-    types.map(t => `<option value="${t}" ${t === curType ? 'selected' : ''}>${t}</option>`).join('');
+    types.map(t => `<option value="${t}" ${t === curType ? 'selected' : ''}>${procTypeLabel(t)}</option>`).join('');
 
   productSelect.innerHTML = '<option value="">Все продукты</option>' +
     products.map(([id, name]) => `<option value="${id}" ${id === curProduct ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
@@ -177,6 +197,9 @@ function populateFilters() {
 
 function getFilteredHistory(history) {
   let filtered = history;
+
+  const search = document.getElementById('filterSearch').value.trim().toLowerCase();
+  if (search) filtered = filtered.filter(p => p.product_name?.toLowerCase().includes(search));
 
   const typeFilter = document.getElementById('filterType').value;
   if (typeFilter) filtered = filtered.filter(p => p.type === typeFilter);
@@ -216,14 +239,21 @@ function renderHistory(history) {
 
   const pageItems = filtered.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
 
-  tbody.innerHTML = pageItems.map(p => `
+  tbody.innerHTML = pageItems.map(p => {
+    const isOk = p.status === 'completed';
+    const statusIcon = isOk
+      ? `<span class="proc-history-status-done" title="Завершён">✓</span>`
+      : `<span class="proc-history-status-fail" title="Ошибка">✗</span>`;
+    return `
     <tr style="cursor:pointer" onclick="showProcessDetail('${p.id}')">
+      <td style="text-align:center">${statusIcon}</td>
       <td>${escapeHtml(p.product_name)}</td>
-      <td><span class="badge badge-process-${p.type}">${p.type}</span></td>
-      <td>${p.model_name ? escapeHtml(p.model_name) : '<span style="color:var(--text-dim)">local</span>'}</td>
+      <td style="white-space:nowrap">${procTypeLabel(p.type)}</td>
+      <td style="color:var(--text-dim);font-size:0.82rem">${p.model_name ? escapeHtml(p.model_name) : '<span style="color:var(--text-dim)">local</span>'}</td>
       <td style="white-space:nowrap">${p.duration_ms ? formatDuration(p.duration_ms) : '—'}</td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   // Pagination
   if (totalPages <= 1) {
@@ -296,9 +326,25 @@ function startDurationTimer(activeProcesses) {
       const type = el.dataset.type || '';
       const threshold = getThreshold(type);
       if (elapsed > threshold) {
-        el.innerHTML = `<span class="proc-hung-warning">${formatDuration(elapsed)}… ⚠ возможно завис</span>`;
+        el.innerHTML = `<span class="proc-hung-warning">${formatDuration(elapsed)}… ⚠ завис?</span>`;
       } else {
         el.textContent = formatDuration(elapsed) + '…';
+      }
+    });
+    // For new card structure the duration is inside a span, walk up to find data-attrs
+    document.querySelectorAll('[data-started-at]').forEach(el => {
+      if (el.classList.contains('proc-card-duration')) return; // already handled
+      const started = el.dataset.startedAt;
+      if (!started) return;
+      const span = el.querySelector('.proc-card-duration');
+      if (!span) return;
+      const elapsed = Date.now() - new Date(started).getTime();
+      const type = el.dataset.type || '';
+      const threshold = getThreshold(type);
+      if (elapsed > threshold) {
+        span.innerHTML = `<span class="proc-hung-warning">${formatDuration(elapsed)}… ⚠ завис?</span>`;
+      } else {
+        span.textContent = formatDuration(elapsed) + '…';
       }
     });
   }, 1000);
@@ -325,24 +371,13 @@ window.toggleSection = function (sectionId) {
 // ── Process detail ───────────────────────────────────────
 
 window.showProcessDetail = async function (id) {
-  const cachedProc = allProcesses.find(p => p.id === id);
-  if (cachedProc?.type === 'roadmap_from_doc') {
-    window.location.href = `/roadmap.html?process_id=${id}&product_id=${cachedProc.product_id}`;
-    return;
-  }
-
   try {
     const [proc, logs] = await Promise.all([
       api(`/processes/${id}`),
       api(`/processes/${id}/logs`),
     ]);
 
-    if (proc.type === 'roadmap_from_doc') {
-      window.location.href = `/roadmap.html?process_id=${id}&product_id=${proc.product_id}`;
-      return;
-    }
-
-    document.getElementById('processDetailTitle').textContent = `Процесс: ${proc.type}`;
+    document.getElementById('processDetailTitle').textContent = procTypeLabel(proc.type);
     document.getElementById('processDetailContent').innerHTML = renderProcessDetailHtml(proc, logs, {
       showProductName: true,
       showSpecLink: false,
@@ -360,11 +395,76 @@ window.toggleAllProcessSuggestions = (state) => toggleAllSuggestions('processSug
 window.updateProcessApproveCount = () => updateApproveCount('processSuggestionsList', 'processApproveBtn');
 window.handleProcessApprove = (processId) => approveProcess(processId, 'processSuggestionsList', { modalId: 'processDetailModal' });
 
+// Roadmap approval handlers (from processes page)
+window.toggleRoadmapRelease = function (checkbox, releaseIndex) {
+  const checked = checkbox.checked;
+  document.querySelectorAll(`#processSuggestionsList input[data-release-index="${releaseIndex}"][data-issue-index]`)
+    .forEach(cb => { cb.checked = checked; });
+  updateRoadmapApproveCount();
+};
+
+window.updateRoadmapApproveCount = function () {
+  const checked = document.querySelectorAll('#processSuggestionsList input[data-issue-index]:checked');
+  const btn = document.getElementById('processApproveBtn');
+  if (btn) {
+    btn.textContent = `Утвердить (${checked.length} задач)`;
+    btn.disabled = checked.length === 0;
+  }
+  const releaseCheckboxes = document.querySelectorAll('#processSuggestionsList input[data-release-index]:not([data-issue-index])');
+  releaseCheckboxes.forEach(rcb => {
+    const ri = rcb.dataset.releaseIndex;
+    const issuesInRelease = document.querySelectorAll(`#processSuggestionsList input[data-release-index="${ri}"][data-issue-index]`);
+    const checkedInRelease = document.querySelectorAll(`#processSuggestionsList input[data-release-index="${ri}"][data-issue-index]:checked`);
+    rcb.checked = checkedInRelease.length === issuesInRelease.length;
+    rcb.indeterminate = checkedInRelease.length > 0 && checkedInRelease.length < issuesInRelease.length;
+  });
+};
+
+window.handleProcessApproveRoadmap = async function (processId) {
+  const selectedReleases = [];
+  const releaseCheckboxes = document.querySelectorAll('#processSuggestionsList input[data-release-index]:not([data-issue-index])');
+  releaseCheckboxes.forEach(rcb => {
+    const ri = parseInt(rcb.dataset.releaseIndex);
+    const issueCheckboxes = document.querySelectorAll(`#processSuggestionsList input[data-release-index="${ri}"][data-issue-index]:checked`);
+    if (issueCheckboxes.length > 0) {
+      selectedReleases.push({
+        release_index: ri,
+        issue_indices: Array.from(issueCheckboxes).map(cb => parseInt(cb.dataset.issueIndex)),
+      });
+    }
+  });
+  if (selectedReleases.length === 0) return toast('Выберите хотя бы одну задачу', 'error');
+  try {
+    await api(`/processes/${processId}/approve-roadmap`, {
+      method: 'POST',
+      body: { selected_releases: selectedReleases },
+    });
+    toast('Дорожная карта утверждена');
+    closeModal('processDetailModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
 window.handleProcessRestart = async function (processId) {
   try {
     await api(`/processes/${processId}/restart`, { method: 'POST' });
     toast('Процесс перезапущен');
     closeModal('processDetailModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Delete process ───────────────────────────────────────
+
+window.deleteProcess = async function (id) {
+  if (!await confirm('Удалить процесс и все его логи?')) return;
+  try {
+    await api(`/processes/${id}`, { method: 'DELETE' });
+    toast('Процесс удалён');
     loadProcesses();
   } catch (err) {
     toast(err.message, 'error');
@@ -389,6 +489,11 @@ window.closeModal = closeModal;
 
 // ── Filter event listeners ───────────────────────────────
 
+document.getElementById('filterSearch').addEventListener('input', () => {
+  historyPage = 1;
+  const { history } = classify();
+  renderHistory(history);
+});
 document.getElementById('filterType').addEventListener('change', () => {
   historyPage = 1;
   const { history } = classify();

@@ -8,9 +8,9 @@ export const pool = new Pool({
   database: process.env.DB_NAME || 'postgres',
   user: process.env.DB_USER || 'postgres.postgres',
   password: process.env.DB_PASSWORD,
-  max: 10,
+  max: 20,
   ssl: false,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 15000,
   idleTimeoutMillis: 30000,
 });
 

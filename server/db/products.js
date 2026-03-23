@@ -35,7 +35,7 @@ export async function update(id, fields) {
   const vals = [];
   let i = 1;
   for (const [key, value] of Object.entries(fields)) {
-    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id', 'automation', 'deploy', 'smoke_test', 'last_rc_sync_at', 'last_pipeline_at'].includes(key)) {
+    if (['name', 'description', 'repo_url', 'tech_stack', 'owner', 'status', 'project_path', 'rc_system_id', 'rc_module_id', 'automation', 'deploy', 'smoke_test', 'last_rc_sync_at', 'last_gitlab_sync_at', 'last_pipeline_at'].includes(key)) {
       if (key === 'automation' || key === 'deploy' || key === 'smoke_test') {
         sets.push(`${key} = $${i++}::jsonb`);
         vals.push(typeof value === 'string' ? value : JSON.stringify(value));
@@ -60,7 +60,7 @@ export async function getWithAutomation() {
       (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open') AS open_issues
     FROM ${TABLE} p
     WHERE p.automation IS NOT NULL AND p.automation != '{}'::jsonb
-      AND (p.automation->'rc_auto_sync'->>'enabled' = 'true' OR p.automation->'auto_pipeline'->>'enabled' = 'true')
+      AND (p.automation->'rc_auto_sync'->>'enabled' = 'true' OR p.automation->'gitlab_auto_sync'->>'enabled' = 'true' OR p.automation->'auto_pipeline'->>'enabled' = 'true')
     ORDER BY p.created_at DESC
   `);
   return rows;

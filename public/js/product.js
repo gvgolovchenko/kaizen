@@ -1,10 +1,23 @@
 import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, notifyStatusChanges, renderBreadcrumbs } from './app.js';
-import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess } from './process-detail.js';
+import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess, procTypeLabel } from './process-detail.js';
 
 const productId = new URLSearchParams(location.search).get('id');
 if (!productId) location.href = '/';
 
+// ── Model select localStorage helpers ─────────────────
+function saveModel(key, selectId) {
+  const val = document.getElementById(selectId)?.value;
+  if (val) localStorage.setItem(key, val);
+}
+function restoreModel(key, selectId) {
+  const saved = localStorage.getItem(key);
+  if (!saved) return;
+  const sel = document.getElementById(selectId);
+  if (sel && [...sel.options].some(o => o.value === saved)) sel.value = saved;
+}
+
 let product = null;
+let allIssues = [];
 let issues = [];
 let releases = [];
 let processesList = [];
@@ -65,11 +78,10 @@ async function loadProduct() {
 
 async function loadIssues() {
   try {
-    const path = currentFilter
-      ? `/products/${productId}/issues?status=${currentFilter}`
-      : `/products/${productId}/issues`;
-    issues = await api(path);
+    allIssues = await api(`/products/${productId}/issues`);
+    issues = currentFilter ? allIssues.filter(i => i.status === currentFilter) : allIssues;
     renderIssues();
+    updateIssueFilterBadges();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -109,8 +121,8 @@ async function loadAll() {
     document.getElementById('tabRcTickets').style.display = '';
     loadRcTickets();
   }
-  // Show GitLab Issues tab if deploy.gitlab is configured
-  if (product?.deploy?.gitlab?.project_id) {
+  // Show GitLab Issues tab if deploy.gitlab is configured OR repo_url points to GitLab
+  if (product?.deploy?.gitlab?.project_id || (product?.repo_url && product.repo_url.includes('192.168.206.48'))) {
     document.getElementById('tabGitlabIssues').style.display = '';
     loadGlIssues();
   }
@@ -141,6 +153,13 @@ function renderProductHeader() {
   if (product.owner) meta.push(`<span>${escapeHtml(product.owner)}</span>`);
   if (product.repo_url) meta.push(`<span><a href="${escapeHtml(product.repo_url)}" target="_blank">Репозиторий</a></span>`);
   if (product.project_path) meta.push(`<span style="font-family:monospace;font-size:0.8rem">${escapeHtml(product.project_path)}</span>`);
+  if (product.deploy?.urls) {
+    const urls = product.deploy.urls;
+    const links = [];
+    if (urls.frontend) links.push(`<a href="${escapeHtml(urls.frontend)}" target="_blank">Frontend</a>`);
+    if (urls.backend) links.push(`<a href="${escapeHtml(urls.backend)}" target="_blank">Backend</a>`);
+    if (links.length) meta.push(`<span>${links.join(' &middot; ')}</span>`);
+  }
   if (product.rc_system_id || product.rc_module_id) {
     const parts = [];
     if (product.rc_system_id) parts.push(`система ${product.rc_system_id}`);
@@ -149,6 +168,13 @@ function renderProductHeader() {
   }
   meta.push(`<span class="badge badge-${product.status}">${product.status}</span>`);
   document.getElementById('prodMeta').innerHTML = meta.join('');
+}
+
+// ── Labels helper ─────────────────────────────────────
+
+function renderLabels(labels) {
+  if (!labels || !Array.isArray(labels) || labels.length === 0) return '';
+  return labels.map(l => `<span class="badge badge-label">${escapeHtml(l)}</span>`).join('');
 }
 
 // ── Render issues ──────────────────────────────────────
@@ -210,6 +236,7 @@ function renderKanban() {
               <div class="kanban-card-meta">
                 <span class="badge badge-${i.type}">${i.type}</span>
                 <span class="badge badge-${i.priority}">${i.priority}</span>
+                ${renderLabels(i.labels)}
               </div>
               <div class="kanban-card-actions">
                 <button class="btn btn-ghost btn-sm" onclick="showEditIssue('${i.id}')">Ред.</button>
@@ -325,7 +352,23 @@ document.getElementById('issuePriorityFilter').addEventListener('click', (e) => 
   currentPriorityFilter = e.target.dataset.priority || '';
   if (currentView === 'kanban') renderKanban();
   else renderFilteredTable();
+  updateIssueFilterBadges();
 });
+
+let issueSortCol = 'created_at';
+let issueSortAsc = false;
+
+window.sortIssues = function (col) {
+  if (issueSortCol === col) {
+    issueSortAsc = !issueSortAsc;
+  } else {
+    issueSortCol = col;
+    issueSortAsc = true;
+  }
+  renderFilteredTable();
+};
+
+const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 
 function renderFilteredTable() {
   const tbody = document.getElementById('issuesBody');
@@ -339,11 +382,32 @@ function renderFilteredTable() {
   }
   empty.style.display = 'none';
 
-  tbody.innerHTML = filtered.map(i => `
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    let va = a[issueSortCol], vb = b[issueSortCol];
+    if (issueSortCol === 'priority') {
+      va = PRIORITY_ORDER[va] ?? 99;
+      vb = PRIORITY_ORDER[vb] ?? 99;
+    } else if (issueSortCol === 'labels') {
+      va = (Array.isArray(va) ? va : []).join(',');
+      vb = (Array.isArray(vb) ? vb : []).join(',');
+    }
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return issueSortAsc ? -1 : 1;
+    if (va > vb) return issueSortAsc ? 1 : -1;
+    return 0;
+  });
+
+  tbody.innerHTML = sorted.map(i => `
     <tr>
       <td>${escapeHtml(i.title)}</td>
       <td><span class="badge badge-${i.type}">${i.type}</span></td>
       <td><span class="badge badge-${i.priority}">${i.priority}</span></td>
+      <td>${i.release_version ? `<span class="badge badge-release" title="${escapeHtml(i.release_name || '')}">${escapeHtml(i.release_version)}</span>` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td>${renderLabels(i.labels)}</td>
       <td><span class="badge badge-${i.status}">${i.status}</span></td>
       <td style="white-space:nowrap">${formatDate(i.created_at)}</td>
       <td style="white-space:nowrap">
@@ -352,6 +416,16 @@ function renderFilteredTable() {
       </td>
     </tr>
   `).join('');
+
+  // Update sort indicators
+  document.querySelectorAll('#panel-issues th[data-sort]').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.sort === issueSortCol) {
+      if (arrow) arrow.textContent = issueSortAsc ? ' ▲' : ' ▼';
+    } else {
+      if (arrow) arrow.textContent = '';
+    }
+  });
 }
 
 // ── Dev status helpers ──────────────────────────────────
@@ -400,11 +474,43 @@ function getDevButton(r) {
 
 // ── Render releases ────────────────────────────────────
 
+let currentReleaseFilter = '';
+
+// Release status filter handler
+document.getElementById('releaseStatusFilter')?.addEventListener('click', (e) => {
+  if (!e.target.matches('.btn')) return;
+  document.querySelectorAll('#releaseStatusFilter .btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  currentReleaseFilter = e.target.dataset.status || '';
+  renderReleases();
+});
+
 function renderReleases() {
   const el = document.getElementById('releasesList');
   const empty = document.getElementById('releasesEmpty');
 
-  if (releases.length === 0) {
+  // Update filter badges
+  const openCount = releases.filter(r => r.status !== 'published').length;
+  const pubCount = releases.filter(r => r.status === 'published').length;
+  document.querySelectorAll('#releaseStatusFilter .btn').forEach(btn => {
+    const s = btn.dataset.status;
+    let badge = btn.querySelector('.tab-count');
+    const count = s === '' ? releases.length : s === 'open' ? openCount : pubCount;
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'tab-count';
+      btn.appendChild(badge);
+    }
+    badge.textContent = count > 0 ? count : '';
+  });
+
+  const filtered = currentReleaseFilter === 'open'
+    ? releases.filter(r => r.status !== 'published')
+    : currentReleaseFilter
+      ? releases.filter(r => r.status === currentReleaseFilter)
+      : releases;
+
+  if (filtered.length === 0) {
     el.innerHTML = '';
     empty.style.display = '';
     return;
@@ -413,7 +519,7 @@ function renderReleases() {
 
   const STATUS_LABELS = { draft: 'Черновик', spec: 'Спецификация', developing: 'Разработка', developed: 'Готов', failed: 'Ошибка', published: 'Опубликован' };
 
-  el.innerHTML = releases.map(r => {
+  el.innerHTML = filtered.map(r => {
     const specBtn = getSpecButton(r);
     const devBtn = getDevButton(r);
     const prBtn = getPressReleaseButton(r);
@@ -622,8 +728,45 @@ document.getElementById('issueFilters').addEventListener('click', (e) => {
   document.querySelectorAll('#issueFilters .btn').forEach(b => b.classList.remove('active'));
   e.target.classList.add('active');
   currentFilter = e.target.dataset.status;
-  loadIssues();
+  issues = currentFilter ? allIssues.filter(i => i.status === currentFilter) : allIssues;
+  renderIssues();
+  updateIssueFilterBadges();
 });
+
+function updateIssueFilterBadges() {
+  const counts = { '': allIssues.length };
+  for (const i of allIssues) {
+    counts[i.status] = (counts[i.status] || 0) + 1;
+  }
+  document.querySelectorAll('#issueFilters .btn').forEach(btn => {
+    const s = btn.dataset.status;
+    let badge = btn.querySelector('.tab-count');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'tab-count';
+      btn.appendChild(badge);
+    }
+    const count = counts[s] || 0;
+    badge.textContent = count > 0 ? count : '';
+  });
+
+  // Priority badges too
+  const pCounts = { '': issues.length };
+  for (const i of issues) {
+    pCounts[i.priority] = (pCounts[i.priority] || 0) + 1;
+  }
+  document.querySelectorAll('#issuePriorityFilter .btn').forEach(btn => {
+    const p = btn.dataset.priority;
+    let badge = btn.querySelector('.tab-count');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'tab-count';
+      btn.appendChild(badge);
+    }
+    const count = pCounts[p] || 0;
+    badge.textContent = count > 0 ? count : '';
+  });
+}
 
 // ── Edit product ───────────────────────────────────────
 
@@ -671,10 +814,12 @@ window.showIssueModal = function () {
   document.getElementById('issueModalTitle').textContent = 'Новая задача';
   document.getElementById('issueId').value = '';
   document.getElementById('issueForm').reset();
+  document.getElementById('issueStatusGroup').style.display = 'none';
+  document.getElementById('issueReleaseGroup').style.display = 'none';
   openModal('issueModal');
 };
 
-window.showEditIssue = function (id) {
+window.showEditIssue = async function (id) {
   const issue = issues.find(i => i.id === id);
   if (!issue) return;
   document.getElementById('issueModalTitle').textContent = 'Редактировать задачу';
@@ -683,6 +828,23 @@ window.showEditIssue = function (id) {
   document.getElementById('issueDesc').value = issue.description || '';
   document.getElementById('issueType').value = issue.type;
   document.getElementById('issuePriority').value = issue.priority;
+  document.getElementById('issueStatus').value = issue.status;
+  document.getElementById('issueStatusGroup').style.display = '';
+  document.getElementById('issueReleaseGroup').style.display = '';
+
+  // Load releases for dropdown
+  try {
+    const rels = await api(`/products/${productId}/releases`);
+    const sel = document.getElementById('issueRelease');
+    sel.innerHTML = '<option value="">— Без релиза —</option>' +
+      rels.filter(r => r.status !== 'published').map(r =>
+        `<option value="${r.id}">${escapeHtml(r.version)} — ${escapeHtml(r.name)}</option>`
+      ).join('');
+    // Select current release if any
+    const currentRelease = rels.find(r => r.version === issue.release_version);
+    sel.value = currentRelease ? currentRelease.id : '';
+  } catch { /* ignore */ }
+
   openModal('issueModal');
 };
 
@@ -696,10 +858,37 @@ window.handleIssueSubmit = async function (e) {
     type: document.getElementById('issueType').value,
     priority: document.getElementById('issuePriority').value,
   };
+  if (id) {
+    body.status = document.getElementById('issueStatus').value;
+  }
 
   try {
     if (id) {
       await api(`/issues/${id}`, { method: 'PUT', body });
+
+      // Handle release assignment change
+      const newReleaseId = document.getElementById('issueRelease').value;
+      const issue = issues.find(i => i.id === id);
+      const currentRelease = releases.find(r => r.version === issue?.release_version);
+      const currentReleaseId = currentRelease?.id || '';
+
+      if (newReleaseId !== currentReleaseId) {
+        // Remove from old release
+        if (currentReleaseId) {
+          await api(`/releases/${currentReleaseId}`, {
+            method: 'PUT',
+            body: { remove_issue_ids: [id] },
+          });
+        }
+        // Add to new release
+        if (newReleaseId) {
+          await api(`/releases/${newReleaseId}`, {
+            method: 'PUT',
+            body: { add_issue_ids: [id] },
+          });
+        }
+      }
+
       toast('Задача обновлена');
     } else {
       await api('/issues', { method: 'POST', body });
@@ -707,6 +896,7 @@ window.handleIssueSubmit = async function (e) {
     }
     closeModal('issueModal');
     loadIssues();
+    loadReleases();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -829,6 +1019,7 @@ window.showReleaseDiff = async function (releaseId) {
     const diff = await api(`/releases/${releaseId}/diff`);
     const content = document.getElementById('processDetailContent');
     document.getElementById('processDetailTitle').textContent = `Diff: ${diff.branch} ← ${diff.base}`;
+    const metaDiff = document.getElementById('processDetailMeta'); if (metaDiff) metaDiff.innerHTML = '';
     content.innerHTML = `
       <div style="margin-bottom:12px">
         <strong>${diff.files.length} файлов изменено</strong>
@@ -964,68 +1155,135 @@ window.deletePlanFromProduct = async function (id) {
   }
 };
 
-// ── Improve (create process) ────────────────────────────
+// ── Create Tasks (unified modal: AI-анализ + Из документа) ──
 
-window.showImproveModal = async function () {
-  document.getElementById('improvePrompt').value = '';
-  document.getElementById('improveCount').value = '5';
-  document.getElementById('improveTimeout').value = '20';
+let createTasksActiveTab = 'ai';
+
+window.showCreateTasksModal = async function () {
+  // Reset form
+  document.getElementById('createTasksPrompt').value = '';
+  document.getElementById('createTasksCount').value = '5';
+  document.getElementById('createTasksTimeout').value = '20';
+  document.getElementById('createTasksDocText').value = '';
+  document.getElementById('createTasksCharCount').textContent = '0 символов';
+  document.getElementById('createTasksCharCount').className = 'char-counter';
+  document.querySelector('input[name="createTasksOutputMode"][value="tasks"]').checked = true;
+
+  // Reset tab to AI
+  switchCreateTasksTab('ai');
 
   try {
     // Load templates
     const templates = await api('/improve-templates');
-    const tplSelect = document.getElementById('improveTemplate');
+    const tplSelect = document.getElementById('createTasksTemplate');
     tplSelect.innerHTML = '<option value="">— Свой промпт —</option>' +
       templates.map(t => `<option value="${t.id}" data-prompt="${escapeHtml(t.prompt)}">${escapeHtml(t.name)}</option>`).join('');
 
     // Load models
     const models = await api('/ai-models');
-    const modelSelect = document.getElementById('improveModel');
+    const modelSelect = document.getElementById('createTasksModel');
     modelSelect.innerHTML = models.length === 0
       ? '<option value="">Нет моделей</option>'
-      : models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+      : models.map(m => `<option value="${m.id}" data-provider="${m.provider}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    restoreModel('kaizen_model_improve', 'createTasksModel');
+    updateCreateTasksModeInfo();
   } catch (err) {
     toast(err.message, 'error');
   }
 
-  openModal('improveModal');
+  openModal('createTasksModal');
 };
 
-window.handleTemplateChange = function () {
-  const sel = document.getElementById('improveTemplate');
+window.switchCreateTasksTab = function (tab) {
+  createTasksActiveTab = tab;
+  document.getElementById('createTasksTabAI').style.display = tab === 'ai' ? '' : 'none';
+  document.getElementById('createTasksTabDoc').style.display = tab === 'doc' ? '' : 'none';
+  document.querySelectorAll('[data-create-tab]').forEach(el => {
+    el.classList.toggle('active', el.dataset.createTab === tab);
+  });
+  // Default output mode per tab
+  if (tab === 'ai') {
+    document.querySelector('input[name="createTasksOutputMode"][value="tasks"]').checked = true;
+  } else {
+    document.querySelector('input[name="createTasksOutputMode"][value="releases"]').checked = true;
+  }
+  // Show/hide count field (only relevant for AI tab)
+  const countGroup = document.getElementById('createTasksCountGroup');
+  if (countGroup) countGroup.style.display = tab === 'ai' ? '' : 'none';
+};
+
+window.handleCreateTasksTemplateChange = function () {
+  const sel = document.getElementById('createTasksTemplate');
   const opt = sel.options[sel.selectedIndex];
   const prompt = opt?.dataset?.prompt || '';
   if (prompt) {
-    document.getElementById('improvePrompt').value = prompt;
+    document.getElementById('createTasksPrompt').value = prompt;
   }
 };
 
-window.handleImproveGenerate = async function () {
-  const prompt = document.getElementById('improvePrompt').value.trim();
-  const modelId = document.getElementById('improveModel').value;
-  const count = document.getElementById('improveCount').value;
-  const templateId = document.getElementById('improveTemplate').value;
-  const timeoutMin = parseInt(document.getElementById('improveTimeout').value) || 20;
+window.updateCreateTasksModeInfo = function () {
+  const sel = document.getElementById('createTasksModel');
+  const opt = sel.options[sel.selectedIndex];
+  const provider = opt?.dataset?.provider || '';
+  const hasPath = product && !!product.project_path;
+  const isCodeAgent = ['claude-code', 'qwen-code', 'kilo-code'].includes(provider);
+  const el = document.getElementById('createTasksModeInfo');
 
-  if (!prompt) return toast('Введите промпт', 'error');
+  if (isCodeAgent && hasPath) {
+    el.innerHTML = `<span class="badge badge-mode-claude-code" title="Модель изучит проект через CLI">${provider}</span>`;
+  } else if (provider) {
+    el.innerHTML = `<span class="badge badge-mode-standalone" title="${hasPath ? 'Контекст проекта будет собран автоматически' : 'Без доступа к файлам проекта'}">standalone</span>`;
+  } else {
+    el.innerHTML = '';
+  }
+};
+
+// Char counter for doc text
+document.getElementById('createTasksDocText')?.addEventListener('input', function () {
+  const len = this.value.length;
+  const el = document.getElementById('createTasksCharCount');
+  el.textContent = `${len.toLocaleString('ru-RU')} символов`;
+  el.className = 'char-counter' + (len > 100000 ? ' danger' : len > 50000 ? ' warning' : '');
+});
+
+window.handleCreateTasksGenerate = async function () {
+  const modelId = document.getElementById('createTasksModel').value;
+  const timeoutMin = parseInt(document.getElementById('createTasksTimeout').value) || 20;
+  const outputMode = document.querySelector('input[name="createTasksOutputMode"]:checked').value;
+
   if (!modelId) return toast('Выберите модель', 'error');
+  saveModel('kaizen_model_improve', 'createTasksModel');
+
+  const body = {
+    product_id: productId,
+    model_id: modelId,
+    timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
+  };
+
+  if (createTasksActiveTab === 'ai') {
+    const prompt = document.getElementById('createTasksPrompt').value.trim();
+    const templateId = document.getElementById('createTasksTemplate').value;
+    const count = document.getElementById('createTasksCount').value;
+    if (!prompt) return toast('Введите промпт', 'error');
+
+    body.type = 'improve';
+    body.prompt = prompt;
+    body.template_id = templateId || null;
+    body.count = parseInt(count) || 5;
+    if (outputMode !== 'tasks') body.config = { output_mode: outputMode };
+  } else {
+    const docText = document.getElementById('createTasksDocText').value.trim();
+    if (!docText) return toast('Вставьте текст документа', 'error');
+
+    body.type = 'roadmap_from_doc';
+    body.prompt = docText;
+    if (outputMode !== 'releases') body.config = { output_mode: outputMode };
+  }
 
   try {
-    await api('/processes', {
-      method: 'POST',
-      body: {
-        product_id: productId,
-        model_id: modelId,
-        type: 'improve',
-        prompt,
-        template_id: templateId || null,
-        count: parseInt(count) || 5,
-        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
-      },
-    });
-
+    await api('/processes', { method: 'POST', body });
     toast('Процесс запущен');
-    closeModal('improveModal');
+    closeModal('createTasksModal');
     loadProcesses();
   } catch (err) {
     toast(err.message, 'error');
@@ -1036,10 +1294,6 @@ window.handleImproveGenerate = async function () {
 
 window.showProcessDetail = async function (id) {
   const cachedProc = processesList.find(p => p.id === id);
-  if (cachedProc && cachedProc.type === 'roadmap_from_doc') {
-    window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
-    return;
-  }
 
   // form_release completed — show review modal
   if (cachedProc && isFormReleaseProcess(cachedProc)) {
@@ -1054,12 +1308,7 @@ window.showProcessDetail = async function (id) {
       api(`/processes/${id}/logs`),
     ]);
 
-    if (proc.type === 'roadmap_from_doc') {
-      window.location.href = `/roadmap.html?process_id=${id}&product_id=${productId}`;
-      return;
-    }
-
-    document.getElementById('processDetailTitle').textContent = `Процесс: ${proc.type}`;
+    document.getElementById('processDetailTitle').textContent = procTypeLabel(proc.type);
     document.getElementById('processDetailContent').innerHTML = renderProcessDetailHtml(proc, logs, {
       showProductName: false,
       showSpecLink: true,
@@ -1082,6 +1331,70 @@ window.handleProcessApprove = (processId) => approveProcess(processId, 'processS
   modalId: 'processDetailModal',
   onSuccess: () => loadIssues(),
 });
+
+// ── Roadmap approval in process detail modal ─────────────
+
+window.toggleRoadmapRelease = function (checkbox, releaseIndex) {
+  const checked = checkbox.checked;
+  document.querySelectorAll(`#processSuggestionsList input[data-release-index="${releaseIndex}"][data-issue-index]`)
+    .forEach(cb => { cb.checked = checked; });
+  updateRoadmapApproveCount();
+};
+
+window.updateRoadmapApproveCount = function () {
+  const all = document.querySelectorAll('#processSuggestionsList input[data-issue-index]');
+  const checked = document.querySelectorAll('#processSuggestionsList input[data-issue-index]:checked');
+  const btn = document.getElementById('processApproveBtn');
+  if (btn) {
+    btn.textContent = `Утвердить (${checked.length} задач)`;
+    btn.disabled = checked.length === 0;
+  }
+  // Update release-level checkboxes
+  const releaseCheckboxes = document.querySelectorAll('#processSuggestionsList input[data-release-index]:not([data-issue-index])');
+  releaseCheckboxes.forEach(rcb => {
+    const ri = rcb.dataset.releaseIndex;
+    const issuesInRelease = document.querySelectorAll(`#processSuggestionsList input[data-release-index="${ri}"][data-issue-index]`);
+    const checkedInRelease = document.querySelectorAll(`#processSuggestionsList input[data-release-index="${ri}"][data-issue-index]:checked`);
+    rcb.checked = checkedInRelease.length === issuesInRelease.length;
+    rcb.indeterminate = checkedInRelease.length > 0 && checkedInRelease.length < issuesInRelease.length;
+  });
+};
+
+window.handleProcessApproveRoadmap = async function (processId) {
+  // Collect selected releases and issues
+  const selectedReleases = [];
+  const releaseCheckboxes = document.querySelectorAll('#processSuggestionsList input[data-release-index]:not([data-issue-index])');
+
+  releaseCheckboxes.forEach(rcb => {
+    const ri = parseInt(rcb.dataset.releaseIndex);
+    const issueCheckboxes = document.querySelectorAll(`#processSuggestionsList input[data-release-index="${ri}"][data-issue-index]:checked`);
+    if (issueCheckboxes.length > 0) {
+      selectedReleases.push({
+        release_index: ri,
+        issue_indices: Array.from(issueCheckboxes).map(cb => parseInt(cb.dataset.issueIndex)),
+      });
+    }
+  });
+
+  if (selectedReleases.length === 0) return toast('Выберите хотя бы одну задачу', 'error');
+
+  try {
+    const result = await api(`/processes/${processId}/approve-roadmap`, {
+      method: 'POST',
+      body: { selected_releases: selectedReleases },
+    });
+    const totalIssues = selectedReleases.reduce((s, r) => s + r.issue_indices.length, 0);
+    notifyStatusChanges({
+      action: 'Дорожная карта утверждена',
+      details: [`Создано ${result.releases_created || selectedReleases.length} релизов, ${result.issues_created || totalIssues} задач`],
+    });
+    closeModal('processDetailModal');
+    loadIssues();
+    loadReleases();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
 
 window.handleProcessRestart = async function (processId) {
   try {
@@ -1142,6 +1455,7 @@ window.showPrepareSpecModal = async function (releaseId) {
     sel.innerHTML = specModels.length === 0
       ? '<option value="">Нет моделей</option>'
       : specModels.map(m => `<option value="${m.id}" data-provider="${m.provider}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    restoreModel('kaizen_model_spec', 'specModel');
     updateSpecModeBadge();
   } catch (err) {
     toast(err.message, 'error');
@@ -1155,11 +1469,11 @@ window.updateSpecModeBadge = function () {
   const opt = sel.options[sel.selectedIndex];
   const provider = opt?.dataset?.provider || '';
   const hasPath = product && !!product.project_path;
-  const isClaudeCode = provider === 'claude-code';
-  const mode = (isClaudeCode && hasPath) ? 'claude-code' : 'standalone';
+  const isCodeAgent = ['claude-code', 'qwen-code', 'kilo-code'].includes(provider);
+  const mode = (isCodeAgent && hasPath) ? 'code-agent' : 'standalone';
   const badge = document.getElementById('specModeBadge');
-  badge.innerHTML = mode === 'claude-code'
-    ? `<span class="badge badge-mode-claude-code">claude-code</span> <span style="font-size:0.8rem;color:var(--text-dim);margin-left:4px">Модель изучит проект через CLI</span>`
+  badge.innerHTML = mode === 'code-agent'
+    ? `<span class="badge badge-mode-claude-code">${provider}</span> <span style="font-size:0.8rem;color:var(--text-dim);margin-left:4px">Модель изучит проект через CLI</span>`
     : `<span class="badge badge-mode-standalone">standalone</span> <span style="font-size:0.8rem;color:var(--text-dim);margin-left:4px">${hasPath ? 'Контекст проекта будет собран автоматически' : 'Без доступа к файлам проекта'}</span>`;
 };
 
@@ -1169,6 +1483,7 @@ window.handlePrepareSpec = async function () {
   const timeoutMin = parseInt(document.getElementById('specTimeout').value) || 20;
 
   if (!modelId) return toast('Выберите модель', 'error');
+  saveModel('kaizen_model_spec', 'specModel');
 
   try {
     await api(`/releases/${releaseId}/prepare-spec`, {
@@ -1242,77 +1557,6 @@ window.handleDownloadSpec = function () {
   toast('Файл скачан');
 };
 
-// ── Roadmap from document ────────────────────────────────
-
-window.showRoadmapModal = async function () {
-  document.getElementById('roadmapDocText').value = '';
-  document.getElementById('roadmapTimeout').value = '30';
-  document.getElementById('roadmapCharCount').textContent = '0 символов';
-  document.getElementById('roadmapCharCount').className = 'char-counter';
-
-  try {
-    const models = await api('/ai-models');
-    const sel = document.getElementById('roadmapModel');
-    sel.innerHTML = models.length === 0
-      ? '<option value="">Нет моделей</option>'
-      : models.map(m => `<option value="${m.id}" data-provider="${m.provider}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
-    updateRoadmapModeInfo();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-
-  openModal('roadmapModal');
-};
-
-// Char counter with warning
-document.getElementById('roadmapDocText')?.addEventListener('input', function () {
-  const len = this.value.length;
-  const el = document.getElementById('roadmapCharCount');
-  el.textContent = `${len.toLocaleString('ru-RU')} символов`;
-  el.className = 'char-counter' + (len > 100000 ? ' danger' : len > 50000 ? ' warning' : '');
-});
-
-window.updateRoadmapModeInfo = function () {
-  const sel = document.getElementById('roadmapModel');
-  const opt = sel.options[sel.selectedIndex];
-  const provider = opt?.dataset?.provider || '';
-  const hasPath = product && !!product.project_path;
-  const isClaudeCode = provider === 'claude-code';
-  const el = document.getElementById('roadmapModeInfo');
-
-  if (isClaudeCode && hasPath) {
-    el.innerHTML = `<span class="badge badge-mode-claude-code">claude-code</span> <span style="margin-left:4px">Модель изучит проект через CLI</span>`;
-  } else {
-    el.innerHTML = `<span class="badge badge-mode-standalone">standalone</span> <span style="margin-left:4px">${hasPath ? 'Контекст проекта будет собран автоматически' : 'Без доступа к файлам проекта'}</span>`;
-  }
-};
-
-window.handleRoadmapGenerate = async function () {
-  const docText = document.getElementById('roadmapDocText').value.trim();
-  const modelId = document.getElementById('roadmapModel').value;
-  const timeoutMin = parseInt(document.getElementById('roadmapTimeout').value) || 30;
-
-  if (!docText) return toast('Вставьте текст документа', 'error');
-  if (!modelId) return toast('Выберите модель', 'error');
-
-  try {
-    await api('/processes', {
-      method: 'POST',
-      body: {
-        product_id: productId,
-        model_id: modelId,
-        type: 'roadmap_from_doc',
-        prompt: docText,
-        timeout_min: Math.min(Math.max(timeoutMin, 3), 60),
-      },
-    });
-    toast('Анализ запущен. Следите за статусом в таблице процессов.');
-    closeModal('roadmapModal');
-    loadProcesses();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-};
 
 // ── Develop release ──────────────────────────────────────
 
@@ -1332,14 +1576,16 @@ window.showDevelopModal = async function (releaseId) {
     detectTestCommandFE(product?.tech_stack || '');
   document.getElementById('developTimeout').value = '60';
 
-  // Load only claude-code models
+  // Load code-agent models (claude-code, qwen-code, kilo-code)
   try {
     const models = await api('/ai-models');
-    const ccModels = models.filter(m => m.provider === 'claude-code');
+    const codeAgentProviders = ['claude-code', 'qwen-code', 'kilo-code'];
+    const ccModels = models.filter(m => codeAgentProviders.includes(m.provider));
     const sel = document.getElementById('developModel');
     sel.innerHTML = ccModels.length === 0
-      ? '<option value="">Нет Claude Code моделей</option>'
-      : ccModels.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+      ? '<option value="">Нет Code Agent моделей</option>'
+      : ccModels.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    restoreModel('kaizen_model_develop', 'developModel');
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1355,6 +1601,7 @@ window.handleDevelopStart = async function () {
   const timeoutMin = parseInt(document.getElementById('developTimeout').value) || 60;
 
   if (!modelId)   return toast('Выберите модель', 'error');
+  saveModel('kaizen_model_develop', 'developModel');
   if (!gitBranch) return toast('Укажите имя ветки', 'error');
 
   try {
@@ -1400,6 +1647,7 @@ window.showPreparePressReleaseModal = async function (releaseId) {
     sel.innerHTML = models.length === 0
       ? '<option value="">Нет моделей</option>'
       : models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    restoreModel('kaizen_model_pr', 'prModel');
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1414,6 +1662,7 @@ window.handlePreparePressRelease = async function () {
   const tone = document.getElementById('prTone').value;
   const generateImages = document.getElementById('prGenerateImages').checked;
   const keyPoints = document.getElementById('prKeyPoints').value.trim();
+  saveModel('kaizen_model_pr', 'prModel');
 
   const channels = Array.from(document.querySelectorAll('#preparePressReleaseModal input[name="prChannel"]:checked')).map(cb => cb.value);
   const audiences = Array.from(document.querySelectorAll('#preparePressReleaseModal input[name="prAudience"]:checked')).map(cb => cb.value);
@@ -1864,6 +2113,7 @@ window.showFormReleaseModal = async function () {
     sel.innerHTML = models.length === 0
       ? '<option value="">Нет моделей</option>'
       : models.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.provider})</option>`).join('');
+    restoreModel('kaizen_model_fr', 'frModel');
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1879,6 +2129,7 @@ window.handleFormReleaseStart = async function () {
   const autoApprove = document.getElementById('frAutoApprove').checked;
 
   if (!modelId) return toast('Выберите модель', 'error');
+  saveModel('kaizen_model_fr', 'frModel');
 
   try {
     const proc = await api('/processes', {
@@ -2364,6 +2615,17 @@ function loadDeploySettings() {
   document.getElementById('deployProjectPathServer').value = tgt.project_path_on_server || '';
   document.getElementById('deployPm2Name').value = tgt.pm2_name || '';
   document.getElementById('deployAutoOnPublish').checked = ad.on_publish || false;
+  const ap = d.auto_publish || {};
+  document.getElementById('deployAutoPublishOnSuccess').checked = ap.on_deploy_success || false;
+
+  const urls = d.urls || {};
+  document.getElementById('deployUrlFrontend').value = urls.frontend || '';
+  document.getElementById('deployUrlBackend').value = urls.backend || '';
+
+  const dev = d.dev_ports || {};
+  document.getElementById('devPortFrontend').value = dev.frontend || '';
+  document.getElementById('devPortBackend').value = dev.backend || '';
+  document.getElementById('devStartCommand').value = dev.start_command || '';
 
   toggleDeployMethodFields();
   loadSmokeSettings();
@@ -2374,7 +2636,7 @@ function loadSmokeSettings() {
   document.getElementById('smokeEnabled').checked = s.enabled || false;
   document.getElementById('smokeStartCommand').value = s.start_command || 'npm run dev';
   document.getElementById('smokeUrl').value = s.url || '';
-  document.getElementById('smokePages').value = (s.pages || ['/']).join('\n');
+  document.getElementById('smokePages').value = (s.pages || ['/']).join(' ');
   document.getElementById('smokeReadyTimeout').value = s.ready_timeout_ms || 20000;
   document.getElementById('smokeCheckTimeout').value = s.check_timeout_ms || 10000;
 }
@@ -2407,13 +2669,25 @@ window.handleSaveDeploy = async function () {
     auto_deploy: {
       on_publish: document.getElementById('deployAutoOnPublish').checked,
     },
+    auto_publish: {
+      on_deploy_success: document.getElementById('deployAutoPublishOnSuccess').checked,
+    },
+    urls: {
+      frontend: document.getElementById('deployUrlFrontend').value.trim() || null,
+      backend: document.getElementById('deployUrlBackend').value.trim() || null,
+    },
+    dev_ports: {
+      frontend: parseInt(document.getElementById('devPortFrontend').value) || null,
+      backend: parseInt(document.getElementById('devPortBackend').value) || null,
+      start_command: document.getElementById('devStartCommand').value.trim() || null,
+    },
   };
 
   const smoke_test = {
     enabled: document.getElementById('smokeEnabled').checked,
     start_command: document.getElementById('smokeStartCommand').value.trim() || 'npm run dev',
     url: document.getElementById('smokeUrl').value.trim() || null,
-    pages: document.getElementById('smokePages').value.trim().split('\n').map(s => s.trim()).filter(Boolean),
+    pages: document.getElementById('smokePages').value.trim().split(/[\s\n]+/).map(s => s.trim()).filter(Boolean),
     ready_timeout_ms: parseInt(document.getElementById('smokeReadyTimeout').value) || 20000,
     check_timeout_ms: parseInt(document.getElementById('smokeCheckTimeout').value) || 10000,
   };
@@ -2488,39 +2762,86 @@ window.handleValidateProduct = async function () {
 
 // ── GitLab Issues ───────────────────────────────────────
 
+let glIssuesData = [];
+let glSortCol = 'gitlab_issue_iid';
+let glSortAsc = false;
+
+function renderGlIssuesTable() {
+  const tbody = document.getElementById('glIssuesBody');
+  const empty = document.getElementById('glIssuesEmpty');
+
+  if (!glIssuesData.length) {
+    tbody.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Sort
+  const sorted = [...glIssuesData].sort((a, b) => {
+    let va = a[glSortCol], vb = b[glSortCol];
+    if (glSortCol === 'labels') {
+      va = (Array.isArray(va) ? va : []).join(',');
+      vb = (Array.isArray(vb) ? vb : []).join(',');
+    }
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return glSortAsc ? -1 : 1;
+    if (va > vb) return glSortAsc ? 1 : -1;
+    return 0;
+  });
+
+  tbody.innerHTML = sorted.map(gi => {
+    const labels = Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]');
+    const isNew = gi.sync_status === 'new';
+    const stateClass = gi.state === 'closed' ? 'done' : 'open';
+    const stateLabel = gi.state === 'closed' ? 'closed' : 'open';
+    const syncClass = gi.sync_status === 'imported' ? 'done' : gi.sync_status === 'ignored' ? 'closed' : 'open';
+    return `
+    <tr style="cursor:pointer" onclick="showGlIssueDetail('${gi.id}')">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="gl-issue-checkbox" data-id="${gi.id}" ${!isNew ? 'disabled' : ''} onchange="updateGlSelectionUI()"></td>
+      <td style="font-family:monospace;font-size:0.85rem">#${gi.gitlab_issue_iid}</td>
+      <td>${escapeHtml(gi.title)}</td>
+      <td>${renderLabels(labels)}</td>
+      <td><span class="badge badge-${stateClass}">${stateLabel}</span></td>
+      <td>${gi.author ? escapeHtml(gi.author) : '—'}</td>
+      <td style="white-space:nowrap">${formatDate(gi.gl_created_at)}</td>
+      <td><span class="badge badge-${syncClass}">${gi.sync_status}</span></td>
+    </tr>`;
+  }).join('');
+
+  // Update sort indicators
+  document.querySelectorAll('#panel-gitlab-issues th[data-sort]').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.sort === glSortCol) {
+      if (arrow) arrow.textContent = glSortAsc ? ' ▲' : ' ▼';
+    } else {
+      if (arrow) arrow.textContent = '';
+    }
+  });
+}
+
+window.sortGlIssues = function (col) {
+  if (glSortCol === col) {
+    glSortAsc = !glSortAsc;
+  } else {
+    glSortCol = col;
+    glSortAsc = true;
+  }
+  renderGlIssuesTable();
+};
+
 async function loadGlIssues() {
   const filter = document.querySelector('#glIssueFilters .active')?.dataset.syncStatus || '';
   const qs = filter ? `?sync_status=${filter}` : '';
   try {
     const data = await api(`/products/${productId}/gitlab-issues${qs}`);
     const { issues: glIssues, stats } = data;
-    const tbody = document.getElementById('glIssuesBody');
-    const empty = document.getElementById('glIssuesEmpty');
-
+    glIssuesData = glIssues;
     document.getElementById('tabGitlabIssuesCount').textContent = `(${stats.total})`;
-
-    if (!glIssues.length) {
-      tbody.innerHTML = '';
-      empty.style.display = '';
-      return;
-    }
-    empty.style.display = 'none';
-
-    tbody.innerHTML = glIssues.map(gi => {
-      const labels = Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]');
-      const isNew = gi.sync_status === 'new';
-      return `
-      <tr style="cursor:pointer" onclick="showGlIssueDetail('${gi.id}')">
-        <td onclick="event.stopPropagation()"><input type="checkbox" class="gl-issue-checkbox" data-id="${gi.id}" ${!isNew ? 'disabled' : ''} onchange="updateGlSelectionUI()"></td>
-        <td style="font-family:monospace;font-size:0.85rem">#${gi.gitlab_issue_iid}</td>
-        <td>${escapeHtml(gi.title)}</td>
-        <td>${labels.slice(0, 3).map(l => `<span class="badge" style="font-size:0.65rem">${escapeHtml(l)}</span>`).join(' ')}</td>
-        <td>${gi.milestone ? escapeHtml(gi.milestone) : '—'}</td>
-        <td>${gi.author ? escapeHtml(gi.author) : '—'}</td>
-        <td style="white-space:nowrap">${formatDate(gi.gl_created_at)}</td>
-        <td><span class="badge badge-${gi.sync_status === 'imported' ? 'done' : gi.sync_status === 'ignored' ? 'closed' : 'open'}">${gi.sync_status}</span></td>
-      </tr>`;
-    }).join('');
+    renderGlIssuesTable();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -2581,6 +2902,7 @@ window.showGlIssueDetail = async function (id) {
     const gi = await api(`/gitlab-issues/${id}`);
     const labels = Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]');
     document.getElementById('processDetailTitle').textContent = `GitLab Issue #${gi.gitlab_issue_iid}`;
+    const metaGi = document.getElementById('processDetailMeta'); if (metaGi) metaGi.innerHTML = '';
     document.getElementById('processDetailContent').innerHTML = `
       <div style="display:flex;flex-direction:column;gap:8px">
         <div><strong>${escapeHtml(gi.title)}</strong></div>
