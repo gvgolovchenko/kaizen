@@ -608,9 +608,10 @@ ${productContext}
       await releases.updateDevInfo(proc.release_id, { dev_status: 'failed' }).catch(() => {});
       // Notify: develop failed
       if (product) {
+        const failedRelease = await releases.getById(proc.release_id).catch(() => null);
         notify('develop_failed', {
           product: product.name,
-          version: proc.release_id,
+          version: failedRelease?.version || '?',
           error: err.message,
         }, getNotifyOpts(product)).catch(() => {});
       }
@@ -648,7 +649,7 @@ ${productContext}
             });
             // Enqueue via import to avoid circular dependency
             const { QueueManager } = await import('./queue-manager.js');
-            QueueManager.instance?.enqueue(newProc.id, proc.model_id, options.timeoutMs);
+            QueueManager.instance?.enqueue(newProc.id, { timeoutMs: options.timeoutMs });
           } catch (retryErr) {
             console.error(`Auto-retry create failed for ${processId}:`, retryErr.message);
           }
@@ -1625,13 +1626,19 @@ async function runDevelopRelease(processId, proc, product, model, startTime, tim
     throw new Error(`Параллельная разработка заблокирована: на этом продукте уже запущен develop_release (${conflict.id.slice(0, 8)})`);
   }
 
-  // 2. Parse config from input_prompt
+  // 2. Parse config from input_prompt or process.config
   let config = {};
-  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+  if (proc.config && typeof proc.config === 'object') {
+    config = proc.config;
+  } else {
+    try { config = JSON.parse(proc.input_prompt || '{}'); } catch (parseErr) {
+      console.warn(`Process ${processId}: config parse failed, using defaults. Error: ${parseErr.message}`);
+    }
+  }
   const rawBranch   = config.git_branch  || `kaizen/release-${release.version}`;
   const branchName  = validateBranchName(rawBranch);
   const testCommand = config.test_command || detectTestCommand(product.tech_stack);
-  const buildCommand = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack);
+  const buildCommand = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack, product.project_path);
 
   // 3. Mark release as in_progress
   await releases.updateDevInfo(release.id, { dev_status: 'in_progress' });
@@ -1784,7 +1791,7 @@ ${issuesList}`;
   });
 
   // 10b. Validate build (if build command is available)
-  const buildCmd = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack);
+  const buildCmd = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack, product.project_path);
   if (resultObj.tests_passed && buildCmd && product.project_path) {
     try {
       await processLogs.create({
@@ -2274,7 +2281,7 @@ async function runValidateProduct(processId, proc, product, startTime, timeoutMs
 
   const checks = config.checks || ['build', 'tests', 'smoke'];
   const lintCommand = config.lint_command || detectLintCommand(product.tech_stack);
-  const buildCommand = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack);
+  const buildCommand = config.build_command || product.smoke_test?.build_command || detectBuildCommand(product.tech_stack, product.project_path);
   const testCommand = config.test_command || detectTestCommand(product.tech_stack);
 
   const log = async (step, message, data) => {

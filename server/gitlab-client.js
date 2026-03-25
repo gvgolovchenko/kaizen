@@ -113,9 +113,10 @@ export async function getPipelineStatus(deploy, sha) {
 
   const baseUrl = `${gl.url}/api/v4/projects/${gl.project_id}`;
   const headers = { 'PRIVATE-TOKEN': gl.access_token };
+  const fetchOpts = { headers, signal: AbortSignal.timeout(30_000) };
 
   // Find pipeline by SHA
-  const pipelinesRes = await fetch(`${baseUrl}/pipelines?sha=${sha}&per_page=1`, { headers });
+  const pipelinesRes = await fetch(`${baseUrl}/pipelines?sha=${sha}&per_page=1`, fetchOpts);
   if (!pipelinesRes.ok) throw new Error(`GitLab API: ${pipelinesRes.status} ${pipelinesRes.statusText}`);
   const pipelines = await pipelinesRes.json();
 
@@ -126,7 +127,7 @@ export async function getPipelineStatus(deploy, sha) {
   const pipeline = pipelines[0];
 
   // Get jobs for the pipeline
-  const jobsRes = await fetch(`${baseUrl}/pipelines/${pipeline.id}/jobs`, { headers });
+  const jobsRes = await fetch(`${baseUrl}/pipelines/${pipeline.id}/jobs`, fetchOpts);
   const jobs = jobsRes.ok ? await jobsRes.json() : [];
 
   return {

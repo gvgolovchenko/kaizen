@@ -6,10 +6,13 @@ export async function getAll({ status, product_id } = {}) {
   let query = `
     SELECT p.*,
       pr.name AS product_name,
-      m.name AS model_name
+      m.name AS model_name,
+      rel.version AS release_version,
+      rel.name AS release_name
     FROM ${TABLE} p
     JOIN opii.kaizen_products pr ON pr.id = p.product_id
-    LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id`;
+    LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+    LEFT JOIN opii.kaizen_releases rel ON rel.id = p.release_id`;
   const params = [];
   const conditions = [];
 
@@ -34,9 +37,12 @@ export async function getAll({ status, product_id } = {}) {
 export async function getByProduct(productId) {
   const { rows } = await pool.query(`
     SELECT p.*,
-      m.name AS model_name
+      m.name AS model_name,
+      rel.version AS release_version,
+      rel.name AS release_name
     FROM ${TABLE} p
     LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+    LEFT JOIN opii.kaizen_releases rel ON rel.id = p.release_id
     WHERE p.product_id = $1
     ORDER BY p.created_at DESC`,
     [productId]
@@ -48,10 +54,13 @@ export async function getById(id) {
   const { rows } = await pool.query(`
     SELECT p.*,
       pr.name AS product_name,
-      m.name AS model_name
+      m.name AS model_name,
+      rel.version AS release_version,
+      rel.name AS release_name
     FROM ${TABLE} p
     JOIN opii.kaizen_products pr ON pr.id = p.product_id
     LEFT JOIN opii.kaizen_ai_models m ON m.id = p.model_id
+    LEFT JOIN opii.kaizen_releases rel ON rel.id = p.release_id
     WHERE p.id = $1`,
     [id]
   );

@@ -30,6 +30,11 @@ export async function getStats() {
       (SELECT count(*) FROM opii.kaizen_plans WHERE status IN ('active', 'scheduled')) AS plans_active,
       (SELECT count(*) FROM opii.kaizen_plans WHERE status = 'completed') AS plans_completed,
       (SELECT count(*) FROM opii.kaizen_plans WHERE is_template = true) AS plans_templates,
+      -- Scenarios
+      (SELECT count(*) FROM opii.kaizen_scenarios) AS scenarios_total,
+      (SELECT count(*) FROM opii.kaizen_scenarios WHERE enabled = true) AS scenarios_enabled,
+      (SELECT count(*) FROM opii.kaizen_scenario_runs WHERE status = 'running') AS scenarios_active,
+      (SELECT count(*) FROM opii.kaizen_scenario_runs WHERE started_at >= CURRENT_DATE - INTERVAL '7 days') AS scenarios_runs_this_week,
       -- Automation
       (SELECT count(*) FROM opii.kaizen_products WHERE automation->>'auto_pipeline' IS NOT NULL AND (automation->'auto_pipeline'->>'enabled')::boolean = true) AS auto_pipeline_count,
       (SELECT count(*) FROM opii.kaizen_products WHERE automation->>'rc_auto_sync' IS NOT NULL AND (automation->'rc_auto_sync'->>'enabled')::boolean = true) AS auto_rc_sync_count
@@ -66,11 +71,15 @@ export async function getStats() {
     ORDER BY created_at DESC LIMIT 5
   `);
 
-  // Top-5 most active products
+  // Top-10 most active products (with issue priorities)
   const { rows: topActive } = await pool.query(`
     SELECT p.id, p.name,
       (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status IN ('open', 'in_release'))::int AS active_issues,
       (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id)::int AS total_issues,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status IN ('open','in_release') AND i.priority = 'critical')::int AS issues_critical,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status IN ('open','in_release') AND i.priority = 'high')::int AS issues_high,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status IN ('open','in_release') AND i.priority = 'medium')::int AS issues_medium,
+      (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status IN ('open','in_release') AND i.priority = 'low')::int AS issues_low,
       (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.status IN ('running', 'queued'))::int AS active_processes,
       (SELECT count(*) FROM opii.kaizen_processes pr WHERE pr.product_id = p.id AND pr.updated_at >= CURRENT_DATE - INTERVAL '7 days')::int AS recent_processes,
       (SELECT count(*) FROM opii.kaizen_releases r WHERE r.product_id = p.id AND r.updated_at >= CURRENT_DATE - INTERVAL '7 days')::int AS recent_releases,
@@ -78,7 +87,7 @@ export async function getStats() {
     FROM opii.kaizen_products p
     WHERE p.status = 'active'
     ORDER BY active_processes DESC, recent_processes DESC, recent_releases DESC, active_issues DESC
-    LIMIT 5
+    LIMIT 15
   `);
 
   // Issues by type
@@ -164,18 +173,30 @@ export async function getStats() {
     LIMIT 5
   `);
 
-  // Recent activity: last 15 completed/failed processes + published releases (mixed feed)
+  // Running scenarios (for alert bar)
+  const { rows: runningScenarios } = await pool.query(`
+    SELECT r.id AS run_id, s.name AS scenario_name
+    FROM opii.kaizen_scenario_runs r
+    JOIN opii.kaizen_scenarios s ON s.id = r.scenario_id
+    WHERE r.status = 'running'
+    ORDER BY r.started_at DESC
+    LIMIT 3
+  `);
+
+  // Recent activity: last 20 completed/failed processes + published releases + scenario runs (mixed feed)
   const { rows: activity } = await pool.query(`
     SELECT
       id, type, status, updated_at, product_name, product_id, result,
       EXTRACT(EPOCH FROM (updated_at - started_at))::int AS duration_sec,
-      approved_count
+      approved_count, release_version
     FROM (
       SELECT pr.id, pr.type, pr.status, pr.updated_at, pr.result,
         pr.started_at, pr.approved_count,
-        p.name AS product_name, p.id AS product_id
+        p.name AS product_name, p.id AS product_id,
+        rel.version AS release_version
       FROM opii.kaizen_processes pr
       LEFT JOIN opii.kaizen_products p ON p.id = pr.product_id
+      LEFT JOIN opii.kaizen_releases rel ON rel.id = pr.release_id
       WHERE pr.status IN ('completed', 'failed')
       UNION ALL
       SELECT
@@ -184,13 +205,26 @@ export async function getStats() {
           (SELECT count(*) FROM opii.kaizen_release_issues ri WHERE ri.release_id = r.id)
         ) AS result,
         r.released_at AS started_at, NULL AS approved_count,
-        p.name AS product_name, p.id AS product_id
+        p.name AS product_name, p.id AS product_id,
+        r.version AS release_version
       FROM opii.kaizen_releases r
       JOIN opii.kaizen_products p ON p.id = r.product_id
       WHERE r.status = 'published' AND r.released_at IS NOT NULL
+      UNION ALL
+      SELECT
+        sr.id, 'scenario_run' AS type, sr.status, sr.completed_at AS updated_at,
+        sr.result,
+        sr.started_at, NULL AS approved_count,
+        COALESCE(p.name, 'Все продукты') AS product_name,
+        s.product_id AS product_id,
+        NULL AS release_version
+      FROM opii.kaizen_scenario_runs sr
+      JOIN opii.kaizen_scenarios s ON s.id = sr.scenario_id
+      LEFT JOIN opii.kaizen_products p ON p.id = s.product_id
+      WHERE sr.status IN ('completed', 'failed')
     ) combined
     ORDER BY updated_at DESC
-    LIMIT 15
+    LIMIT 20
   `);
 
   return {
@@ -235,6 +269,13 @@ export async function getStats() {
       active: parseInt(stats.plans_active),
       completed: parseInt(stats.plans_completed),
       templates: parseInt(stats.plans_templates),
+    },
+    scenarios: {
+      total: parseInt(stats.scenarios_total),
+      enabled: parseInt(stats.scenarios_enabled),
+      active: parseInt(stats.scenarios_active),
+      runs_this_week: parseInt(stats.scenarios_runs_this_week),
+      running: runningScenarios,
     },
     automation: {
       products_with_pipeline: parseInt(stats.auto_pipeline_count),

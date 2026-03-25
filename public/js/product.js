@@ -60,8 +60,9 @@ function updateTabCounts() {
   const procText = active > 0 ? `(${processesList.length} · ${active} акт.)` : `(${processesList.length})`;
   document.getElementById('tabProcessesCount').textContent = procText;
   // Обновить счётчик планов если вкладка есть
-  if (typeof plansList !== 'undefined') {
-    document.getElementById('tabPlansCount').textContent = `(${plansList.length})`;
+  const plansCountEl = document.getElementById('tabPlansCount');
+  if (plansCountEl && typeof plansList !== 'undefined') {
+    plansCountEl.textContent = `(${plansList.length})`;
   }
 }
 
@@ -2294,6 +2295,7 @@ window.toggleAutoSection = function (section, enabled) {
     pipeline: 'autoPipelineSettings',
     pipelineDevelop: 'autoPipelineDevelopSettings',
     pipelinePR: 'autoPipelinePRSettings',
+    pipelineUpdateDocs: 'autoPipelineUpdateDocsSettings',
     notify: 'autoNotifySettings',
   };
   const el = document.getElementById(map[section]);
@@ -2328,7 +2330,7 @@ function loadAutomationSettings() {
   // Last sync info
   if (product.last_rc_sync_at) {
     document.getElementById('autoRcSyncStatus').textContent =
-      `Последняя синхронизация: ${new Date(product.last_rc_sync_at).toLocaleString('ru')}`;
+      `Последняя синхронизация: ${new Date(product.last_rc_sync_at).toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
   }
 
   // Auto Pipeline
@@ -2375,13 +2377,19 @@ function loadAutomationSettings() {
     cb.checked = channels.includes(cb.value);
   });
 
+  // Update Docs
+  const ud = pc.update_docs || {};
+  document.getElementById('autoPipelineUpdateDocs').checked = !!ud.enabled;
+  toggleAutoSection('pipelineUpdateDocs', !!ud.enabled);
+  document.getElementById('autoPipelineUpdateDocsTimeout').value = ud.timeout_min || 20;
+
   // Apply preset visibility
   togglePresetFields();
 
   // Last pipeline info
   if (product.last_pipeline_at) {
     document.getElementById('autoPipelineStatus').textContent =
-      `Последний запуск: ${new Date(product.last_pipeline_at).toLocaleString('ru')}`;
+      `Последний запуск: ${new Date(product.last_pipeline_at).toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
   }
 
   // Notifications
@@ -2427,11 +2435,12 @@ window.togglePresetFields = function () {
   const preset = document.getElementById('autoPipelinePreset').value;
   const developBlock = document.getElementById('pipelineDevelopBlock');
   const prBlock = document.getElementById('pipelinePRBlock');
+  const udBlock = document.getElementById('pipelineUpdateDocsBlock');
   const descEl = document.getElementById('presetDescription');
 
   const descriptions = {
     analysis: 'Анализ продукта: генерация предложений, утверждение, релиз, спецификация',
-    full_cycle: 'Полный цикл: от анализа до публикации и пресс-релиза',
+    full_cycle: 'Полный цикл: от анализа до публикации, пресс-релиза и документирования',
     custom: 'Вы выбираете какие этапы включить',
   };
   descEl.textContent = descriptions[preset] || '';
@@ -2439,17 +2448,22 @@ window.togglePresetFields = function () {
   if (preset === 'analysis') {
     developBlock.style.display = 'none';
     prBlock.style.display = 'none';
+    udBlock.style.display = 'none';
   } else if (preset === 'full_cycle') {
     developBlock.style.display = '';
     prBlock.style.display = '';
-    // Force enable develop and press_release for full_cycle
+    udBlock.style.display = '';
+    // Force enable develop, press_release and update_docs for full_cycle
     document.getElementById('autoPipelineDevelop').checked = true;
     document.getElementById('autoPipelinePressRelease').checked = true;
+    document.getElementById('autoPipelineUpdateDocs').checked = true;
     toggleAutoSection('pipelineDevelop', true);
     toggleAutoSection('pipelinePR', true);
+    toggleAutoSection('pipelineUpdateDocs', true);
   } else {
     developBlock.style.display = '';
     prBlock.style.display = '';
+    udBlock.style.display = '';
   }
 };
 
@@ -2506,6 +2520,10 @@ window.handleSaveAutomation = async function () {
           channels: [...document.querySelectorAll('.autoPrChannel:checked')].map(cb => cb.value),
           tone: document.getElementById('autoPipelinePrTone').value,
         },
+        update_docs: {
+          enabled: document.getElementById('autoPipelineUpdateDocs').checked,
+          timeout_min: parseInt(document.getElementById('autoPipelineUpdateDocsTimeout').value) || 20,
+        },
       },
     },
   };
@@ -2535,7 +2553,7 @@ window.runPipelineNow = async function () {
   try {
     statusEl.textContent = 'Запуск...';
     const res = await api(`/products/${productId}/run-pipeline`, { method: 'POST' });
-    statusEl.textContent = `Конвейер запущен (${new Date().toLocaleTimeString('ru')})`;
+    statusEl.textContent = `Конвейер запущен (${new Date().toLocaleTimeString('ru', { timeZone: 'Europe/Moscow' })})`;
     statusEl.style.color = 'var(--accent)';
     toast('Конвейер запущен! Следите за процессами.');
     // Switch to processes tab after a moment
@@ -2552,7 +2570,7 @@ window.runPipelineScheduled = async function () {
   if (!scheduledAt) { toast('Укажите дату и время', 'error'); return; }
   const dt = new Date(scheduledAt);
   if (dt <= new Date()) { toast('Время должно быть в будущем', 'error'); return; }
-  if (!await confirm(`Запланировать конвейер на ${dt.toLocaleString('ru')}?`)) return;
+  if (!await confirm(`Запланировать конвейер на ${dt.toLocaleString('ru', { timeZone: 'Europe/Moscow' })}?`)) return;
   const statusEl = document.getElementById('pipelineRunStatus');
   try {
     statusEl.textContent = 'Планирование...';
@@ -2560,9 +2578,9 @@ window.runPipelineScheduled = async function () {
       method: 'POST',
       body: { scheduled_at: dt.toISOString() },
     });
-    statusEl.textContent = `Запланирован на ${dt.toLocaleString('ru')}`;
+    statusEl.textContent = `Запланирован на ${dt.toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
     statusEl.style.color = 'var(--accent)';
-    toast(`Конвейер запланирован на ${dt.toLocaleTimeString('ru')}`);
+    toast(`Конвейер запланирован на ${dt.toLocaleTimeString('ru', { timeZone: 'Europe/Moscow' })}`);
   } catch (err) {
     statusEl.textContent = `Ошибка: ${err.message}`;
     statusEl.style.color = 'var(--danger)';

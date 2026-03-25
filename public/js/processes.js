@@ -106,13 +106,19 @@ function renderSection(sectionId, cardsId, countId, items, cardFn) {
 
 // ── Card renderers ───────────────────────────────────────
 
+function releaseLabel(p) {
+  if (!p.release_version) return '';
+  const name = p.release_name ? ` ${escapeHtml(p.release_name)}` : '';
+  return `<span class="proc-card-release" title="${escapeHtml(p.release_name || '')}">v${escapeHtml(p.release_version)}${name}</span>`;
+}
+
 function renderActiveCard(p) {
   const started = p.started_at || p.created_at;
   return `
   <div class="proc-card" onclick="showProcessDetail('${p.id}')">
     <div class="proc-card-header">
       <div>
-        <div class="proc-card-type">${procTypeLabel(p.type)}</div>
+        <div class="proc-card-type">${procTypeLabel(p.type)} ${releaseLabel(p)}</div>
         <a class="proc-card-product" href="/product.html?id=${p.product_id}" onclick="event.stopPropagation()">${escapeHtml(p.product_name)}</a>
       </div>
       <span class="badge badge-process-running">running</span>
@@ -130,7 +136,7 @@ function renderQueueCard(p) {
   <div class="proc-card" onclick="showProcessDetail('${p.id}')">
     <div class="proc-card-header">
       <div>
-        <div class="proc-card-type">${procTypeLabel(p.type)}</div>
+        <div class="proc-card-type">${procTypeLabel(p.type)} ${releaseLabel(p)}</div>
         <a class="proc-card-product" href="/product.html?id=${p.product_id}" onclick="event.stopPropagation()">${escapeHtml(p.product_name)}</a>
       </div>
       <span class="badge badge-process-queued">в очереди</span>
@@ -151,7 +157,7 @@ function renderFailedCard(p) {
   <div class="proc-card" onclick="showProcessDetail('${p.id}')">
     <div class="proc-card-header">
       <div>
-        <div class="proc-card-type">${procTypeLabel(p.type)}</div>
+        <div class="proc-card-type">${procTypeLabel(p.type)} ${releaseLabel(p)}</div>
         <a class="proc-card-product" href="/product.html?id=${p.product_id}" onclick="event.stopPropagation()">${escapeHtml(p.product_name)}</a>
       </div>
       <span class="badge badge-process-failed">ошибка</span>
@@ -228,7 +234,7 @@ function renderHistory(history) {
 
   if (filtered.length === 0) {
     section.style.display = history.length > 0 ? '' : 'none';
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:20px">Нет записей</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:20px">Нет записей</td></tr>';
     paginationEl.innerHTML = '';
     return;
   }
@@ -249,6 +255,7 @@ function renderHistory(history) {
       <td style="text-align:center">${statusIcon}</td>
       <td>${escapeHtml(p.product_name)}</td>
       <td style="white-space:nowrap">${procTypeLabel(p.type)}</td>
+      <td style="white-space:nowrap;font-size:0.82rem">${p.release_version ? `v${escapeHtml(p.release_version)}` : '—'}</td>
       <td style="color:var(--text-dim);font-size:0.82rem">${p.model_name ? escapeHtml(p.model_name) : '<span style="color:var(--text-dim)">local</span>'}</td>
       <td style="white-space:nowrap">${p.duration_ms ? formatDuration(p.duration_ms) : '—'}</td>
       <td style="white-space:nowrap">${formatDate(p.created_at)}</td>

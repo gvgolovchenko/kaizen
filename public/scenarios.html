@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaizen — Сценарии</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="nav-bar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo"><span>改</span> Kaizen</a>
+      <div class="nav-links">
+        <a href="/">Главная</a>
+        <a href="/products.html">Продукты</a>
+        <a href="/processes.html">Процессы</a>
+        <a href="/scenarios.html">Сценарии</a>
+        <a href="/models.html">Модели ИИ</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container">
+    <header>
+      <h1>Сценарии</h1>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="filterPreset" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85rem">
+          <option value="">Все типы</option>
+          <option value="batch_develop">Пакетная разработка</option>
+          <option value="auto_release">Авто-релиз</option>
+          <option value="nightly_audit">Ночной аудит</option>
+          <option value="full_cycle">Полный цикл</option>
+          <option value="analysis">Анализ</option>
+        </select>
+        <button class="btn btn-primary" onclick="showCreateModal()">+ Создать</button>
+      </div>
+    </header>
+
+    <!-- Summary cards -->
+    <div id="scenariosSummary" class="dashboard-summary" style="margin-bottom:1.5rem">
+      <div class="summary-widget">
+        <div class="summary-value" id="sumTotal">0</div>
+        <div class="summary-label">Всего</div>
+      </div>
+      <div class="summary-widget">
+        <div class="summary-value" id="sumEnabled">0</div>
+        <div class="summary-label">Активных</div>
+      </div>
+      <div class="summary-widget">
+        <div class="summary-value" id="sumRunning">0</div>
+        <div class="summary-label">Выполняется</div>
+      </div>
+      <div class="summary-widget">
+        <div class="summary-value" id="sumScheduled">0</div>
+        <div class="summary-label">По расписанию</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Продукт</th>
+            <th>Название</th>
+            <th>Тип</th>
+            <th>Расписание</th>
+            <th>Результат</th>
+            <th>Запусков</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="scenariosBody"></tbody>
+      </table>
+    </div>
+
+    <div id="scenariosEmpty" class="empty" style="display:none">
+      <p>Нет сценариев. Создайте первый!</p>
+    </div>
+
+  </div>
+
+  <!-- Detail Modal -->
+  <div id="detailModal" class="modal-overlay" style="display:none">
+    <div class="modal" style="max-width:700px;max-height:90vh">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 id="detailTitle">Сценарий</h2>
+        <button style="background:none;border:none;color:var(--text-dim);font-size:1.3rem;cursor:pointer" onclick="hideDetailModal()">&#10005;</button>
+      </div>
+      <div id="detailContent"></div>
+    </div>
+  </div>
+
+  <!-- Create Modal -->
+  <div id="createModal" class="modal-overlay" style="display:none">
+    <div class="modal" style="max-width:850px;max-height:90vh">
+      <h2 style="margin-bottom:12px" id="createModalTitle">Новый сценарий</h2>
+      <form id="createForm" onsubmit="event.preventDefault(); createScenario(event)">
+
+        <!-- Row 1: Название + Описание -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group">
+            <label>Название</label>
+            <input type="text" id="fName" required placeholder="Ночная разработка ОООВС">
+          </div>
+          <div class="form-group">
+            <label>Описание</label>
+            <input type="text" id="fDesc" placeholder="Необязательно">
+          </div>
+        </div>
+
+        <!-- Row 2: Продукт + Тип + Модель -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div class="form-group">
+            <label>Продукт</label>
+            <select id="fProduct"><option value="">Загрузка...</option></select>
+          </div>
+          <div class="form-group">
+            <label>Тип</label>
+            <select id="fPreset" onchange="onPresetChange()">
+              <option value="batch_develop">Пакетная разработка</option>
+              <option value="auto_release">Авто-релиз</option>
+              <option value="nightly_audit">Ночной аудит</option>
+              <option value="full_cycle">Полный цикл</option>
+              <option value="analysis">Анализ</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>AI-модель</label>
+            <select id="fModel"><option value="">Загрузка...</option></select>
+          </div>
+        </div>
+
+        <!-- Row 3: Когда запустить -->
+        <div class="form-group">
+          <label>Когда запустить</label>
+          <select id="fLaunchMode" onchange="onLaunchModeChange()">
+            <option value="now">Сейчас</option>
+            <option value="scheduled">В указанное время</option>
+            <option value="cron">По расписанию (регулярно)</option>
+          </select>
+        </div>
+
+        <!-- Scheduled: datetime picker -->
+        <div id="launchScheduled" class="form-group" style="display:none">
+          <label>Дата и время запуска (MSK)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="date" id="fSchedDate" style="flex:1">
+            <select id="fSchedHour" style="width:80px"></select>
+            <span style="color:var(--text-dim)">: 00</span>
+          </div>
+        </div>
+
+        <!-- Cron: repeating schedule -->
+        <div id="launchCron" style="display:none">
+          <div class="form-group">
+            <label>Расписание (время MSK)</label>
+            <select id="fCronPreset" onchange="onCronPresetChange()">
+              <option value="0 18 * * *">Каждый день в 21:00</option>
+              <option value="0 19 * * *">Каждый день в 22:00</option>
+              <option value="0 21 * * *">Каждый день в 00:00</option>
+              <option value="0 22 * * 1-5">Будни (Пн-Пт) в 01:00</option>
+              <option value="0 2 * * *">Каждый день в 05:00</option>
+              <option value="0 0 * * 0">Каждое воскресенье в 03:00</option>
+              <option value="custom">Своё значение...</option>
+            </select>
+          </div>
+          <div id="cronCustom" style="display:none;margin-top:6px">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:6px;text-align:center">
+              <div><small style="color:var(--text-dim)">Минута</small><input type="text" id="fCronMin" placeholder="0" style="text-align:center"></div>
+              <div><small style="color:var(--text-dim)">Час (MSK)</small><input type="text" id="fCronHour" placeholder="21" style="text-align:center"></div>
+              <div><small style="color:var(--text-dim)">День мес.</small><input type="text" id="fCronDom" placeholder="*" style="text-align:center"></div>
+              <div><small style="color:var(--text-dim)">Месяц</small><input type="text" id="fCronMon" placeholder="*" style="text-align:center"></div>
+              <div><small style="color:var(--text-dim)">День нед.</small><input type="text" id="fCronDow" placeholder="*" style="text-align:center"></div>
+            </div>
+            <small style="color:var(--text-dim)">Время московское. День недели: 0=Вс, 1=Пн...5=Пт, 6=Сб, 1-5=будни</small>
+          </div>
+        </div>
+
+        <!-- Preset hint -->
+        <div id="presetHint" style="color:var(--text-dim);font-size:0.8rem;margin:-4px 0 8px"></div>
+
+        <!-- ═══ Preset config sections ═══ -->
+
+        <!-- batch_develop -->
+        <div id="cfgBatchDevelop" class="scenario-config-section" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 200px;gap:12px">
+            <div>
+              <h4>Релизы</h4>
+              <div id="fReleasesList" style="max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px">
+                <em style="color:var(--text-dim)">Выберите продукт</em>
+              </div>
+            </div>
+            <div>
+              <h4>Параметры</h4>
+              <div class="form-group" style="margin-bottom:8px">
+                <label style="font-size:0.8rem">При ошибке</label>
+                <select id="fOnFailure">
+                  <option value="skip">Пропустить (skip)</option>
+                  <option value="stop">Остановить (stop)</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:8px">
+                <label style="font-size:0.8rem">Таймаут (мин)</label>
+                <input type="number" id="fTimeout" value="45" min="10" max="120">
+              </div>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem">
+                <input type="checkbox" id="fAutoPublish" checked> Авто-публикация
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- auto_release -->
+        <div id="cfgAutoRelease" class="scenario-config-section" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">
+            <div class="form-group">
+              <label style="font-size:0.8rem">Макс. задач</label>
+              <input type="number" id="fMaxIssues" value="10" min="1" max="50">
+            </div>
+            <div class="form-group">
+              <label style="font-size:0.8rem">Авто-утверждение</label>
+              <select id="fAutoApproveAR">
+                <option value="all">Все</option>
+                <option value="high_and_critical" selected>High + Critical</option>
+                <option value="critical_only">Только Critical</option>
+              </select>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;padding-bottom:10px">
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" id="fARDevelop" checked> Разработка</label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" id="fARAutoPublish" checked> Авто-публикация</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- nightly_audit -->
+        <div id="cfgNightlyAudit" class="scenario-config-section" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+            <div class="form-group">
+              <label style="font-size:0.8rem">Шаблон</label>
+              <select id="fTemplate">
+                <option value="general">Общий</option>
+                <option value="ui">UI/UX</option>
+                <option value="performance">Производительность</option>
+                <option value="security">Безопасность</option>
+                <option value="competitors">Конкуренты</option>
+                <option value="dx">Dev Experience</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label style="font-size:0.8rem">Предложений</label>
+              <input type="number" id="fCount" value="5" min="1" max="10">
+            </div>
+            <div class="form-group">
+              <label style="font-size:0.8rem">Авто-утверждение</label>
+              <select id="fAutoApproveNA">
+                <option value="all">Все</option>
+                <option value="high_and_critical" selected>High + Critical</option>
+                <option value="critical_only">Только Critical</option>
+                <option value="none">Не утверждать</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- full_cycle / analysis -->
+        <div id="cfgPipeline" class="scenario-config-section" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+            <div class="form-group">
+              <label style="font-size:0.8rem">Авто-утверждение</label>
+              <select id="fAutoApproveFC">
+                <option value="all">Все</option>
+                <option value="high_and_critical" selected>High + Critical</option>
+                <option value="critical_only">Только Critical</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label style="font-size:0.8rem">Таймаут (мин)</label>
+              <input type="number" id="fTimeoutFC" value="20" min="5" max="60">
+            </div>
+            <div id="cfgPipelineDevelop" style="display:flex;flex-direction:column;gap:3px;padding-bottom:10px">
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" id="fFCDevelop" checked> Разработка</label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" id="fFCAutoPublish" checked> Авто-публикация</label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" id="fFCPressRelease"> Пресс-релиз</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button type="button" class="btn" onclick="hideCreateModal()">Отмена</button>
+          <button type="submit" class="btn btn-primary" id="createSubmitBtn">Создать</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/js/scenarios.js"></script>
+</body>
+</html>

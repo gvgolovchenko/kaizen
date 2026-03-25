@@ -15,13 +15,16 @@
         <a href="/">Главная</a>
         <a href="/products.html">Продукты</a>
         <a href="/processes.html">Процессы</a>
-        <a href="/plans.html">Планы</a>
+        <a href="/scenarios.html">Сценарии</a>
         <a href="/models.html">Модели ИИ</a>
       </div>
     </div>
   </nav>
 
   <div class="container">
+
+    <!-- Alert bar -->
+    <div id="dashAlerts"></div>
 
     <!-- Section 1: Summary (5 widgets) -->
     <div id="dashSummary" class="dashboard-summary">
@@ -32,12 +35,10 @@
       <div class="skeleton skeleton-widget"></div>
     </div>
 
-    <!-- Section 2+3: Main grid (2×2 + activity spanning right column) -->
-    <div class="dashboard-main">
-      <div id="dashTopProducts"><div class="skeleton skeleton-card"></div></div>
-      <div id="dashHeatmap"><div class="skeleton skeleton-card"></div></div>
-      <div id="dashActivity"><div class="skeleton skeleton-card"></div></div>
-      <div id="dashIssues"><div class="skeleton skeleton-card"></div></div>
+    <!-- Section 2: Products overview + Activity feed side by side -->
+    <div class="dash-main-row">
+      <div id="dashProductsOverview" class="dash-main-left"><div class="skeleton skeleton-card"></div></div>
+      <div id="dashActivity" class="dash-main-right"><div class="skeleton skeleton-card"></div></div>
     </div>
 
   </div>

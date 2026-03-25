@@ -86,6 +86,24 @@ const formatters = {
     msg += `\n[url=${KAIZEN_URL}/product.html?id=${product_id}]Открыть продукт[/url]`;
     return msg;
   },
+
+  scenario_completed({ scenario, preset, product, summary }) {
+    return `[b]✅ Сценарий завершён[/b]\n` +
+      `Сценарий: [b]${scenario}[/b]\n` +
+      `Тип: ${preset}\n` +
+      `Продукт: ${product}\n` +
+      `Итог: ${summary || '—'}\n` +
+      `[url=${KAIZEN_URL}/scenarios.html]Открыть сценарии[/url]`;
+  },
+
+  scenario_failed({ scenario, preset, product, error }) {
+    return `[b]❌ Сценарий провален[/b]\n` +
+      `Сценарий: [b]${scenario}[/b]\n` +
+      `Тип: ${preset}\n` +
+      `Продукт: ${product}\n` +
+      `Ошибка: ${error || 'неизвестная'}\n` +
+      `[url=${KAIZEN_URL}/scenarios.html]Открыть сценарии[/url]`;
+  },
 };
 
 // Telegram-форматтеры (Markdown)

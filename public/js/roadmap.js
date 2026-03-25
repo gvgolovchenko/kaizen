@@ -85,7 +85,7 @@ async function loadLogs() {
           <div class="process-log-entry ${l.step === 'error' ? 'process-log-error' : ''}">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
               <span class="badge badge-process-log">${l.step}</span>
-              <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU')}</span>
+              <span style="font-size:0.75rem;color:var(--text-dim)">${new Date(l.created_at).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' })}</span>
             </div>
             ${l.message ? `<div style="font-size:0.85rem">${escapeHtml(l.message)}</div>` : ''}
           </div>

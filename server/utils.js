@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 /**
  * Parse JSON array from AI response — handles think tags, markdown fences, nested brackets.
  * @param {string} raw
@@ -66,11 +69,16 @@ export function parseJsonFromAI(raw) {
  */
 /**
  * Detect build/compile command based on tech stack string.
+ * For monorepo projects, includes the subdirectory path.
  */
-export function detectBuildCommand(techStack) {
+export function detectBuildCommand(techStack, projectPath) {
   const s = (techStack || '').toLowerCase();
-  if (s.includes('dotnet') || s.includes('c#') || s.includes('asp'))
-    return 'dotnet build';
+  if (s.includes('dotnet') || s.includes('c#') || s.includes('asp')) {
+    // Check if backend/ subdirectory exists
+    const backendPath = projectPath ? join(projectPath, 'backend') : null;
+    const hasBackend = backendPath && existsSync(backendPath);
+    return hasBackend ? 'cd backend && dotnet build' : 'dotnet build';
+  }
   if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue') || s.includes('nuxt'))
     return 'npm run build';
   if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))

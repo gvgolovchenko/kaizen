@@ -6,14 +6,17 @@ import apiRouter from './routes/api.js';
 import { pool } from './db/pool.js';
 import { QueueManager } from './queue-manager.js';
 import { Scheduler } from './scheduler.js';
+import { ScenarioRunner } from './scenario-runner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3034;
 
-// Создаём QueueManager и Scheduler
+// Создаём QueueManager, Scheduler и ScenarioRunner
 const queueManager = new QueueManager();
 const scheduler = new Scheduler(queueManager);
+const scenarioRunner = new ScenarioRunner(queueManager);
+scheduler.scenarioRunner = scenarioRunner;
 
 // Связка: QueueManager уведомляет Scheduler о завершении процессов
 queueManager.onProcessDone = (processId, status) => {
@@ -26,6 +29,7 @@ app.use(express.static(join(__dirname, '..', 'public')));
 // Передаём queueManager и scheduler в router
 app.locals.queueManager = queueManager;
 app.set('scheduler', scheduler);
+app.set('scenarioRunner', scenarioRunner);
 app.use('/api', apiRouter);
 
 // JSON error handler — always return JSON, never HTML
@@ -34,7 +38,7 @@ app.use('/api', (err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
   res.status(status).json({
     error: err.message || 'Internal server error',
-    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 });
 

@@ -1,6 +1,6 @@
 # Kaizen — Основные функции
 
-> Версия 1.15.0 | 2026-03-18
+> Версия 1.17.0 | 2026-03-25
 
 ---
 
@@ -189,13 +189,32 @@ Kaizen (改善) — веб-приложение для непрерывного 
 
 - Модуль `server/notifier.js` — отправка уведомлений через бота АФИИНА (ID 1624) в Битрикс24
 - Метод `im.message.add` через webhook URL
-- 7 типов событий: `pipeline_completed`, `pipeline_failed`, `release_published`, `develop_completed`, `develop_failed`, `rc_sync_done`, `improve_completed`
+- 9 типов событий: `pipeline_completed/failed`, `release_published`, `develop_completed/failed`, `rc_sync_done`, `improve_completed`, `gitlab_sync_done`, `scenario_completed/failed`
 - BB-code форматирование сообщений для Битрикс24
 - Endpoint `POST /api/notify` для отправки уведомлений
-- Интеграция в: `process-runner.js` (develop/publish), `scheduler.js` (RC sync), `mcp-server` (pipeline)
+- Интеграция в: `process-runner.js`, `scheduler.js`, `scenario-runner.js`, `mcp-server`
 - Per-product настройки уведомлений в JSONB `automation.notifications`: `enabled`, `bitrix24_user_id`, `events[]`
 - UI: секция «Уведомления в Б24» в табе автоматизации — чекбоксы событий и кнопка тестирования
 - `.env`: `BITRIX24_WEBHOOK_URL`, `BITRIX24_NOTIFY_USER_ID=9`
+
+### 21. Сценарии (ScenarioRunner)
+
+- Автономные рабочие процессы с расписанием — замена Планов для практических задач
+- 5 пресетов:
+  - `batch_develop` — spec → develop → publish для списка релизов (идеально для ночной разработки)
+  - `auto_release` — AI формирует релиз из open issues → spec → develop
+  - `nightly_audit` — improve → auto-approve для нескольких продуктов
+  - `full_cycle` — полный конвейер: improve → approve → release → spec → develop → publish → press_release
+  - `analysis` — анализ без разработки: improve → approve → release → spec
+- Три режима запуска:
+  - Сейчас — создаётся и сразу выполняется
+  - В указанное время — дата + час (MSK), одноразовый запуск, авто-отключение
+  - По расписанию — cron, регулярный повтор
+- Движок `server/scenario-runner.js` — создание процессов, polling до завершения, авто-утверждение, авто-публикация
+- БД: `kaizen_scenarios` (name, preset, config JSONB, cron, enabled, next_run_at) + `kaizen_scenario_runs` (status, result JSONB, trigger)
+- Scheduler: `_runDueScenarios()` каждые 60с проверяет `next_run_at ≤ NOW()` для enabled cron-сценариев
+- 7 MCP-инструментов: `list/get/create/update/run/get_run/delete_scenario`
+- UI (`/scenarios.html`): таблица, фильтры, создание/редактирование, детальная карточка, история запусков
 
 ---
 

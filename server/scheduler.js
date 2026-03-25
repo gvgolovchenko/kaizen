@@ -3,6 +3,7 @@ import * as planSteps from './db/plan-steps.js';
 import * as processes from './db/processes.js';
 import * as products from './db/products.js';
 import * as releases from './db/releases.js';
+import * as scenariosDb from './db/scenarios.js';
 import * as rcSync from './rc-sync.js';
 import * as gitlabSync from './gitlab-sync.js';
 import { notify, getNotifyOpts } from './notifier.js';
@@ -16,10 +17,12 @@ import { pool } from './db/pool.js';
 export class Scheduler {
   constructor(queueManager) {
     this.queueManager = queueManager;
+    this.scenarioRunner = null; // устанавливается из index.js
     this.tickInterval = 30_000;
     this._timer = null;
     this._automationCounter = 0; // проверяем автоматизацию каждые 2 минуты (4 тика)
     this._cleanupCounter = 0;    // очистка логов раз в 24 часа (2880 тиков по 30с)
+    this._scenarioCounter = 0;   // проверяем сценарии каждую минуту (2 тика)
   }
 
   start() {
@@ -39,6 +42,13 @@ export class Scheduler {
     try {
       await this._activateScheduledPlans();
       await this._processActivePlans();
+
+      // Сценарии по cron — раз в минуту (каждые 2 тика по 30с)
+      this._scenarioCounter++;
+      if (this._scenarioCounter >= 2) {
+        this._scenarioCounter = 0;
+        await this._runDueScenarios();
+      }
 
       // Автоматизация — раз в 2 минуты (каждые 4 тика по 30с)
       this._automationCounter++;
@@ -142,6 +152,27 @@ export class Scheduler {
     } catch (err) {
       console.error(`Scheduler: failed to launch step ${step.id}:`, err.message);
       await planSteps.update(step.id, { status: 'failed', error: err.message });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Scenarios — cron-triggered scenario execution
+  // ═══════════════════════════════════════════════════════════
+
+  async _runDueScenarios() {
+    if (!this.scenarioRunner) return;
+    try {
+      const due = await scenariosDb.getDueScenarios();
+      for (const scenario of due) {
+        try {
+          console.log(`Scheduler: cron trigger scenario "${scenario.name}" (${scenario.preset})`);
+          await this.scenarioRunner.run(scenario, 'cron');
+        } catch (err) {
+          console.error(`Scheduler: scenario "${scenario.name}" cron trigger error:`, err.message);
+        }
+      }
+    } catch (err) {
+      console.error('Scheduler _runDueScenarios error:', err.message);
     }
   }
 

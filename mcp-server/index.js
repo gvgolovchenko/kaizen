@@ -1096,6 +1096,110 @@ server.tool(
 );
 
 // ══════════════════════════════════════════════════════════════
+// SCENARIOS
+// ══════════════════════════════════════════════════════════════
+
+server.tool(
+  'kaizen_list_scenarios',
+  'Список всех сценариев (автономных рабочих процессов с расписанием). Фильтр по продукту или статусу enabled.',
+  {
+    product_id: z.string().uuid().optional().describe('Фильтр по продукту'),
+    enabled: z.boolean().optional().describe('Фильтр: только включённые'),
+  },
+  async ({ product_id, enabled }) => {
+    const scenarios = await api.listScenarios({ product_id, enabled });
+    return { content: [{ type: 'text', text: JSON.stringify(scenarios, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_get_scenario',
+  'Детали сценария с последними 10 запусками',
+  { scenario_id: z.string().uuid().describe('UUID сценария') },
+  async ({ scenario_id }) => {
+    const scenario = await api.getScenario(scenario_id);
+    return { content: [{ type: 'text', text: JSON.stringify(scenario, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_create_scenario',
+  `Создать сценарий — именованную конфигурацию автоматического рабочего процесса.
+
+Пресеты:
+- "batch_develop" — spec + develop + publish для списка релизов. Config: { release_ids[], model_id, auto_publish, on_failure }
+- "auto_release" — AI формирует релиз из open issues → spec → develop. Config: { model_id, max_issues, develop: {enabled, model_id, auto_publish} }
+- "nightly_audit" — improve + auto-approve для продуктов. Config: { model_id, template_id, count, auto_approve, product_ids[] }
+- "full_cycle" — полный конвейер: improve → approve → release → spec → develop → publish → press_release
+- "analysis" — анализ без разработки: improve → approve → release → spec
+
+cron — расписание (null = только ручной запуск). Формат: "мин час день_мес мес день_нед".
+Примеры: "0 22 * * 1-5" (будни 22:00), "0 3 * * 0" (воскр 03:00), "30 1 * * *" (каждый день 01:30)`,
+  {
+    name: z.string().describe('Название сценария'),
+    description: z.string().optional().describe('Описание'),
+    product_id: z.string().uuid().optional().describe('UUID продукта (обязателен для batch_develop, auto_release, full_cycle, analysis)'),
+    preset: z.enum(['batch_develop', 'auto_release', 'nightly_audit', 'full_cycle', 'analysis', 'custom'])
+      .describe('Тип сценария'),
+    config: z.record(z.any()).describe('Конфигурация сценария (зависит от пресета)'),
+    cron: z.string().optional().describe('Cron-выражение для автозапуска (null = ручной)'),
+    enabled: z.boolean().default(true).describe('Включён ли сценарий'),
+  },
+  async (params) => {
+    const scenario = await api.createScenario(params);
+    return { content: [{ type: 'text', text: JSON.stringify(scenario, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_update_scenario',
+  'Обновить сценарий (name, description, config, cron, enabled, preset)',
+  {
+    scenario_id: z.string().uuid().describe('UUID сценария'),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    config: z.record(z.any()).optional(),
+    cron: z.string().nullable().optional().describe('Cron-выражение (null — отключить расписание)'),
+    enabled: z.boolean().optional(),
+    preset: z.string().optional(),
+  },
+  async ({ scenario_id, ...fields }) => {
+    const scenario = await api.updateScenario(scenario_id, fields);
+    return { content: [{ type: 'text', text: JSON.stringify(scenario, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_run_scenario',
+  'Запустить сценарий вручную (немедленно). Возвращает run_id для отслеживания.',
+  { scenario_id: z.string().uuid().describe('UUID сценария') },
+  async ({ scenario_id }) => {
+    const run = await api.runScenario(scenario_id);
+    return { content: [{ type: 'text', text: JSON.stringify(run, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_get_scenario_run',
+  'Получить детали запуска сценария (статус, результат, ошибки)',
+  { run_id: z.string().uuid().describe('UUID запуска') },
+  async ({ run_id }) => {
+    const run = await api.getScenarioRun(run_id);
+    return { content: [{ type: 'text', text: JSON.stringify(run, null, 2) }] };
+  }
+);
+
+server.tool(
+  'kaizen_delete_scenario',
+  'Удалить сценарий и всю его историю запусков',
+  { scenario_id: z.string().uuid().describe('UUID сценария') },
+  async ({ scenario_id }) => {
+    await api.deleteScenario(scenario_id);
+    return { content: [{ type: 'text', text: 'Сценарий удалён' }] };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
 // START SERVER
 // ══════════════════════════════════════════════════════════════
 

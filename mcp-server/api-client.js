@@ -129,3 +129,20 @@ export const deployRelease = (releaseId, body) => request('POST', `/releases/${r
 export const generateCI = (productId) => request('POST', `/products/${productId}/generate-ci`);
 export const generateDockerfile = (productId) => request('POST', `/products/${productId}/generate-dockerfile`);
 export const getPipelineStatus = (productId, sha) => request('GET', `/products/${productId}/pipeline-status?sha=${sha}`);
+
+// ── Scenarios ──
+export const listScenarios = (params) => {
+  const qs = new URLSearchParams();
+  if (params?.enabled !== undefined) qs.set('enabled', params.enabled);
+  if (params?.product_id) qs.set('product_id', params.product_id);
+  const q = qs.toString();
+  return request('GET', `/scenarios${q ? `?${q}` : ''}`);
+};
+export const getScenario = (id) => request('GET', `/scenarios/${id}`);
+export const createScenario = (body) => request('POST', '/scenarios', body);
+export const updateScenario = (id, body) => request('PUT', `/scenarios/${id}`, body);
+export const deleteScenario = (id) => request('DELETE', `/scenarios/${id}`);
+export const runScenario = (id) => request('POST', `/scenarios/${id}/run`);
+export const getScenarioRuns = (id, limit) => request('GET', `/scenarios/${id}/runs?limit=${limit || 20}`);
+export const getScenarioRun = (id) => request('GET', `/scenario-runs/${id}`);
+export const cancelScenarioRun = (id) => request('POST', `/scenario-runs/${id}/cancel`);

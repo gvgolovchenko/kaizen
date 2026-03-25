@@ -16,6 +16,8 @@ import { generateGitlabCI, generateDockerfile, generateDockerCompose } from '../
 import { getPipelineStatus } from '../gitlab-client.js';
 import * as searchDb from '../db/search.js';
 import * as dashboard from '../db/dashboard.js';
+import * as scenariosDb from '../db/scenarios.js';
+import * as scenarioRunsDb from '../db/scenario-runs.js';
 import { pool } from '../db/pool.js';
 
 const router = Router();
@@ -1952,6 +1954,150 @@ router.post('/releases/:id/create-mr', async (req, res) => {
 
     const mr = await mrRes.json();
     res.json({ id: mr.iid, url: mr.web_url, title: mr.title, state: mr.state });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Scenarios ─────────────────────────────────────────────
+
+router.get('/scenarios', async (req, res) => {
+  try {
+    const { enabled, product_id } = req.query;
+    const rows = await scenariosDb.getAll({
+      enabled: enabled !== undefined ? enabled === 'true' : undefined,
+      product_id,
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/products/:id/scenarios', async (req, res) => {
+  try {
+    const rows = await scenariosDb.getByProduct(req.params.id);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/scenarios', async (req, res) => {
+  try {
+    const { name, description, product_id, preset, config, cron, enabled } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (!preset) return res.status(400).json({ error: 'preset is required' });
+
+    const validPresets = ['batch_develop', 'auto_release', 'nightly_audit', 'full_cycle', 'analysis', 'custom'];
+    if (!validPresets.includes(preset)) {
+      return res.status(400).json({ error: `Invalid preset. Valid: ${validPresets.join(', ')}` });
+    }
+
+    // Validate product exists if specified
+    if (product_id) {
+      const product = await products.getById(product_id);
+      if (!product) return res.status(404).json({ error: 'Product not found' });
+    }
+
+    // batch_develop и auto_release требуют product_id
+    if (['batch_develop', 'auto_release', 'full_cycle', 'analysis'].includes(preset) && !product_id) {
+      return res.status(400).json({ error: `${preset} requires product_id` });
+    }
+
+    const scenario = await scenariosDb.create({ name, description, product_id, preset, config, cron, enabled });
+    res.status(201).json(scenario);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/scenarios/:id', async (req, res) => {
+  try {
+    const scenario = await scenariosDb.getById(req.params.id);
+    if (!scenario) return res.status(404).json({ error: 'Scenario not found' });
+    const runs = await scenarioRunsDb.getByScenario(scenario.id, { limit: 10 });
+    res.json({ ...scenario, runs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/scenarios/:id', async (req, res) => {
+  try {
+    const scenario = await scenariosDb.update(req.params.id, req.body);
+    if (!scenario) return res.status(404).json({ error: 'Scenario not found' });
+    res.json(scenario);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/scenarios/:id', async (req, res) => {
+  try {
+    const ok = await scenariosDb.remove(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Scenario not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/scenarios/:id/run', async (req, res) => {
+  try {
+    const scenario = await scenariosDb.getById(req.params.id);
+    if (!scenario) return res.status(404).json({ error: 'Scenario not found' });
+
+    // Проверить нет ли уже запущенного run
+    const running = await scenarioRunsDb.getRunning();
+    const alreadyRunning = running.find(r => r.scenario_id === scenario.id);
+    if (alreadyRunning) {
+      return res.status(409).json({ error: 'Scenario already running', run_id: alreadyRunning.id });
+    }
+
+    const scenarioRunner = req.app.get('scenarioRunner');
+    if (!scenarioRunner) {
+      return res.status(500).json({ error: 'ScenarioRunner not initialized' });
+    }
+
+    const run = await scenarioRunner.run(scenario, 'manual');
+    res.status(201).json(run);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/scenarios/:id/runs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const runs = await scenarioRunsDb.getByScenario(req.params.id, { limit });
+    res.json(runs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/scenario-runs/:id', async (req, res) => {
+  try {
+    const run = await scenarioRunsDb.getById(req.params.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    res.json(run);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/scenario-runs/:id/cancel', async (req, res) => {
+  try {
+    const run = await scenarioRunsDb.getById(req.params.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (run.status !== 'running') return res.status(400).json({ error: 'Run is not running' });
+
+    const updated = await scenarioRunsDb.updateResult(req.params.id, {
+      status: 'cancelled',
+      error: 'Cancelled by user',
+    });
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

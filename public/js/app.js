@@ -45,8 +45,9 @@ function humanizeError(msg) {
 export function formatDate(dateStr) {
   if (!dateStr) return '—';
   const d = new Date(dateStr);
-  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
-    + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const tz = { timeZone: 'Europe/Moscow' };
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', ...tz })
+    + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit', ...tz });
 }
 
 // ── Toast notifications ────────────────────────────────
@@ -211,6 +212,7 @@ export function renderBreadcrumbs(containerId, items) {
     '/processes.html': '/processes.html',
     '/plans.html': '/plans.html',
     '/plan-edit.html': '/plans.html',
+    '/scenarios.html': '/scenarios.html',
     '/models.html': '/models.html',
   };
   const activeHref = navMap[path] || '/';

@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.12.0 (миграции 001–017) — актуализировано 2026-03-14
+> Версия схемы: 1.17.0 (миграции 001–023) — актуализировано 2026-03-25
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -12,7 +12,7 @@
 - **Первичные ключи**: UUID (`gen_random_uuid()`)
 - **Временные метки**: `created_at` (auto), `updated_at` (trigger)
 - **Каскадное удаление**: продукт → задачи + релизы + процессы + планы; процессы → логи; планы → шаги
-- **Таблицы**: 10 (products, issues, releases, release_issues, ai_models, processes, process_logs, plans, plan_steps, rc_tickets)
+- **Таблицы**: 13 (products, issues, releases, release_issues, ai_models, processes, process_logs, plans, plan_steps, rc_tickets, gitlab_issues, **scenarios**, **scenario_runs**)
 
 ---
 

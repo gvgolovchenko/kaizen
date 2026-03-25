@@ -1,15 +1,19 @@
 /**
  * Smoke Tester — headless browser validation of product pages after develop_release.
  *
- * Starts the product's dev server, opens each configured page with Playwright,
+ * Starts the product's dev server (npm/yarn/docker compose), opens each configured page with Playwright,
  * checks for JS console errors and basic content rendering.
  *
  * Auto-discovery: if smoke_test config is missing or has no pages,
  * scans the project source to find pages and dev server settings.
+ *
+ * Supports:
+ * - npm/yarn dev servers
+ * - Docker Compose projects (docker_compose: true in config)
  */
 
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { readFile, readdir, access, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 
@@ -35,7 +39,11 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
     config.start_command = dp.start_command;
   }
 
-  if (!config.url || !config.pages?.length || !config.start_command) {
+  // Check if Docker Compose mode is enabled
+  const dockerComposeMode = config.docker_compose === true || 
+    (config.start_command && config.start_command.includes('docker compose'));
+
+  if (!config.url || !config.pages?.length || (!config.start_command && !dockerComposeMode)) {
     await log('smoke_autodiscover', 'Автообнаружение настроек smoke test...');
     const discovered = await discoverSmokeConfig(projectPath, techStack);
 
@@ -70,6 +78,7 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
     pages = ['/'],
     ready_timeout_ms = 20000,
     check_timeout_ms = 10000,
+    docker_compose = false,
   } = config;
 
   if (!url) {
@@ -79,13 +88,22 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
 
   await log('smoke_start', `Smoke test: ${pages.length} страниц на ${url}`);
 
-  // 1. Start dev server
+  // 1. Start server (dev server or Docker Compose)
   let serverProcess = null;
+  let dockerComposeProject = null;
+  
   try {
-    serverProcess = startDevServer(start_command, projectPath);
-    // Save port for cleanup fallback
-    try { serverProcess._smokePort = new URL(url).port; } catch { /* ignore */ }
-    await log('smoke_server_starting', `Запуск: ${start_command}`);
+    if (docker_compose || dockerComposeMode) {
+      // Docker Compose mode: start containers
+      dockerComposeProject = await startDockerCompose(start_command, projectPath, log);
+      await log('smoke_docker_compose_starting', `Запуск Docker Compose: ${projectPath}`);
+    } else {
+      // Traditional dev server mode
+      serverProcess = startDevServer(start_command, projectPath);
+      // Save port for cleanup fallback
+      try { serverProcess._smokePort = new URL(url).port; } catch { /* ignore */ }
+      await log('smoke_server_starting', `Запуск: ${start_command}`);
+    }
 
     // 2. Wait for server to be ready
     const ready = await waitForReady(url, ready_timeout_ms);
@@ -118,9 +136,12 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
     return { passed: allPassed, results, discoveredConfig: config };
 
   } finally {
-    // 4. Kill dev server
+    // 4. Cleanup: kill dev server or stop Docker Compose
     if (serverProcess) {
       killProcess(serverProcess);
+    }
+    if (dockerComposeProject) {
+      await stopDockerCompose(dockerComposeProject, log);
     }
   }
 }
@@ -412,6 +433,66 @@ function startDevServer(command, cwd) {
   });
   proc.unref();
   return proc;
+}
+
+/**
+ * Start Docker Compose project.
+ * @param {string} command - docker compose command (e.g., 'docker compose up -d')
+ * @param {string} cwd - project directory
+ * @param {Function} log - logging function
+ * @returns {Promise<{cwd: string, projectName: string}>}
+ */
+async function startDockerCompose(command, cwd, log) {
+  try {
+    // Extract project directory for docker compose commands
+    // Command might be 'docker compose up -d' or full path like 'docker compose -f /path/docker-compose.yml up -d'
+    const composeCmd = command || 'docker compose up -d';
+    
+    await log('smoke_docker_exec', `Выполнение: ${composeCmd}`);
+    
+    // Run docker compose up -d
+    execSync(composeCmd, {
+      cwd,
+      stdio: 'pipe',
+      env: { ...process.env },
+    });
+    
+    // Extract project name for cleanup (use directory name as fallback)
+    const projectName = cwd.split('/').pop() || 'kaizen';
+    
+    return { cwd, projectName };
+  } catch (err) {
+    await log('smoke_docker_error', `Ошибка запуска Docker Compose: ${err.message}`, {
+      command: composeCmd,
+      error: err.message,
+    });
+    throw err;
+  }
+}
+
+/**
+ * Stop Docker Compose project.
+ * @param {{cwd: string, projectName: string}} project - project info
+ * @param {Function} log - logging function
+ */
+async function stopDockerCompose(project, log) {
+  try {
+    await log('smoke_docker_stopping', `Остановка Docker Compose: ${project.cwd}`);
+    
+    // Stop containers
+    execSync('docker compose down', {
+      cwd: project.cwd,
+      stdio: 'pipe',
+      timeout: 30000, // 30 second timeout
+    });
+    
+    await log('smoke_docker_stopped', 'Docker Compose остановлен');
+  } catch (err) {
+    await log('smoke_docker_stop_error', `Ошибка остановки Docker Compose: ${err.message}`, {
+      error: err.message,
+    });
+    // Non-critical, don't throw
+  }
 }
 
 function killProcess(proc) {
