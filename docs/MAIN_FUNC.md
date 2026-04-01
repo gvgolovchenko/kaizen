@@ -1,6 +1,6 @@
 # Kaizen — Основные функции
 
-> Версия 1.17.0 | 2026-03-25
+> Версия 1.18.0 | 2026-04-01
 
 ---
 
@@ -40,10 +40,17 @@ Kaizen (改善) — веб-приложение для непрерывного 
 
 ### 4. Управление моделями ИИ
 
-- Реестр моделей с 6 AI-провайдерами: Ollama, MLX, Claude Code, Anthropic, OpenAI, Google + провайдер `local` для процессов без AI
+- Реестр моделей с 8 AI-провайдерами: Ollama, MLX, Claude Code, Anthropic, OpenAI, Google, Kilo Code + провайдер `local` для процессов без AI
+- 4 режима AI-агентов:
+  - **claude-code** — Claude Code CLI (основной, для разработки и анализа)
+  - **qwen-code (cloud)** — облачный Qwen через OpenAI-совместимый API
+  - **qwen-code + Ollama (local)** — локальный Qwen через Ollama с кастомным `base_url` (http://localhost:11434/v1)
+  - **kilo-code** — Kilo Gateway бесплатные модели (лимит очереди: 1)
+- Поддержка кастомного `base_url` в моделях (миграция 024) для Ollama и других OpenAI-совместимых API
 - Автоматическое обнаружение локальных моделей (discover)
 - Загрузка моделей в GPU (warmup) для Ollama и MLX
 - Хранение API-ключей для облачных провайдеров с маскировкой в API-ответах
+- CSS-стили бейджей провайдеров: qwen-code (зелёный), kilo-code (жёлтый)
 - Типы развёртывания: `local` / `cloud`
 
 ### 5. Улучшение продукта (AI-генерация задач)
@@ -163,33 +170,30 @@ Kaizen (改善) — веб-приложение для непрерывного 
 - Отслеживание pipeline через GitLab API (статус, jobs, web_url)
 - UI: таб «Деплой» на странице продукта — настройки, авто-деплой, генерация файлов
 
-### 18. Автоматизация продуктов (конвейер + RC)
+### 18. Автоматизация продуктов (синхронизация + сценарии)
 
 - Per-product JSONB-настройки автоматизации (таб «Автоматизация» на странице продукта)
 - **RC Auto-Sync**: автоматическая синхронизация тикетов из Rivc.Connect по расписанию (1–720 часов)
 - **Auto-Import**: импорт RC-тикетов по правилам приоритетов (critical, high, medium) без ручного вмешательства
-- **Auto-Pipeline**: автоматический запуск полного конвейера при выполнении триггера:
-  - `threshold` — при накоплении N открытых задач
-  - `schedule` — по расписанию (каждые N часов)
-  - `on_sync` — после каждой RC-синхронизации при появлении новых тикетов
-- Авто-инкремент версий (minor bump от последней)
-- Настраиваемая конфигурация pipeline: модель, шаблон, правило утверждения, develop + auto-publish, пресс-релиз
+- **GitLab Auto-Sync**: автоматическая синхронизация issues из GitLab по расписанию с авто-импортом по лейблам
+- Компактный grid-layout: RC + GitLab синхронизация в 2 колонки
+- **Сценарии** — основной механизм автоматических конвейеров (вместо удалённого Auto-Pipeline). Настраиваются на странице `/scenarios.html` с пресетами, cron-расписанием и историей запусков
 
 ### 19. Сквозной конвейер (End-to-End Pipeline)
 
-- Расширенный `kaizen_run_pipeline`: 5 базовых + 3 опциональных этапа
+- MCP-инструмент `kaizen_run_pipeline`: 5 базовых + 3 опциональных этапа
 - Полный цикл одной командой: improve → approve → release → spec → develop → publish → press_release
 - **Пресеты**: `analysis` (этапы 1-5), `full_cycle` (этапы 1-8), `custom` (ручной выбор этапов)
 - **Per-stage модели**: каждый этап может использовать свою AI-модель (`improve.model_id`, `spec.model_id`, `develop.model_id`, `press_release.model_id`) с глобальным `model_id` как fallback
 - Auto-publish: при `auto_publish: true` и успешных тестах — автоматическая публикация
 - Endpoint `POST /processes/:id/approve-auto` — утверждение по правилу (all, high_and_critical, critical_only)
-- UI: селектор пресетов, per-stage выбор моделей в табе автоматизации, карточки этапов с номерами
+- **Для автоматического запуска по расписанию используйте Сценарии** (раздел 21) вместо удалённого Auto-Pipeline
 
 ### 20. Уведомления (Б24)
 
 - Модуль `server/notifier.js` — отправка уведомлений через бота АФИИНА (ID 1624) в Битрикс24
 - Метод `im.message.add` через webhook URL
-- 9 типов событий: `pipeline_completed/failed`, `release_published`, `develop_completed/failed`, `rc_sync_done`, `improve_completed`, `gitlab_sync_done`, `scenario_completed/failed`
+- 6 типов событий: `release_published`, `develop_completed/failed`, `rc_sync_done`, `gitlab_sync_done`, `scenario_completed/failed`
 - BB-code форматирование сообщений для Битрикс24
 - Endpoint `POST /api/notify` для отправки уведомлений
 - Интеграция в: `process-runner.js`, `scheduler.js`, `scenario-runner.js`, `mcp-server`
@@ -201,7 +205,7 @@ Kaizen (改善) — веб-приложение для непрерывного 
 
 - Автономные рабочие процессы с расписанием — замена Планов для практических задач
 - 5 пресетов:
-  - `batch_develop` — spec → develop → publish для списка релизов (идеально для ночной разработки)
+  - `batch_develop` — spec → develop → [run_tests] → [update_docs] → [publish] → [deploy] для списка релизов (ночная разработка)
   - `auto_release` — AI формирует релиз из open issues → spec → develop
   - `nightly_audit` — improve → auto-approve для нескольких продуктов
   - `full_cycle` — полный конвейер: improve → approve → release → spec → develop → publish → press_release

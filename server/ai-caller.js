@@ -19,13 +19,17 @@ const MAX_TOKENS = 4096;
  * @returns {Promise<string>} model response text
  */
 export async function callAI(model, systemPrompt, userPrompt, options = {}) {
-  const { provider, model_id, api_key } = model;
+  const { provider, model_id, api_key, base_url } = model;
 
   const timeoutMs = options.timeoutMs || TIMEOUT;
 
+  // Pass base_url and api_key into options for CLI-based providers
+  if (base_url) options.baseUrl = base_url;
+  if (api_key) options.apiKey = api_key;
+
   switch (provider) {
     case 'ollama':
-      return callOllama(model_id, systemPrompt, userPrompt, timeoutMs);
+      return callOllama(model_id, systemPrompt, userPrompt, timeoutMs, base_url);
     case 'mlx':
       return callMLX(model_id, systemPrompt, userPrompt, timeoutMs);
     case 'claude-code':
@@ -61,8 +65,9 @@ async function fetchWithTimeout(url, opts, timeoutMs = TIMEOUT) {
 
 // ── Ollama ──────────────────────────────────────────────
 
-async function callOllama(modelId, systemPrompt, userPrompt, timeoutMs) {
-  const resp = await fetchWithTimeout('http://localhost:11434/api/chat', {
+async function callOllama(modelId, systemPrompt, userPrompt, timeoutMs, baseUrl) {
+  const url = baseUrl ? `${baseUrl.replace(/\/v1\/?$/, '')}/api/chat` : 'http://localhost:11434/api/chat';
+  const resp = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -231,7 +236,7 @@ async function callClaudeCode(modelId, systemPrompt, userPrompt, opts = {}) {
     if (opts.cwd) execOpts.cwd = opts.cwd;
 
     const child = execFile('claude', args, execOpts, (err, stdout, stderr) => {
-      if (err) return reject(new Error(`Claude Code error: ${err.message}`));
+      if (err) return reject(new Error(`Claude Code error: ${err.message}${stderr ? '\nStderr: ' + stderr : ''}`));
       resolve(stdout || '');
     });
     child.stdin.end();
@@ -253,8 +258,15 @@ async function callQwenCode(modelId, systemPrompt, userPrompt, opts = {}) {
     if (modelId) args.push('--model', modelId);
 
     const env = { ...process.env };
-    // Pass API keys if set on the model
-    if (opts.apiKey) env.OPENAI_API_KEY = opts.apiKey;
+    // Custom base URL (e.g. Ollama OpenAI-compat at localhost:11434/v1)
+    if (opts.baseUrl) {
+      env.OPENAI_BASE_URL = opts.baseUrl;
+      env.OPENAI_API_KEY = opts.apiKey || 'ollama';
+      env.OPENAI_MODEL = modelId;
+      args.push('--auth-type', 'openai');
+    } else if (opts.apiKey) {
+      env.OPENAI_API_KEY = opts.apiKey;
+    }
 
     const timeout = opts.timeoutMs || 20 * 60 * 1000;
     const maxBuffer = (opts.maxBufferMb || 10) * 1024 * 1024;
@@ -285,7 +297,15 @@ export async function callQwenCodeStreaming(modelId, systemPrompt, userPrompt, o
     if (modelId) args.push('--model', modelId);
 
     const env = { ...process.env };
-    if (opts.apiKey) env.OPENAI_API_KEY = opts.apiKey;
+    // Custom base URL (e.g. Ollama OpenAI-compat at localhost:11434/v1)
+    if (opts.baseUrl) {
+      env.OPENAI_BASE_URL = opts.baseUrl;
+      env.OPENAI_API_KEY = opts.apiKey || 'ollama';
+      env.OPENAI_MODEL = modelId;
+      args.push('--auth-type', 'openai');
+    } else if (opts.apiKey) {
+      env.OPENAI_API_KEY = opts.apiKey;
+    }
 
     const timeout = opts.timeoutMs || 20 * 60 * 1000;
     const spawnOpts = { env, cwd: opts.cwd || process.cwd() };

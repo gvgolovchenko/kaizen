@@ -29,10 +29,10 @@ export async function getById(id) {
   return rows[0] || null;
 }
 
-export async function create({ name, provider, deployment, model_id, description, parameters_size, context_length, api_key }) {
+export async function create({ name, provider, deployment, model_id, description, parameters_size, context_length, api_key, base_url }) {
   const { rows } = await pool.query(
-    `INSERT INTO ${TABLE} (name, provider, deployment, model_id, description, parameters_size, context_length, api_key)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    `INSERT INTO ${TABLE} (name, provider, deployment, model_id, description, parameters_size, context_length, api_key, base_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
     [
       name,
       provider || 'ollama',
@@ -41,14 +41,15 @@ export async function create({ name, provider, deployment, model_id, description
       description || '',
       parameters_size || null,
       context_length || null,
-      api_key || null
+      api_key || null,
+      base_url || null
     ]
   );
   return rows[0];
 }
 
 export async function update(id, fields) {
-  const allowed = ['name', 'provider', 'deployment', 'model_id', 'description', 'parameters_size', 'context_length', 'status', 'api_key'];
+  const allowed = ['name', 'provider', 'deployment', 'model_id', 'description', 'parameters_size', 'context_length', 'status', 'api_key', 'base_url'];
   const sets = [];
   const vals = [];
   let i = 1;

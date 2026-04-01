@@ -224,310 +224,117 @@
     <div class="tab-panel" id="panel-automation">
       <div class="section">
         <div class="section-header">
-          <h3 style="margin:0">Настройки автоматизации</h3>
-          <button class="btn btn-primary btn-sm" onclick="handleSaveAutomation()">Сохранить настройки</button>
+          <h3 style="margin:0">Автоматизация</h3>
+          <button class="btn btn-primary btn-sm" onclick="handleSaveAutomation()">Сохранить</button>
         </div>
 
-        <!-- RC Auto-Sync -->
-        <div style="margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+          <!-- RC Auto-Sync -->
+          <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
             <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
               <input type="checkbox" id="autoRcSyncEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('rcSync', this.checked)">
               RC Auto-Sync
             </label>
-            <span style="font-size:0.8rem;color:var(--text-dim)">Автоматическая синхронизация тикетов из Rivc.Connect</span>
-          </div>
-          <div id="autoRcSyncSettings" style="display:none;padding-left:28px">
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Интервал (часы)</label>
-              <input type="number" id="autoRcSyncInterval" value="24" min="1" max="720" style="max-width:120px">
-              <div style="font-size:0.8rem;color:var(--text-dim)">1 = каждый час, 24 = раз в день, 168 = раз в неделю</div>
-            </div>
-            <div style="margin-bottom:10px">
-              <label style="display:flex;align-items:center;gap:8px;margin:0">
+            <div style="font-size:0.78rem;color:var(--text-dim);margin-top:2px">Тикеты из Rivc.Connect</div>
+            <div id="autoRcSyncSettings" style="display:none;margin-top:8px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <label style="font-size:0.8rem;margin:0;white-space:nowrap">Интервал (ч)</label>
+                <input type="number" id="autoRcSyncInterval" value="24" min="1" max="720" style="max-width:80px">
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:0.85rem">
                 <input type="checkbox" id="autoImportEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('autoImport', this.checked)">
-                <span style="font-weight:500">Авто-импорт тикетов по правилам</span>
+                Авто-импорт по приоритету
               </label>
+              <div id="autoImportSettings" style="display:none;margin-top:4px;padding-left:22px">
+                <label style="display:flex;align-items:center;gap:5px;margin-bottom:2px;font-size:0.8rem">
+                  <input type="checkbox" id="autoImportCritical" style="width:auto;accent-color:var(--accent)" checked>
+                  <span class="badge badge-critical" style="font-size:0.7rem">Critical</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;margin-bottom:2px;font-size:0.8rem">
+                  <input type="checkbox" id="autoImportHigh" style="width:auto;accent-color:var(--accent)" checked>
+                  <span class="badge badge-high" style="font-size:0.7rem">High</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                  <input type="checkbox" id="autoImportMedium" style="width:auto;accent-color:var(--accent)">
+                  <span class="badge badge-medium" style="font-size:0.7rem">Medium</span>
+                </label>
+              </div>
+              <div id="autoRcSyncStatus" style="margin-top:6px;font-size:0.78rem;color:var(--text-dim)"></div>
             </div>
-            <div id="autoImportSettings" style="display:none;padding-left:28px">
-              <div style="font-size:0.85rem;margin-bottom:6px">Импортировать тикеты с приоритетом:</div>
-              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <input type="checkbox" id="autoImportCritical" style="width:auto;accent-color:var(--accent)" checked>
-                <span class="badge badge-critical">Critical</span>
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <input type="checkbox" id="autoImportHigh" style="width:auto;accent-color:var(--accent)" checked>
-                <span class="badge badge-high">High</span>
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <input type="checkbox" id="autoImportMedium" style="width:auto;accent-color:var(--accent)">
-                <span class="badge badge-medium">Medium</span>
-              </label>
-            </div>
-            <div id="autoRcSyncStatus" style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)"></div>
           </div>
-        </div>
 
-        <!-- Auto Pipeline -->
-        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <!-- GitLab Auto-Sync -->
+          <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
             <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
-              <input type="checkbox" id="autoPipelineEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipeline', this.checked)">
-              Авто-конвейер
+              <input type="checkbox" id="autoGitlabSyncEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('gitlabSync', this.checked)">
+              GitLab Auto-Sync
             </label>
-            <span style="font-size:0.8rem;color:var(--text-dim)">Автоматический запуск pipeline (improve → release → spec → ...)</span>
-          </div>
-          <div id="autoPipelineSettings" style="display:none;padding-left:28px">
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Триггер запуска</label>
-              <select id="autoPipelineTrigger" onchange="togglePipelineTriggerFields()">
-                <option value="threshold">По накоплению задач (threshold)</option>
-                <option value="schedule">По расписанию (schedule)</option>
-                <option value="on_sync">После RC-синхронизации (on_sync)</option>
-              </select>
-            </div>
-            <div id="pipelineThresholdField" class="form-group" style="margin-bottom:10px">
-              <label>Порог задач для запуска</label>
-              <input type="number" id="autoPipelineThreshold" value="5" min="2" max="50" style="max-width:120px">
-              <div style="font-size:0.8rem;color:var(--text-dim)">Pipeline запустится когда открытых задач >= порога</div>
-            </div>
-            <div id="pipelineScheduleField" class="form-group" style="margin-bottom:10px;display:none">
-              <label>Интервал (часы)</label>
-              <input type="number" id="autoPipelineSchedule" value="168" min="1" max="720" style="max-width:120px">
-              <div style="font-size:0.8rem;color:var(--text-dim)">168 = раз в неделю, 24 = раз в день</div>
-            </div>
-
-            <h4 style="margin:16px 0 8px;font-size:0.9rem">Пресет конвейера</h4>
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Пресет</label>
-              <select id="autoPipelinePreset" onchange="togglePresetFields()">
-                <option value="analysis">Анализ (этапы 1-5: improve → spec)</option>
-                <option value="full_cycle">Полный цикл (этапы 1-8: improve → press_release)</option>
-                <option value="custom">Пользовательский (выбор этапов)</option>
-              </select>
-              <div style="font-size:0.8rem;color:var(--text-dim);margin-top:4px" id="presetDescription">
-                Анализ продукта: генерация предложений, утверждение, релиз, спецификация
+            <div style="font-size:0.78rem;color:var(--text-dim);margin-top:2px">Issues из GitLab</div>
+            <div id="autoGitlabSyncSettings" style="display:none;margin-top:8px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <label style="font-size:0.8rem;margin:0;white-space:nowrap">Интервал (ч)</label>
+                <input type="number" id="autoGitlabSyncInterval" value="0.5" min="0.5" max="720" step="0.5" style="max-width:80px">
               </div>
-            </div>
-
-            <h4 style="margin:16px 0 8px;font-size:0.9rem">Настройки конвейера</h4>
-
-            <!-- Этап 1: Improve -->
-            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
-              <div style="font-weight:500;margin-bottom:8px">1. Improve — генерация предложений</div>
-              <div class="form-group" style="margin-bottom:8px">
-                <label>Модель ИИ *</label>
-                <select id="autoPipelineModelImprove" class="autoModelSelect"></select>
+              <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:0.85rem">
+                <input type="checkbox" id="autoGitlabImportEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('gitlabImport', this.checked)">
+                Авто-импорт по меткам
+              </label>
+              <div id="autoGitlabImportSettings" style="display:none;margin-top:4px">
+                <input type="text" id="autoGitlabLabelRules" placeholder="bug, enhancement, critical" style="font-size:0.8rem">
               </div>
-              <div class="form-group" style="margin-bottom:8px">
-                <label>Шаблон</label>
-                <select id="autoPipelineTemplate">
-                  <option value="general">Общий</option>
-                  <option value="ui">UI/UX</option>
-                  <option value="performance">Производительность</option>
-                  <option value="security">Безопасность</option>
-                  <option value="competitors">Конкуренты</option>
-                  <option value="dx">Developer Experience</option>
-                </select>
-              </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label>Кол-во предложений (1–10)</label>
-                <input type="number" id="autoPipelineCount" value="5" min="1" max="10" style="max-width:120px">
-              </div>
+              <div id="autoGitlabSyncStatus" style="margin-top:6px;font-size:0.78rem;color:var(--text-dim)"></div>
             </div>
-
-            <!-- Этапы 2-3: Approve -->
-            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
-              <div style="font-weight:500;margin-bottom:8px">2-3. Approve — утверждение</div>
-              <div class="form-group" style="margin-bottom:0">
-                <label>Правило утверждения</label>
-                <select id="autoPipelineApprove">
-                  <option value="all">Все</option>
-                  <option value="high_and_critical" selected>High + Critical</option>
-                  <option value="critical_only">Только Critical</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Этап 5: Spec -->
-            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
-              <div style="font-weight:500;margin-bottom:8px">5. Spec — генерация спецификации</div>
-              <div class="form-group" style="margin-bottom:0">
-                <label>Модель ИИ</label>
-                <select id="autoPipelineModelSpec" class="autoModelSelect">
-                  <option value="">— Как у Improve —</option>
-                </select>
-                <div style="font-size:0.8rem;color:var(--text-dim)">Если не выбрана — используется модель из Improve</div>
-              </div>
-            </div>
-
-            <div class="form-group" style="margin-bottom:10px">
-              <label>Стратегия версий</label>
-              <select id="autoPipelineVersionStrategy">
-                <option value="auto_increment" selected>Авто-инкремент (minor bump)</option>
-              </select>
-            </div>
-
-            <!-- Этапы 6-7: Develop (условный) -->
-            <div id="pipelineDevelopBlock">
-              <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                  <input type="checkbox" id="autoPipelineDevelop" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelineDevelop', this.checked)">
-                  <span style="font-weight:500">6-7. Develop — разработка + публикация</span>
-                </div>
-                <div id="autoPipelineDevelopSettings" style="display:none;padding-left:8px">
-                  <div class="form-group" style="margin-bottom:8px">
-                    <label>Модель ИИ</label>
-                    <select id="autoPipelineModelDevelop" class="autoModelSelect">
-                      <option value="">— Как у Improve —</option>
-                    </select>
-                    <div style="font-size:0.8rem;color:var(--text-dim)">Только claude-code провайдер</div>
-                  </div>
-                  <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                    <input type="checkbox" id="autoPipelineAutoPublish" style="width:auto;accent-color:var(--accent)">
-                    <span>Авто-публикация (если тесты пройдены)</span>
-                  </label>
-                  <div class="form-group" style="margin-top:6px;margin-bottom:0">
-                    <label>Команда тестов</label>
-                    <input type="text" id="autoPipelineTestCmd" placeholder="npm test">
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Этап 8: Press Release (условный) -->
-            <div id="pipelinePRBlock">
-              <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                  <input type="checkbox" id="autoPipelinePressRelease" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelinePR', this.checked)">
-                  <span style="font-weight:500">8. Press Release — пресс-релиз</span>
-                </div>
-                <div id="autoPipelinePRSettings" style="display:none;padding-left:8px">
-                  <div class="form-group" style="margin-bottom:8px">
-                    <label>Модель ИИ</label>
-                    <select id="autoPipelineModelPR" class="autoModelSelect">
-                      <option value="">— Как у Improve —</option>
-                    </select>
-                  </div>
-                  <div class="form-group" style="margin-bottom:6px">
-                    <label>Каналы</label>
-                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="social" style="width:auto;accent-color:var(--accent)" checked> Соцсети</label>
-                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="website" style="width:auto;accent-color:var(--accent)" checked> Сайт</label>
-                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="bitrix24" style="width:auto;accent-color:var(--accent)"> Битрикс24</label>
-                    <label style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><input type="checkbox" class="autoPrChannel" value="media" style="width:auto;accent-color:var(--accent)"> СМИ</label>
-                  </div>
-                  <div class="form-group" style="margin-bottom:0">
-                    <label>Тональность</label>
-                    <select id="autoPipelinePrTone">
-                      <option value="official">Официальная</option>
-                      <option value="friendly">Дружелюбная</option>
-                      <option value="technical">Техническая</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Этап 9: Update Docs (условный) -->
-            <div id="pipelineUpdateDocsBlock">
-              <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                  <input type="checkbox" id="autoPipelineUpdateDocs" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('pipelineUpdateDocs', this.checked)">
-                  <span style="font-weight:500">9. Update Docs — документирование</span>
-                </div>
-                <div id="autoPipelineUpdateDocsSettings" style="display:none;padding-left:8px">
-                  <div class="form-group" style="margin-bottom:8px">
-                    <label>Таймаут (мин)</label>
-                    <input type="number" id="autoPipelineUpdateDocsTimeout" value="20" min="3" max="60" style="max-width:100px">
-                    <div style="font-size:0.8rem;color:var(--text-dim)">По умолчанию 20 мин. Для крупных проектов рекомендуется 30–40</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style="margin-top:16px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px">
-              <div style="font-weight:500;margin-bottom:8px">Запуск конвейера</div>
-              <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-                <button type="button" class="btn btn-primary btn-sm" onclick="runPipelineNow()">Запустить сейчас</button>
-                <div style="display:flex;align-items:end;gap:6px">
-                  <div class="form-group" style="margin:0">
-                    <label style="font-size:0.8rem">Запланировать на:</label>
-                    <input type="datetime-local" id="pipelineScheduledAt" style="max-width:220px">
-                  </div>
-                  <button type="button" class="btn btn-sm" onclick="runPipelineScheduled()">Запланировать</button>
-                </div>
-              </div>
-              <div id="pipelineRunStatus" style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)"></div>
-            </div>
-            <div id="autoPipelineStatus" style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)"></div>
           </div>
         </div>
 
         <!-- Notifications -->
-        <div style="margin-top:12px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="margin-top:10px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;align-items:center;gap:10px">
             <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
               <input type="checkbox" id="autoNotifyEnabled" style="width:auto;accent-color:var(--accent)" onchange="toggleAutoSection('notify', this.checked)">
               Уведомления в Б24
             </label>
-            <span style="font-size:0.8rem;color:var(--text-dim)">Сообщения от АФИИНЫ при ключевых событиях</span>
+            <span style="font-size:0.78rem;color:var(--text-dim)">АФИИНА</span>
           </div>
-          <div id="autoNotifySettings" style="display:none;padding-left:28px">
-            <div class="form-group" style="margin-bottom:10px">
-              <label>ID пользователя Б24</label>
-              <input type="number" id="autoNotifyUserId" value="9" min="1" style="max-width:120px">
-              <div style="font-size:0.8rem;color:var(--text-dim)">Кому отправлять уведомления</div>
+          <div id="autoNotifySettings" style="display:none;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <label style="font-size:0.8rem;margin:0;white-space:nowrap">ID пользователя Б24</label>
+              <input type="number" id="autoNotifyUserId" value="9" min="1" style="max-width:80px">
             </div>
-            <div style="font-size:0.85rem;margin-bottom:8px;font-weight:500">Типы событий:</div>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="pipeline_completed" style="width:auto;accent-color:var(--accent)" checked>
-              Конвейер завершён
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="pipeline_failed" style="width:auto;accent-color:var(--accent)" checked>
-              Конвейер остановлен (ошибка)
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="release_published" style="width:auto;accent-color:var(--accent)" checked>
-              Релиз опубликован
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="develop_completed" style="width:auto;accent-color:var(--accent)" checked>
-              Разработка завершена
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="develop_failed" style="width:auto;accent-color:var(--accent)" checked>
-              Разработка не удалась
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="rc_sync_done" style="width:auto;accent-color:var(--accent)">
-              RC-синхронизация завершена
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-              <input type="checkbox" class="autoNotifyEvent" value="improve_completed" style="width:auto;accent-color:var(--accent)">
-              AI-улучшение завершено
-            </label>
-            <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="testNotification()">Тест уведомления</button>
+            <div style="display:flex;flex-wrap:wrap;gap:4px 16px">
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="develop_completed" style="width:auto;accent-color:var(--accent)" checked>
+                Разработка завершена
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="develop_failed" style="width:auto;accent-color:var(--accent)" checked>
+                Разработка не удалась
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="release_published" style="width:auto;accent-color:var(--accent)" checked>
+                Релиз опубликован
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="scenario_completed" style="width:auto;accent-color:var(--accent)" checked>
+                Сценарий завершён
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="scenario_failed" style="width:auto;accent-color:var(--accent)" checked>
+                Сценарий не удался
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="rc_sync_done" style="width:auto;accent-color:var(--accent)">
+                RC-синхронизация
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
+                <input type="checkbox" class="autoNotifyEvent" value="gitlab_sync_done" style="width:auto;accent-color:var(--accent)">
+                GitLab-синхронизация
+              </label>
+            </div>
+            <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="testNotification()">Тест</button>
           </div>
         </div>
 
-        <!-- AI Config: context_files + critical_paths -->
-        <div style="margin-top:16px;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
-          <h4 style="margin:0 0 4px">Контекст для AI-разработки</h4>
-          <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:12px">
-            Эти настройки вставляются в промпт develop_release, помогая AI лучше понять проект.
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label>Обязательные файлы для чтения (JSON)</label>
-            <textarea id="aiContextFiles" style="min-height:80px;font-family:'SF Mono','Fira Code',monospace;font-size:0.8rem" placeholder='[{"path": "src/config.js", "description": "Конфигурация приложения"}]'>[]</textarea>
-            <div style="font-size:0.75rem;color:var(--text-dim)">Массив объектов: {"path": "...", "description": "..."}</div>
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label>Критичные модули (не ломать!)</label>
-            <textarea id="aiCriticalPaths" style="min-height:80px;font-family:'SF Mono','Fira Code',monospace;font-size:0.8rem" placeholder='[{"path": "server/auth.js", "description": "Аутентификация — не трогать без причины"}]'>[]</textarea>
-            <div style="font-size:0.75rem;color:var(--text-dim)">Массив объектов: {"path": "...", "description": "..."}</div>
-          </div>
-        </div>
       </div>
     </div>
 

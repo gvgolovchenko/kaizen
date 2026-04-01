@@ -2292,20 +2292,12 @@ window.toggleAutoSection = function (section, enabled) {
   const map = {
     rcSync: 'autoRcSyncSettings',
     autoImport: 'autoImportSettings',
-    pipeline: 'autoPipelineSettings',
-    pipelineDevelop: 'autoPipelineDevelopSettings',
-    pipelinePR: 'autoPipelinePRSettings',
-    pipelineUpdateDocs: 'autoPipelineUpdateDocsSettings',
+    gitlabSync: 'autoGitlabSyncSettings',
+    gitlabImport: 'autoGitlabImportSettings',
     notify: 'autoNotifySettings',
   };
   const el = document.getElementById(map[section]);
   if (el) el.style.display = enabled ? 'block' : 'none';
-};
-
-window.togglePipelineTriggerFields = function () {
-  const trigger = document.getElementById('autoPipelineTrigger').value;
-  document.getElementById('pipelineThresholdField').style.display = trigger === 'threshold' ? '' : 'none';
-  document.getElementById('pipelineScheduleField').style.display = trigger === 'schedule' ? '' : 'none';
 };
 
 function loadAutomationSettings() {
@@ -2327,69 +2319,25 @@ function loadAutomationSettings() {
   document.getElementById('autoImportHigh').checked = rules.includes('high');
   document.getElementById('autoImportMedium').checked = rules.includes('medium');
 
-  // Last sync info
   if (product.last_rc_sync_at) {
     document.getElementById('autoRcSyncStatus').textContent =
       `Последняя синхронизация: ${new Date(product.last_rc_sync_at).toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
   }
 
-  // Auto Pipeline
-  const pipeline = auto.auto_pipeline || {};
-  document.getElementById('autoPipelineEnabled').checked = !!pipeline.enabled;
-  toggleAutoSection('pipeline', !!pipeline.enabled);
+  // GitLab Auto-Sync
+  const gitlabSync = auto.gitlab_auto_sync || {};
+  document.getElementById('autoGitlabSyncEnabled').checked = !!gitlabSync.enabled;
+  document.getElementById('autoGitlabSyncInterval').value = gitlabSync.interval_hours || 0.5;
+  toggleAutoSection('gitlabSync', !!gitlabSync.enabled);
 
-  document.getElementById('autoPipelineTrigger').value = pipeline.trigger || 'threshold';
-  document.getElementById('autoPipelineThreshold').value = pipeline.threshold_count || 5;
-  document.getElementById('autoPipelineSchedule').value = pipeline.schedule_hours || 168;
-  togglePipelineTriggerFields();
+  const gitlabImport = gitlabSync.auto_import || {};
+  document.getElementById('autoGitlabImportEnabled').checked = !!gitlabImport.enabled;
+  toggleAutoSection('gitlabImport', !!gitlabImport.enabled);
+  document.getElementById('autoGitlabLabelRules').value = (gitlabImport.label_rules || []).join(', ');
 
-  const pc = pipeline.pipeline_config || {};
-  const preset = pipeline.preset || 'analysis';
-  document.getElementById('autoPipelinePreset').value = preset;
-
-  // Load models for all per-stage selects
-  const improveModelId = pc.improve?.model_id || pc.model_id || '';
-  const specModelId = pc.spec?.model_id || '';
-  const developModelId = pc.develop?.model_id || '';
-  const prModelId = pc.press_release?.model_id || '';
-  loadAutomationModels({ improve: improveModelId, spec: specModelId, develop: developModelId, press_release: prModelId });
-
-  document.getElementById('autoPipelineTemplate').value = pc.template_id || 'general';
-  document.getElementById('autoPipelineCount').value = pc.count || 5;
-  document.getElementById('autoPipelineApprove').value = pc.auto_approve || 'high_and_critical';
-  document.getElementById('autoPipelineVersionStrategy').value = pc.version_strategy || 'auto_increment';
-
-  // Develop
-  const dev = pc.develop || {};
-  document.getElementById('autoPipelineDevelop').checked = !!dev.enabled;
-  toggleAutoSection('pipelineDevelop', !!dev.enabled);
-  document.getElementById('autoPipelineAutoPublish').checked = !!dev.auto_publish;
-  document.getElementById('autoPipelineTestCmd').value = dev.test_command || '';
-
-  // Press release
-  const pr = pc.press_release || {};
-  document.getElementById('autoPipelinePressRelease').checked = !!pr.enabled;
-  toggleAutoSection('pipelinePR', !!pr.enabled);
-  document.getElementById('autoPipelinePrTone').value = pr.tone || 'official';
-
-  const channels = pr.channels || ['social', 'website'];
-  document.querySelectorAll('.autoPrChannel').forEach(cb => {
-    cb.checked = channels.includes(cb.value);
-  });
-
-  // Update Docs
-  const ud = pc.update_docs || {};
-  document.getElementById('autoPipelineUpdateDocs').checked = !!ud.enabled;
-  toggleAutoSection('pipelineUpdateDocs', !!ud.enabled);
-  document.getElementById('autoPipelineUpdateDocsTimeout').value = ud.timeout_min || 20;
-
-  // Apply preset visibility
-  togglePresetFields();
-
-  // Last pipeline info
-  if (product.last_pipeline_at) {
-    document.getElementById('autoPipelineStatus').textContent =
-      `Последний запуск: ${new Date(product.last_pipeline_at).toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
+  if (product.last_gitlab_sync_at) {
+    document.getElementById('autoGitlabSyncStatus').textContent =
+      `Последняя синхронизация: ${new Date(product.last_gitlab_sync_at).toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
   }
 
   // Notifications
@@ -2401,80 +2349,14 @@ function loadAutomationSettings() {
   document.querySelectorAll('.autoNotifyEvent').forEach(cb => {
     cb.checked = notifEvents.includes(cb.value);
   });
-
-  // AI Config
-  const ctxFiles = auto.context_files || [];
-  const critPaths = auto.critical_paths || [];
-  document.getElementById('aiContextFiles').value = ctxFiles.length > 0 ? JSON.stringify(ctxFiles, null, 2) : '[]';
-  document.getElementById('aiCriticalPaths').value = critPaths.length > 0 ? JSON.stringify(critPaths, null, 2) : '[]';
 }
 
-async function loadAutomationModels(selected = {}) {
-  try {
-    const models = await api('/ai-models');
-    const selects = {
-      improve: document.getElementById('autoPipelineModelImprove'),
-      spec: document.getElementById('autoPipelineModelSpec'),
-      develop: document.getElementById('autoPipelineModelDevelop'),
-      press_release: document.getElementById('autoPipelineModelPR'),
-    };
-
-    const makeOptions = (sel, selectedId, placeholder) => {
-      sel.innerHTML = `<option value="">${placeholder}</option>` +
-        models.map(m => `<option value="${m.id}" ${m.id === selectedId ? 'selected' : ''}>${escapeHtml(m.name)} (${m.provider})</option>`).join('');
-    };
-
-    makeOptions(selects.improve, selected.improve, '— Выберите модель —');
-    makeOptions(selects.spec, selected.spec, '— Как у Improve —');
-    makeOptions(selects.develop, selected.develop, '— Как у Improve —');
-    makeOptions(selects.press_release, selected.press_release, '— Как у Improve —');
-  } catch {}
-}
-
-window.togglePresetFields = function () {
-  const preset = document.getElementById('autoPipelinePreset').value;
-  const developBlock = document.getElementById('pipelineDevelopBlock');
-  const prBlock = document.getElementById('pipelinePRBlock');
-  const udBlock = document.getElementById('pipelineUpdateDocsBlock');
-  const descEl = document.getElementById('presetDescription');
-
-  const descriptions = {
-    analysis: 'Анализ продукта: генерация предложений, утверждение, релиз, спецификация',
-    full_cycle: 'Полный цикл: от анализа до публикации, пресс-релиза и документирования',
-    custom: 'Вы выбираете какие этапы включить',
-  };
-  descEl.textContent = descriptions[preset] || '';
-
-  if (preset === 'analysis') {
-    developBlock.style.display = 'none';
-    prBlock.style.display = 'none';
-    udBlock.style.display = 'none';
-  } else if (preset === 'full_cycle') {
-    developBlock.style.display = '';
-    prBlock.style.display = '';
-    udBlock.style.display = '';
-    // Force enable develop, press_release and update_docs for full_cycle
-    document.getElementById('autoPipelineDevelop').checked = true;
-    document.getElementById('autoPipelinePressRelease').checked = true;
-    document.getElementById('autoPipelineUpdateDocs').checked = true;
-    toggleAutoSection('pipelineDevelop', true);
-    toggleAutoSection('pipelinePR', true);
-    toggleAutoSection('pipelineUpdateDocs', true);
-  } else {
-    developBlock.style.display = '';
-    prBlock.style.display = '';
-    udBlock.style.display = '';
-  }
-};
 
 window.handleSaveAutomation = async function () {
-  const preset = document.getElementById('autoPipelinePreset').value;
-  const improveModelId = document.getElementById('autoPipelineModelImprove').value || null;
-  const specModelId = document.getElementById('autoPipelineModelSpec').value || null;
-  const developModelId = document.getElementById('autoPipelineModelDevelop').value || null;
-  const prModelId = document.getElementById('autoPipelineModelPR').value || null;
-
   const notifyEvents = [...document.querySelectorAll('.autoNotifyEvent:checked')].map(cb => cb.value);
+
+  const labelRulesRaw = document.getElementById('autoGitlabLabelRules').value.trim();
+  const labelRules = labelRulesRaw ? labelRulesRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
 
   const automation = {
     notifications: {
@@ -2494,96 +2376,21 @@ window.handleSaveAutomation = async function () {
         ],
       },
     },
-    auto_pipeline: {
-      enabled: document.getElementById('autoPipelineEnabled').checked,
-      preset,
-      trigger: document.getElementById('autoPipelineTrigger').value,
-      threshold_count: parseInt(document.getElementById('autoPipelineThreshold').value) || 5,
-      schedule_hours: parseInt(document.getElementById('autoPipelineSchedule').value) || 168,
-      pipeline_config: {
-        model_id: improveModelId, // backward compat
-        improve: { model_id: improveModelId },
-        spec: specModelId ? { model_id: specModelId } : {},
-        template_id: document.getElementById('autoPipelineTemplate').value,
-        count: parseInt(document.getElementById('autoPipelineCount').value) || 5,
-        auto_approve: document.getElementById('autoPipelineApprove').value,
-        version_strategy: document.getElementById('autoPipelineVersionStrategy').value,
-        develop: {
-          enabled: preset === 'full_cycle' || document.getElementById('autoPipelineDevelop').checked,
-          ...(developModelId ? { model_id: developModelId } : {}),
-          auto_publish: document.getElementById('autoPipelineAutoPublish').checked,
-          test_command: document.getElementById('autoPipelineTestCmd').value || null,
-        },
-        press_release: {
-          enabled: preset === 'full_cycle' || document.getElementById('autoPipelinePressRelease').checked,
-          ...(prModelId ? { model_id: prModelId } : {}),
-          channels: [...document.querySelectorAll('.autoPrChannel:checked')].map(cb => cb.value),
-          tone: document.getElementById('autoPipelinePrTone').value,
-        },
-        update_docs: {
-          enabled: document.getElementById('autoPipelineUpdateDocs').checked,
-          timeout_min: parseInt(document.getElementById('autoPipelineUpdateDocsTimeout').value) || 20,
-        },
+    gitlab_auto_sync: {
+      enabled: document.getElementById('autoGitlabSyncEnabled').checked,
+      interval_hours: parseFloat(document.getElementById('autoGitlabSyncInterval').value) || 0.5,
+      auto_import: {
+        enabled: document.getElementById('autoGitlabImportEnabled').checked,
+        label_rules: labelRules,
       },
     },
   };
-
-  // AI Config: context_files, critical_paths
-  try {
-    const ctxRaw = document.getElementById('aiContextFiles').value.trim();
-    if (ctxRaw && ctxRaw !== '[]') automation.context_files = JSON.parse(ctxRaw);
-  } catch { toast('Ошибка JSON в "Обязательные файлы"', 'error'); return; }
-  try {
-    const critRaw = document.getElementById('aiCriticalPaths').value.trim();
-    if (critRaw && critRaw !== '[]') automation.critical_paths = JSON.parse(critRaw);
-  } catch { toast('Ошибка JSON в "Критичные модули"', 'error'); return; }
 
   try {
     const updated = await api(`/products/${productId}`, { method: 'PUT', body: { automation } });
     product = updated;
     toast('Настройки автоматизации сохранены');
   } catch (err) {
-    toast(err.message, 'error');
-  }
-};
-
-window.runPipelineNow = async function () {
-  if (!await confirm('Запустить конвейер для этого продукта сейчас?')) return;
-  const statusEl = document.getElementById('pipelineRunStatus');
-  try {
-    statusEl.textContent = 'Запуск...';
-    const res = await api(`/products/${productId}/run-pipeline`, { method: 'POST' });
-    statusEl.textContent = `Конвейер запущен (${new Date().toLocaleTimeString('ru', { timeZone: 'Europe/Moscow' })})`;
-    statusEl.style.color = 'var(--accent)';
-    toast('Конвейер запущен! Следите за процессами.');
-    // Switch to processes tab after a moment
-    setTimeout(() => switchTab('processes'), 1500);
-  } catch (err) {
-    statusEl.textContent = `Ошибка: ${err.message}`;
-    statusEl.style.color = 'var(--danger)';
-    toast(err.message, 'error');
-  }
-};
-
-window.runPipelineScheduled = async function () {
-  const scheduledAt = document.getElementById('pipelineScheduledAt').value;
-  if (!scheduledAt) { toast('Укажите дату и время', 'error'); return; }
-  const dt = new Date(scheduledAt);
-  if (dt <= new Date()) { toast('Время должно быть в будущем', 'error'); return; }
-  if (!await confirm(`Запланировать конвейер на ${dt.toLocaleString('ru', { timeZone: 'Europe/Moscow' })}?`)) return;
-  const statusEl = document.getElementById('pipelineRunStatus');
-  try {
-    statusEl.textContent = 'Планирование...';
-    const res = await api(`/products/${productId}/run-pipeline`, {
-      method: 'POST',
-      body: { scheduled_at: dt.toISOString() },
-    });
-    statusEl.textContent = `Запланирован на ${dt.toLocaleString('ru', { timeZone: 'Europe/Moscow' })}`;
-    statusEl.style.color = 'var(--accent)';
-    toast(`Конвейер запланирован на ${dt.toLocaleTimeString('ru', { timeZone: 'Europe/Moscow' })}`);
-  } catch (err) {
-    statusEl.textContent = `Ошибка: ${err.message}`;
-    statusEl.style.color = 'var(--danger)';
     toast(err.message, 'error');
   }
 };

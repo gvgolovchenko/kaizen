@@ -16,7 +16,7 @@ export class QueueManager {
       mlx: 1,
       'claude-code': 2,
       'qwen-code': 2,
-      'kilo-code': 2,
+      'kilo-code': 1,
       anthropic: 3,
       openai: 3,
       google: 3,

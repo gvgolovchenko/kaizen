@@ -1,6 +1,6 @@
 # Kaizen — Схема базы данных
 
-> Версия схемы: 1.17.0 (миграции 001–023) — актуализировано 2026-03-25
+> Версия схемы: 1.18.0 (миграции 001–024) — актуализировано 2026-04-01
 > СУБД: PostgreSQL (Supabase via Supavisor, порт 8053)
 
 ---
@@ -101,6 +101,7 @@
 | parameters_size | VARCHAR(50) | YES | NULL | Размер параметров (30B, 70B) |
 | context_length | INTEGER | YES | NULL | Длина контекста (токены) |
 | status | VARCHAR(20) | YES | 'unknown' | Статус (loaded/unloaded/unknown) |
+| base_url | TEXT | YES | NULL | Custom API base URL (для Ollama: http://localhost:11434/v1) |
 | api_key | TEXT | YES | NULL | API-ключ для облачных провайдеров |
 | created_at | TIMESTAMPTZ | YES | now() | Дата создания |
 | updated_at | TIMESTAMPTZ | YES | now() | Дата обновления (trigger) |
@@ -292,6 +293,13 @@ kaizen_ai_models (независимая таблица, ссылается из
 | 015 | 015_run_tests.sql | model_id nullable в processes и plan_steps (для run_tests/update_docs) |
 | 016 | 016_plan_templates.sql | product_id nullable в plans + пересоздание FK (для шаблонов) |
 | 017 | 017_deploy_config.sql | Колонка deploy JSONB в products (GitLab CI/CD) |
+| 018 | 018_gitlab_issues.sql | GitLab Issues кэш + gitlab_issue_id в issues |
+| 019 | 019_release_linear_status.sql | Линейные статусы: draft→spec→developing→developed→published |
+| 020 | 020_gitlab_auto_sync.sql | last_gitlab_sync_at в products |
+| 021 | 021_process_config.sql | JSONB config в processes |
+| 022 | 022_issue_labels.sql | Labels JSONB в issues |
+| 023 | 023_scenarios.sql | Таблицы сценариев и запусков |
+| 024 | 024_model_base_url.sql | base_url TEXT в kaizen_ai_models (кастомный API endpoint) |
 
 ---
 
@@ -333,28 +341,15 @@ kaizen_ai_models (независимая таблица, ссылается из
     "interval_hours": 24,
     "auto_import": { "enabled": true, "rules": ["critical", "high"] }
   },
-  "auto_pipeline": {
+  "gitlab_auto_sync": {
     "enabled": true,
-    "trigger": "threshold|schedule|on_sync",
-    "threshold_count": 5,
-    "schedule_hours": 168,
-    "preset": "analysis|full_cycle|custom",
-    "pipeline_config": {
-      "model_id": "uuid",
-      "template_id": "general",
-      "count": 5,
-      "auto_approve": "high_and_critical",
-      "version_strategy": "auto_increment",
-      "improve": { "model_id": "uuid (опционально)" },
-      "spec": { "model_id": "uuid (опционально)" },
-      "develop": { "enabled": false, "auto_publish": false, "test_command": null, "model_id": "uuid (опционально)" },
-      "press_release": { "enabled": false, "channels": ["social","website"], "tone": "official", "model_id": "uuid (опционально)" }
-    }
+    "interval_hours": 12,
+    "auto_import": { "enabled": true, "label_rules": ["bug", "enhancement"] }
   },
   "notifications": {
     "enabled": true,
     "bitrix24_user_id": 9,
-    "events": ["pipeline_completed", "pipeline_failed", "release_published", "develop_completed", "develop_failed", "rc_sync_done", "improve_completed"]
+    "events": ["release_published", "develop_completed", "develop_failed", "rc_sync_done", "gitlab_sync_done", "scenario_completed", "scenario_failed"]
   }
 }
 ```

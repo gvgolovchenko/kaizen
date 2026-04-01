@@ -60,7 +60,7 @@ export async function getWithAutomation() {
       (SELECT count(*) FROM opii.kaizen_issues i WHERE i.product_id = p.id AND i.status = 'open') AS open_issues
     FROM ${TABLE} p
     WHERE p.automation IS NOT NULL AND p.automation != '{}'::jsonb
-      AND (p.automation->'rc_auto_sync'->>'enabled' = 'true' OR p.automation->'gitlab_auto_sync'->>'enabled' = 'true' OR p.automation->'auto_pipeline'->>'enabled' = 'true')
+      AND (p.automation->'rc_auto_sync'->>'enabled' = 'true' OR p.automation->'gitlab_auto_sync'->>'enabled' = 'true')
     ORDER BY p.created_at DESC
   `);
   return rows;

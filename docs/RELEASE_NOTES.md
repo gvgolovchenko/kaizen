@@ -2,7 +2,34 @@
 
 ---
 
-## v1.17.0 — Сценарии, обновлённый дашборд, багфиксы (2026-03-25)
+## v1.18.0 — Автоматизация 2.0 + AI-агенты (2026-04-01)
+
+### Удалено
+- Блок «Авто-конвейер» из таба Автоматизации (заменён Сценариями)
+- Триггеры threshold и on_sync (scheduler.js)
+- Эндпоинт POST /products/:id/run-pipeline
+- Блок «Контекст для AI» (context_files/critical_paths) из UI
+- Мёртвые события уведомлений: pipeline_completed, pipeline_failed, improve_completed
+
+### Добавлено
+- GitLab Auto-Sync UI в табе Автоматизация (ранее только через API)
+- Поддержка Ollama через base_url в kaizen_ai_models (миграция 024)
+- ai-caller.js: --auth-type openai + OPENAI_BASE_URL для qwen-code с Ollama
+- Модель Kilo Code (kilo-code провайдер) — Kilo Gateway бесплатные модели
+- CSS-стили бейджей qwen-code (зелёный) и kilo-code (жёлтый)
+- События уведомлений: gitlab_sync_done, scenario_completed, scenario_failed
+
+### Улучшено
+- Бейдж mode в процессах показывает реальный провайдер (не всегда 'claude-code')
+- Текст логов показывает имя модели вместо 'Claude Code'
+- Таб Автоматизация: компактный grid-layout (RC + GitLab в 2 колонки)
+- Лимит очереди kilo-code снижен с 2 до 1 (GPU-совместимость)
+- CLAUDE.md добавлен в дефолтный список update_docs
+- Скилл update-docs обновлён (CLAUDE.md вместо README.md)
+
+---
+
+## v1.17.0 — Сценарии, обновлённый дашборд, багфиксы (2026-03-25, обн. 2026-03-26)
 
 **Сценарии — автономные рабочие процессы с расписанием. Обновлённый дашборд. 6 критических/высоких багфиксов.**
 
@@ -57,11 +84,28 @@
 - **HIGH**: nightly_audit запускался на архивных продуктах (добавлен фильтр status=active)
 - **HIGH**: JSON.parse config падал молча — теперь логирование + fallback на proc.config объект
 
+### batch_develop — расширенная цепочка (2026-03-26)
+
+- Добавлены опциональные этапы: `run_tests` → `update_docs` → `deploy`
+- Полная цепочка: spec → develop → [тестирование] → [документирование] → [публикация] → [деплой]
+- 4 чекбокса в форме: Тестирование, Документирование, Опубликовать релиз (закрыть задачи), Деплой
+- Авто-публикация выключена по умолчанию
+
+### Cron в MSK (2026-03-26)
+
+- **Cron хранится и работает в московском времени** — никакой конвертации UTC
+- `calcNextRun()` использует `getHours()/getMinutes()` (локальное время сервера = MSK)
+- Фронтенд записывает час как есть, без MSK→UTC конвертации
+- Пресеты cron обновлены на MSK-значения (21:00, 22:00, 00:00, 01:00, 03:00, 05:00)
+- Валидация: час обязателен при custom cron (нельзя `*`)
+- Все существующие cron в БД пересчитаны UTC→MSK
+
 ### Прочее
 
 - Все даты/время на фронтенде явно в MSK (`timeZone: 'Europe/Moscow'`)
 - Smoke test и build validation отключаемы per-product (`smoke_test.enabled`, `smoke_test.build_command`)
 - Продукты в select-ах отсортированы по алфавиту (ru locale)
+- Form submit через addEventListener (fix для ESM modules)
 
 ---
 

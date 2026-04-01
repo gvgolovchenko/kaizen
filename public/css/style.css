@@ -402,6 +402,19 @@ header h1 span { font-size: 1.4rem; }
 
 .modal-body { flex: 1; min-height: 0; overflow-y: auto; }
 
+/* Stage pipeline chips */
+.stage-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 0.8rem; transition: all 0.15s;
+  border: 1px solid var(--border); user-select: none;
+}
+.stage-on { background: rgba(99, 102, 241, 0.15); border-color: var(--accent); color: var(--text); }
+.stage-off { background: transparent; border-color: var(--border); color: var(--text-dim); opacity: 0.5; }
+.stage-chip[style*="cursor:pointer"]:hover { filter: brightness(1.2); }
+.stage-arrow { color: var(--accent); font-size: 1rem; margin: 0 2px; }
+.stage-arrow-dim { color: var(--border); opacity: 0.4; }
+
 .scenario-config-section {
   background: rgba(99, 102, 241, 0.05);
   border: 1px solid var(--border);
@@ -1225,6 +1238,8 @@ tr:hover td { background: var(--bg-hover); }
 .badge-process-prepare_spec { background: rgba(251,191,36,0.15); color: var(--yellow); }
 .badge-process-roadmap_from_doc { background: rgba(52,211,153,0.15); color: var(--green); }
 .badge-mode-claude-code { background: rgba(129,140,248,0.15); color: var(--accent); }
+.badge-mode-qwen-code { background: rgba(52,211,153,0.15); color: var(--green); }
+.badge-mode-kilo-code { background: rgba(251,191,36,0.15); color: var(--yellow); }
 .badge-mode-standalone { background: rgba(96,165,250,0.15); color: var(--blue); }
 .badge-process-log { background: rgba(96,165,250,0.15); color: var(--blue); font-size: 0.7rem; }
 .badge-process-validate_product { background: rgba(52,211,153,0.15); color: var(--green); }

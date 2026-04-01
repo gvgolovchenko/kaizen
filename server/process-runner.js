@@ -726,7 +726,7 @@ async function runPrepareSpec(processId, proc, product, model, startTime, timeou
   }
 
   // 4. Build system prompt
-  const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+  const mode = useInteractiveTools ? model.provider : 'standalone';
 
   let systemPrompt = `Ты — опытный техлид и архитектор. Твоя задача — подготовить подробную спецификацию разработки для релиза программного продукта.
 
@@ -875,7 +875,7 @@ async function runRoadmapFromDoc(processId, proc, product, model, startTime, tim
   const hasProjectPath = !!product.project_path;
   const useInteractiveTools = isClaudeCode && hasProjectPath;
   const useCollectedContext = !isClaudeCode && hasProjectPath;
-  const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+  const mode = useInteractiveTools ? model.provider : 'standalone';
   const outputMode = proc.config?.output_mode || 'releases';
 
   // 2. Collect project context for standalone mode
@@ -1147,10 +1147,14 @@ async function runUpdateDocs(processId, proc, product, model, startTime, timeout
   }
 
   const docFiles = config.doc_files || [
+    'CLAUDE.md',
     'docs/USER_GUIDE.md',
     'docs/MAIN_FUNC.md',
     'docs/RELEASE_NOTES.md',
     'docs/DATABASE_SCHEMA.md',
+    'docs/GAP_ANALYSIS.md',
+    'docs/TECH_DEBT.md',
+    'docs/SPEC.md',
   ];
 
   await processLogs.create({
@@ -1223,10 +1227,36 @@ ${docFiles.map(f => `  - ${f}`).join('\n')}
   - Сохрани существующий формат и стиль
   - Если файла нет — создай с базовой структурой
 
+  Для CLAUDE.md (главный документ проекта):
+  - Это единственный корневой документ, загружается автоматически при работе с проектом
+  - Обнови: архитектуру, структуру проекта, команды, деплой, таблицу API, бизнес-логику
+  - Обнови версию проекта если она изменилась
+  - Не дублируй содержимое docs/ — только техническая справка для разработки
+
   Для RELEASE_NOTES.md:
   - Добавь записи о новых релизах в начало файла
   - Формат: ## версия — название (дата)
 ${releaseContext ? `\n  Релизы для документирования:${releaseContext}` : ''}
+
+  Для SPEC.md (техническое задание):
+  - Если файл docs/SPEC.md или docs/ТЗ_*.md УЖЕ СУЩЕСТВУЕТ — НЕ ТРОГАТЬ, использовать как входные данные для GAP_ANALYSIS
+  - Если НИ ОДНОГО ТЗ нет — СОЗДАТЬ docs/SPEC.md на основе анализа кода: описание продукта, модули, API, стек, целевая аудитория, критерии готовности
+
+  Для GAP_ANALYSIS.md:
+  - Прочитать SPEC/ТЗ (docs/SPEC.md или docs/ТЗ_*.md) → получить список модулей и критериев
+  - Для каждого критерия проверить по коду: grep маршрутов, конфигов, docker-compose, тестов
+  - Статус: ГОТОВО / ЧАСТИЧНО / НЕ СДЕЛАНО + краткий комментарий
+  - Таблица: # | Модуль | Статус | Релиз | Комментарий
+  - Метрика прогресса: % готовности по фазам
+  - Дорожная карта следующих релизов (если информация доступна)
+
+  Для TECH_DEBT.md:
+  - Пакеты с || true в Dockerfile (не установились при сборке)
+  - TODO/FIXME/HACK/XXX в коде (grep с указанием файл:строка)
+  - Отключённые модули (profiles в docker-compose, закомментированный код)
+  - Захардкоженные секреты (пароли не из переменных окружения)
+  - Несовместимости зависимостей (конфликты pip/npm)
+  - Тесты-заглушки (функции с pass или assert True)
 
 Шаг 3 — КОММИТ И ПУШ
   git add -A
@@ -1254,7 +1284,7 @@ ${releaseContext ? `=== РЕЛИЗЫ ===${releaseContext}\n` : ''}
   await processLogs.create({
     process_id: processId,
     step: 'request_sent',
-    message: `Запрос отправлен Claude Code. Ветка: ${integrationBranch || 'текущая'}`,
+    message: `Запрос отправлен ${model.name}. Ветка: ${integrationBranch || 'текущая'}`,
     data: { branch: integrationBranch, doc_files: docFiles },
   });
 
@@ -1735,7 +1765,7 @@ ${issuesList}`;
   await processLogs.create({
     process_id: processId,
     step: 'request_sent',
-    message: `Запрос отправлен Claude Code. Ветка: ${branchName}, задач: ${release.issues.length}`,
+    message: `Запрос отправлен ${model.name}. Ветка: ${branchName}, задач: ${release.issues.length}`,
     data: { branch: branchName, test_command: testCommand, issues_count: release.issues.length,
             cwd: product.project_path },
   });
@@ -2092,7 +2122,7 @@ async function runPreparePressRelease(processId, proc, product, model, startTime
   const hasProjectPath = !!product.project_path;
   const useInteractiveTools = isClaudeCode && hasProjectPath;
   const useCollectedContext = !isClaudeCode && hasProjectPath;
-  const mode = useInteractiveTools ? 'claude-code' : 'standalone';
+  const mode = useInteractiveTools ? model.provider : 'standalone';
 
   // 4. Collect project context for standalone mode
   let fileContext = '';
