@@ -129,6 +129,7 @@ async function loadAll() {
   }
   // Load automation settings
   loadAutomationSettings();
+  loadProductScenarios();
   // Load deploy settings
   loadDeploySettings();
   // Handle quick actions from product cards (?action=improve|add_issue)
@@ -2412,6 +2413,54 @@ window.testNotification = async function () {
       },
     });
     toast('Тестовое уведомление отправлено');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Product Scenarios ────────────────────────────────────
+
+async function loadProductScenarios() {
+  const listEl = document.getElementById('productScenariosList');
+  const createBtn = document.getElementById('createScenarioBtn');
+  createBtn.href = `/scenarios.html?product_id=${productId}&create=1`;
+
+  try {
+    const scenarios = await api(`/products/${productId}/scenarios`);
+    if (!scenarios.length) {
+      listEl.textContent = 'Нет сценариев. Создайте первый.';
+      return;
+    }
+
+    const presetLabels = { batch_develop: 'batch', auto_release: 'auto', nightly_audit: 'аудит', full_cycle: 'полный', analysis: 'анализ' };
+    listEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+      <tr style="border-bottom:1px solid var(--border);color:var(--text-dim)">
+        <th style="text-align:left;padding:4px 8px">Название</th>
+        <th style="text-align:left;padding:4px 8px">Пресет</th>
+        <th style="text-align:left;padding:4px 8px">Расписание</th>
+        <th style="text-align:center;padding:4px 8px">Статус</th>
+        <th style="text-align:right;padding:4px 8px"></th>
+      </tr>
+      ${scenarios.map(s => `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:4px 8px"><a href="/scenarios.html?highlight=${s.id}" style="color:var(--accent)">${escapeHtml(s.name)}</a></td>
+        <td style="padding:4px 8px">${presetLabels[s.preset] || s.preset}</td>
+        <td style="padding:4px 8px;color:var(--text-dim)">${s.cron || '—'}</td>
+        <td style="text-align:center;padding:4px 8px">${s.enabled ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--text-dim)">○</span>'}</td>
+        <td style="text-align:right;padding:4px 8px">
+          <button class="btn btn-sm" onclick="runProductScenario('${s.id}','${escapeHtml(s.name)}')" style="font-size:0.75rem;padding:2px 8px">▶</button>
+        </td>
+      </tr>`).join('')}
+    </table>`;
+  } catch {
+    listEl.textContent = 'Ошибка загрузки сценариев';
+  }
+}
+
+window.runProductScenario = async function (id, name) {
+  if (!await confirm(`Запустить сценарий «${name}»?`)) return;
+  try {
+    await api(`/scenarios/${id}/run`, { method: 'POST' });
+    toast(`Сценарий «${name}» запущен`);
   } catch (err) {
     toast(err.message, 'error');
   }

@@ -1,6 +1,6 @@
 # Kaizen — Контекст проекта
 
-Kaizen (改善) — система непрерывного улучшения продуктов v1.17.0. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам, сценарии (ScenarioRunner) для автономных ночных рабочих процессов и планировщик (Scheduler) для автоматического запуска по расписанию.
+Kaizen (改善) — система непрерывного улучшения продуктов v1.18.1. Отслеживает продукты компании, собирает задачи на улучшение (включая асинхронную AI-генерацию через 6 провайдеров с логированием), формирует из них релизы с автоматическим управлением статусами. Поддерживает очередь процессов (QueueManager) с контролем параллелизма по провайдерам, сценарии (ScenarioRunner) для автономных ночных рабочих процессов и планировщик (Scheduler) для автоматического запуска по расписанию.
 
 ## Архитектура
 
@@ -27,6 +27,7 @@ kaizen/
 ├── .env                          # DB credentials, PORT=3034
 ├── server/
 │   ├── index.js                  # Express-сервер (порт 3034), JSON + static + init QueueManager/Scheduler
+│   ├── logger.js                 # Structured logging (pino): root instance + createLogger('module') фабрика
 │   ├── ai-caller.js              # Универсальный AI caller (6 провайдеров + streaming)
 │   ├── utils.js                  # parseJsonFromAI(), maskApiKey(), detectTestCommand()
 │   ├── process-runner.js         # Фоновый исполнитель AI-процессов
@@ -122,7 +123,7 @@ kaizen/
 ## Команды
 
 ```bash
-npm run dev     # Development (node --watch-path=server)
+npm run dev     # Development (node --watch-path=server | pino-pretty)
 npm start       # Production
 npm test        # Тесты (node --test)
 
@@ -135,7 +136,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Runtime**: Node.js (ESM), Express 5.1
 - **Frontend**: Vanilla JS + Custom CSS (dark theme)
 - **БД**: PostgreSQL (Supabase via Supavisor, порт 8053)
-- **Зависимости**: express, pg, dotenv
+- **Зависимости**: express, pg, dotenv, pino, pino-pretty (dev)
 - **Порт**: 3034
 
 ## База данных
@@ -276,6 +277,7 @@ node database/exec-sql.js --file database/migrations/001_initial_schema.sql
 - **Секреты**: `.env` не коммитится
 - **Транзакции**: releases.create/update/remove/publish используют BEGIN/COMMIT/ROLLBACK
 - **Префикс таблиц**: всегда `kaizen_` (в одной схеме с другими проектами)
+- **Логирование**: Structured logging через pino (JSON stdout в prod, pino-pretty в dev). Child-логгеры по модулям с контекстными полями (processId, planId и т.д.). Фабрика: `createLogger('module')` из `server/logger.js`
 - **Frontend**: Vanilla JS, ESM imports, без сборщиков
 
 ## MCP-сервер

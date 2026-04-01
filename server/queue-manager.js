@@ -1,6 +1,9 @@
 import * as processes from './db/processes.js';
 import * as aiModels from './db/ai-models.js';
 import { runProcess } from './process-runner.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('queue');
 
 /**
  * QueueManager — контроль параллелизма AI-процессов по провайдерам.
@@ -72,7 +75,7 @@ export class QueueManager {
     try {
       await runProcess(processId, { timeoutMs });
     } catch (err) {
-      console.error(`QueueManager: process ${processId} error:`, err.message);
+      log.error({ processId, err: err.message }, 'Process execution error');
     } finally {
       this.activeCount.set(provider, Math.max(0, this._getActive(provider) - 1));
 
@@ -81,7 +84,7 @@ export class QueueManager {
       const status = proc?.status || 'failed';
       if (this.onProcessDone) {
         try { this.onProcessDone(processId, status); } catch (cbErr) {
-          console.error(`QueueManager: onProcessDone callback error for ${processId}:`, cbErr.message);
+          log.error({ processId, err: cbErr.message }, 'onProcessDone callback error');
         }
       }
 
@@ -106,7 +109,7 @@ export class QueueManager {
 
       this._execute(next.id, provider, { timeoutMs: 20 * 60 * 1000 });
     } catch (err) {
-      console.error(`QueueManager._dequeueNext(${provider}): ${err.message}`);
+      log.error({ provider, err: err.message }, 'Dequeue next failed');
     }
   }
 
@@ -170,7 +173,7 @@ export class QueueManager {
 
     const queuedCount = running.reduce((s, r) => s + parseInt(r.cnt), 0);
     if (queuedCount > 0) {
-      console.log(`QueueManager restored: ${running.map(r => `${r.provider}=${r.cnt}`).join(', ')}`);
+      log.info({ providers: Object.fromEntries(running.map(r => [r.provider, parseInt(r.cnt)])) }, 'Queue restored from DB');
     }
   }
 

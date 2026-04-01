@@ -7,6 +7,9 @@ import * as rcSync from './rc-sync.js';
 import * as gitlabSync from './gitlab-sync.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { pool } from './db/pool.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('scheduler');
 
 /**
  * Scheduler — планировщик выполнения планов и автоматизации.
@@ -66,7 +69,7 @@ export class Scheduler {
         await this._cleanupOldLogs();
       }
     } catch (err) {
-      console.error('Scheduler tick error:', err.message);
+      log.error({ err: err.message }, 'tick error');
     } finally {
       this._ticking = false;
     }
@@ -82,11 +85,11 @@ export class Scheduler {
       for (const plan of scheduled) {
         if (plan.scheduled_at && new Date(plan.scheduled_at) <= now) {
           await plans.updateStatus(plan.id, 'active', { started_at: new Date().toISOString() });
-          console.log(`Scheduler: plan ${plan.id} "${plan.name}" activated (scheduled)`);
+          log.info({ planId: plan.id, plan: plan.name }, 'plan activated (scheduled)');
         }
       }
     } catch (err) {
-      console.error('Scheduler _activateScheduledPlans error:', err.message);
+      log.error({ err: err.message }, '_activateScheduledPlans error');
     }
   }
 
@@ -104,13 +107,13 @@ export class Scheduler {
 
         if (allCompleted) {
           await plans.updateStatus(plan.id, 'completed', { completed_at: new Date().toISOString() });
-          console.log(`Scheduler: plan ${plan.id} "${plan.name}" completed`);
+          log.info({ planId: plan.id, plan: plan.name }, 'plan completed');
           continue;
         }
 
         if (hasFailed && plan.on_failure === 'stop') {
           await plans.updateStatus(plan.id, 'failed', { completed_at: new Date().toISOString() });
-          console.log(`Scheduler: plan ${plan.id} "${plan.name}" failed (on_failure=stop)`);
+          log.info({ planId: plan.id, plan: plan.name }, 'plan failed (on_failure=stop)');
           continue;
         }
 
@@ -121,7 +124,7 @@ export class Scheduler {
         }
       }
     } catch (err) {
-      console.error('Scheduler _processActivePlans error:', err.message);
+      log.error({ err: err.message }, '_processActivePlans error');
     }
   }
 
@@ -152,9 +155,9 @@ export class Scheduler {
       const timeoutMs = (step.timeout_min || 20) * 60 * 1000;
       await this.queueManager.enqueue(proc.id, { timeoutMs });
 
-      console.log(`Scheduler: step ${step.id} → process ${proc.id} enqueued`);
+      log.info({ stepId: step.id, processId: proc.id }, 'step enqueued');
     } catch (err) {
-      console.error(`Scheduler: failed to launch step ${step.id}:`, err.message);
+      log.error({ stepId: step.id, err: err.message }, 'failed to launch step');
       await planSteps.update(step.id, { status: 'failed', error: err.message });
     }
   }
@@ -169,14 +172,14 @@ export class Scheduler {
       const due = await scenariosDb.getDueScenarios();
       for (const scenario of due) {
         try {
-          console.log(`Scheduler: cron trigger scenario "${scenario.name}" (${scenario.preset})`);
+          log.info({ scenario: scenario.name, preset: scenario.preset }, 'cron trigger scenario');
           await this.scenarioRunner.run(scenario, 'cron');
         } catch (err) {
-          console.error(`Scheduler: scenario "${scenario.name}" cron trigger error:`, err.message);
+          log.error({ scenario: scenario.name, err: err.message }, 'scenario cron trigger error');
         }
       }
     } catch (err) {
-      console.error('Scheduler _runDueScenarios error:', err.message);
+      log.error({ err: err.message }, '_runDueScenarios error');
     }
   }
 
@@ -194,7 +197,7 @@ export class Scheduler {
         await this._runProductAutomation(product);
       }
     } catch (err) {
-      console.error('Scheduler _runAutomation error:', err.message);
+      log.error({ err: err.message }, '_runAutomation error');
     }
   }
 
@@ -226,9 +229,9 @@ export class Scheduler {
 
       if (Date.now() - lastSync < intervalMs) return; // ещё не пора
 
-      console.log(`Automation: RC sync for "${product.name}" (every ${config.interval_hours}h)`);
+      log.info({ product: product.name, intervalHours: config.interval_hours }, 'RC sync started');
       const syncResult = await rcSync.syncTickets(product.id);
-      console.log(`Automation: RC sync done — new: ${syncResult.new}, updated: ${syncResult.updated}`);
+      log.info({ product: product.name, new: syncResult.new, updated: syncResult.updated }, 'RC sync done');
 
       // Обновить время последней синхронизации
       await products.update(product.id, { last_rc_sync_at: new Date().toISOString() });
@@ -239,7 +242,7 @@ export class Scheduler {
         const importResult = await rcSync.autoImportByRules(product.id, config.auto_import.rules);
         importedCount = importResult.imported;
         if (importedCount > 0) {
-          console.log(`Automation: auto-imported ${importedCount} RC tickets (rules: ${config.auto_import.rules.join(', ')})`);
+          log.info({ product: product.name, imported: importedCount, rules: config.auto_import.rules }, 'RC auto-import done');
         }
       }
 
@@ -253,7 +256,7 @@ export class Scheduler {
       }
 
     } catch (err) {
-      console.error(`Automation: RC sync error for "${product.name}":`, err.message);
+      log.error({ product: product.name, err: err.message }, 'RC sync error');
     }
   }
 
@@ -267,9 +270,9 @@ export class Scheduler {
 
       if (Date.now() - lastSync < intervalMs) return; // ещё не пора
 
-      console.log(`Automation: GitLab sync for "${product.name}" (every ${config.interval_hours || 0.5}h)`);
+      log.info({ product: product.name, intervalHours: config.interval_hours || 0.5 }, 'GitLab sync started');
       const syncResult = await gitlabSync.syncIssues(product.id);
-      console.log(`Automation: GitLab sync done — new: ${syncResult.new}, updated: ${syncResult.updated}`);
+      log.info({ product: product.name, new: syncResult.new, updated: syncResult.updated }, 'GitLab sync done');
 
       // Обновить время последней синхронизации
       await products.update(product.id, { last_gitlab_sync_at: new Date().toISOString() });
@@ -280,7 +283,7 @@ export class Scheduler {
         const importResult = await gitlabSync.autoImportByLabels(product.id, config.auto_import.label_rules);
         importedCount = importResult.imported;
         if (importedCount > 0) {
-          console.log(`Automation: auto-imported ${importedCount} GitLab issues (labels: ${config.auto_import.label_rules.join(', ')})`);
+          log.info({ product: product.name, imported: importedCount, labels: config.auto_import.label_rules }, 'GitLab auto-import done');
         }
       }
 
@@ -294,7 +297,7 @@ export class Scheduler {
       }
 
     } catch (err) {
-      console.error(`Automation: GitLab sync error for "${product.name}":`, err.message);
+      log.error({ product: product.name, err: err.message }, 'GitLab sync error');
     }
   }
 
@@ -317,7 +320,7 @@ export class Scheduler {
       // Перепроверить план (может разблокировать следующие шаги)
       await this._processActivePlans();
     } catch (err) {
-      console.error('Scheduler onProcessComplete error:', err.message);
+      log.error({ err: err.message }, 'onProcessComplete error');
     }
   }
 
@@ -327,10 +330,10 @@ export class Scheduler {
         DELETE FROM opii.kaizen_process_logs
         WHERE created_at < NOW() - INTERVAL '90 days'`);
       if (rowCount > 0) {
-        console.log(`Scheduler cleanup: ${rowCount} old log(s) deleted (>90 days)`);
+        log.info({ deleted: rowCount }, 'old logs cleaned up (>90 days)');
       }
     } catch (err) {
-      console.error('Scheduler _cleanupOldLogs error:', err.message);
+      log.error({ err: err.message }, '_cleanupOldLogs error');
     }
   }
 }

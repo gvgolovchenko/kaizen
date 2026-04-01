@@ -1,5 +1,7 @@
 import pg from 'pg';
+import { createLogger } from '../logger.js';
 
+const log = createLogger('db');
 const { Pool } = pg;
 
 export const pool = new Pool({
@@ -15,5 +17,5 @@ export const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected pool error:', err.message);
+  log.error({ err: err.message }, 'Unexpected pool error');
 });

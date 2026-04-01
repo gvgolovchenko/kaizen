@@ -10,7 +10,10 @@ import { collectProjectContext } from './context-collector.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { pushToGitlab, pushToDefaultBranch, waitForPipeline, getPipelineStatus } from './gitlab-client.js';
 import { runSmokeTests } from './smoke-tester.js';
+import { createLogger } from './logger.js';
 import { execFile as execFileCb } from 'node:child_process';
+
+const log = createLogger('process-runner');
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFileCb);
@@ -617,7 +620,7 @@ ${productContext}
       }
     }
 
-    console.error(`Process ${processId} failed:`, err.message);
+    log.error({ processId, err: err.message }, 'process failed');
 
     // Auto-retry: if retryable error and retries left, create a retry copy
     const retryInfo = parseRetryInfo(proc);
@@ -625,7 +628,7 @@ ${productContext}
       try {
         const retryCount = (retryInfo.retry_count || 0) + 1;
         const delayMs = Math.min(retryCount * 30_000, 120_000); // 30s, 60s, 120s
-        console.log(`Auto-retry: process ${processId} (attempt ${retryCount}), delay ${delayMs / 1000}s`);
+        log.info({ processId, attempt: retryCount, delaySec: delayMs / 1000 }, 'auto-retry scheduled');
 
         await processLogs.create({
           process_id: processId,
@@ -651,11 +654,11 @@ ${productContext}
             const { QueueManager } = await import('./queue-manager.js');
             QueueManager.instance?.enqueue(newProc.id, { timeoutMs: options.timeoutMs });
           } catch (retryErr) {
-            console.error(`Auto-retry create failed for ${processId}:`, retryErr.message);
+            log.error({ processId, err: retryErr.message }, 'auto-retry create failed');
           }
         }, delayMs);
       } catch (retryErr) {
-        console.error(`Auto-retry setup failed for ${processId}:`, retryErr.message);
+        log.error({ processId, err: retryErr.message }, 'auto-retry setup failed');
       }
     }
   }
@@ -1662,7 +1665,7 @@ async function runDevelopRelease(processId, proc, product, model, startTime, tim
     config = proc.config;
   } else {
     try { config = JSON.parse(proc.input_prompt || '{}'); } catch (parseErr) {
-      console.warn(`Process ${processId}: config parse failed, using defaults. Error: ${parseErr.message}`);
+      log.warn({ processId, err: parseErr.message }, 'config parse failed, using defaults');
     }
   }
   const rawBranch   = config.git_branch  || `kaizen/release-${release.version}`;

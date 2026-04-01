@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch-path=server server/index.js",
+    "dev": "node --watch-path=server server/index.js | pino-pretty",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
@@ -13,6 +13,10 @@
     "express": "^5.1.0",
     "mssql": "^12.2.0",
     "pg": "^8.18.0",
+    "pino": "^10.3.1",
     "playwright": "^1.58.2"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.1.3"
   }
 }

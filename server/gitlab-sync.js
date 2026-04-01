@@ -6,6 +6,9 @@ import * as products from './db/products.js';
 import * as gitlabIssues from './db/gitlab-issues.js';
 import * as issues from './db/issues.js';
 import { getIssues, resolveGitlabProjectId } from './gitlab-client.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('gitlab-sync');
 
 // Label → Kaizen type mapping
 const LABEL_TYPE_MAP = {
@@ -115,7 +118,7 @@ export async function syncIssues(productId) {
     }
   } catch (err) {
     // Labels sync is best-effort
-    console.error('Labels sync error:', err.message);
+    log.error({ err: err.message }, 'Labels sync error');
   }
 
   return { new: newCount, updated: updatedCount, total: glIssues.length, labels_updated: labelsUpdated };

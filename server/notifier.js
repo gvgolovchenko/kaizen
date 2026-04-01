@@ -4,6 +4,10 @@
  * Telegram: sendMessage через Bot API.
  */
 
+import { createLogger } from './logger.js';
+
+const log = createLogger('notifier');
+
 const B24_WEBHOOK = process.env.BITRIX24_WEBHOOK_URL;
 const B24_DEFAULT_USER = process.env.BITRIX24_NOTIFY_USER_ID || '9';
 const KAIZEN_URL = `http://localhost:${process.env.PORT || 3034}`;
@@ -133,10 +137,10 @@ async function sendTelegram(chatId, text) {
     });
     if (!res.ok) {
       const err = await res.text();
-      console.error(`Notifier: Telegram API error ${res.status}: ${err}`);
+      log.error({ status: res.status, response: err }, 'Telegram API error');
     }
   } catch (err) {
-    console.error('Notifier: Telegram send error:', err.message);
+    log.error({ err: err.message }, 'Telegram send error');
   }
 }
 
@@ -159,7 +163,7 @@ export async function notify(event, data, opts = {}) {
 
   const formatter = formatters[event];
   if (!formatter) {
-    console.error(`Notifier: unknown event "${event}"`);
+    log.error({ event }, 'Unknown event type');
     return;
   }
 
@@ -179,13 +183,13 @@ export async function notify(event, data, opts = {}) {
         }),
       });
       if (!resp.ok) {
-        console.error(`Notifier: Б24 API error ${resp.status}`);
+        log.error({ status: resp.status }, 'Б24 API error');
       } else {
         const result = await resp.json();
-        console.log(`Notifier: [${event}] → Б24 user ${userId}, msg_id: ${result.result}`);
+        log.info({ event, userId, msgId: result.result }, 'Sent to Б24');
       }
     } catch (err) {
-      console.error(`Notifier: Б24 send error for "${event}":`, err.message);
+      log.error({ event, err: err.message }, 'Б24 send error');
     }
   }
 
@@ -195,7 +199,7 @@ export async function notify(event, data, opts = {}) {
   if (TG_TOKEN && tgFormatter && tgChatId) {
     const tgMessage = tgFormatter(data);
     await sendTelegram(tgChatId, tgMessage);
-    console.log(`Notifier: [${event}] → Telegram chat ${tgChatId}`);
+    log.info({ event, chatId: tgChatId }, 'Sent to Telegram');
   }
 }
 

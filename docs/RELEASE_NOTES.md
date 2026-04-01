@@ -2,6 +2,18 @@
 
 ---
 
+## v1.18.1 — Structured logging + Сценарии на странице продукта (2026-04-01)
+
+### Добавлено
+- Structured logging (pino): 60 console-вызовов заменены на JSON-логи с контекстом (module, processId, planId)
+- server/logger.js — фабрика child-логгеров по модулям (`createLogger('module')`)
+- Dev: pino-pretty (цветной вывод), Prod: JSON stdout
+- Блок «Сценарии продукта» в табе Автоматизация — таблица со статусом, расписанием, кнопкой запуска
+- Кнопка «+ Создать» на странице продукта → переход на /scenarios.html с предзаполненным продуктом
+- scenarios.js: поддержка URL-параметров `product_id`, `create`, `highlight`
+
+---
+
 ## v1.18.0 — Автоматизация 2.0 + AI-агенты (2026-04-01)
 
 ### Удалено

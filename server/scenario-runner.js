@@ -18,6 +18,9 @@ import * as issues from './db/issues.js';
 import * as scenarioRuns from './db/scenario-runs.js';
 import * as scenarios from './db/scenarios.js';
 import { notify, getNotifyOpts } from './notifier.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('scenario-runner');
 
 export class ScenarioRunner {
   constructor(queueManager) {
@@ -46,7 +49,7 @@ export class ScenarioRunner {
 
     // Запускаем асинхронно — не блокируем
     this._execute(scenario, run).catch(err => {
-      console.error(`ScenarioRunner: run ${run.id} crashed:`, err.message);
+      log.error({ runId: run.id, err: err.message }, 'run crashed');
       scenarioRuns.updateResult(run.id, {
         status: 'failed',
         error: err.message,
@@ -60,7 +63,7 @@ export class ScenarioRunner {
     const config = scenario.config || {};
     const preset = scenario.preset;
 
-    console.log(`ScenarioRunner: starting ${preset} "${scenario.name}" (run ${run.id})`);
+    log.info({ runId: run.id, preset, scenario: scenario.name }, 'starting');
 
     try {
       let result;
@@ -87,12 +90,12 @@ export class ScenarioRunner {
         result,
       });
 
-      console.log(`ScenarioRunner: run ${run.id} completed`);
+      log.info({ runId: run.id }, 'run completed');
 
       // Auto-disable one-time scheduled scenarios (cron with specific day/month)
       if (scenario.cron && /\d+\s+\d+\s+\d+\s+\d+/.test(scenario.cron)) {
         await scenarios.update(scenario.id, { enabled: false });
-        console.log(`ScenarioRunner: one-time scenario "${scenario.name}" auto-disabled`);
+        log.info({ scenario: scenario.name }, 'one-time scenario auto-disabled');
       }
 
       // Notify
@@ -110,7 +113,7 @@ export class ScenarioRunner {
         result: { error: err.message },
       });
 
-      console.error(`ScenarioRunner: run ${run.id} failed:`, err.message);
+      log.error({ runId: run.id, err: err.message }, 'run failed');
 
       const product = scenario.product_id ? await products.getById(scenario.product_id) : null;
       notify('scenario_failed', {
@@ -127,7 +130,8 @@ export class ScenarioRunner {
   // ═══════════════════════════════════════════════════════════
 
   async _batchDevelop(scenario, config) {
-    const { release_ids, model_id, timeout_min = 30, auto_publish = true, on_failure = 'stop' } = config;
+    const { release_ids, model_id, timeout_min = 30, auto_publish = true, on_failure = 'stop',
+            run_tests: runTestsOpt = false, update_docs: updateDocsOpt = false, deploy: deployOpt = false } = config;
     if (!release_ids?.length) throw new Error('release_ids required for batch_develop');
     if (!model_id) throw new Error('model_id required for batch_develop');
 
@@ -144,6 +148,7 @@ export class ScenarioRunner {
       }
 
       const label = `${release.version || release.name} (${i + 1}/${release_ids.length})`;
+      let developOk = false;
 
       // Этап 1: Спецификация
       try {
@@ -189,19 +194,87 @@ export class ScenarioRunner {
           release: label, stage: 'develop_completed',
           branch: devData.branch, tests_passed: devData.tests_passed,
         });
-
-        // Этап 3: Публикация
-        if (auto_publish && devData.tests_passed) {
-          await releases.publish(releaseId);
-          stages.push({ release: label, stage: 'published' });
-        }
+        developOk = true;
       } catch (err) {
         stages.push({ release: label, stage: 'develop_error', error: err.message });
         if (on_failure === 'stop') throw err;
+        continue;
+      }
+
+      // Этап 3: Тестирование (опционально)
+      if (developOk && runTestsOpt) {
+        try {
+          const testProc = await this._createAndWait({
+            product_id: scenario.product_id,
+            type: 'run_tests',
+            release_id: releaseId,
+          }, timeout_min);
+          processIds.push(testProc.id);
+
+          if (testProc.status === 'completed') {
+            const testData = testProc.result || {};
+            stages.push({ release: label, stage: 'tests_completed', tests_passed: testData.tests_passed });
+          } else {
+            stages.push({ release: label, stage: 'tests_failed', error: testProc.error });
+          }
+        } catch (err) {
+          stages.push({ release: label, stage: 'tests_error', error: err.message });
+        }
+      }
+
+      // Этап 4: Документирование (опционально)
+      if (developOk && updateDocsOpt) {
+        try {
+          const docsProc = await this._createAndWait({
+            product_id: scenario.product_id,
+            model_id,
+            type: 'update_docs',
+            release_id: releaseId,
+          }, timeout_min);
+          processIds.push(docsProc.id);
+
+          if (docsProc.status === 'completed') {
+            stages.push({ release: label, stage: 'docs_completed' });
+          } else {
+            stages.push({ release: label, stage: 'docs_failed', error: docsProc.error });
+          }
+        } catch (err) {
+          stages.push({ release: label, stage: 'docs_error', error: err.message });
+        }
+      }
+
+      // Этап 5: Публикация
+      if (developOk && auto_publish) {
+        try {
+          await releases.publish(releaseId);
+          stages.push({ release: label, stage: 'published' });
+        } catch (err) {
+          stages.push({ release: label, stage: 'publish_error', error: err.message });
+        }
+      }
+
+      // Этап 6: Деплой (опционально)
+      if (developOk && auto_publish && deployOpt) {
+        try {
+          const deployProc = await this._createAndWait({
+            product_id: scenario.product_id,
+            type: 'deploy',
+            release_id: releaseId,
+          }, timeout_min);
+          processIds.push(deployProc.id);
+
+          if (deployProc.status === 'completed') {
+            stages.push({ release: label, stage: 'deployed' });
+          } else {
+            stages.push({ release: label, stage: 'deploy_failed', error: deployProc.error });
+          }
+        } catch (err) {
+          stages.push({ release: label, stage: 'deploy_error', error: err.message });
+        }
       }
     }
 
-    const completed = stages.filter(s => s.stage === 'published' || s.stage === 'develop_completed').length;
+    const completed = stages.filter(s => ['published', 'deployed', 'develop_completed'].includes(s.stage)).length;
     return {
       stages,
       processes: processIds,

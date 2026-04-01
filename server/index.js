@@ -7,7 +7,9 @@ import { pool } from './db/pool.js';
 import { QueueManager } from './queue-manager.js';
 import { Scheduler } from './scheduler.js';
 import { ScenarioRunner } from './scenario-runner.js';
+import { createLogger } from './logger.js';
 
+const log = createLogger('server');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3034;
@@ -34,7 +36,7 @@ app.use('/api', apiRouter);
 
 // JSON error handler — always return JSON, never HTML
 app.use('/api', (err, req, res, next) => {
-  console.error(`API error [${req.method} ${req.path}]:`, err.message);
+  log.error({ method: req.method, path: req.path, err: err.message }, 'API error');
   const status = err.status || err.statusCode || 500;
   res.status(status).json({
     error: err.message || 'Internal server error',
@@ -43,7 +45,7 @@ app.use('/api', (err, req, res, next) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`Kaizen запущен на http://localhost:${PORT}`);
+  log.info({ port: PORT }, 'Kaizen started');
 
   // Startup cleanup: mark orphaned running processes as failed
   try {
@@ -55,7 +57,7 @@ app.listen(PORT, async () => {
           duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000
       WHERE status = 'running'`);
     if (rowCount > 0) {
-      console.log(`Startup cleanup: ${rowCount} orphaned process(es) marked as failed`);
+      log.info({ orphaned: rowCount }, 'startup cleanup: orphaned processes marked as failed');
     }
     // Reset stale dev_status on releases
     const { rowCount: devCount } = await pool.query(`
@@ -63,30 +65,30 @@ app.listen(PORT, async () => {
       SET dev_status = 'failed'
       WHERE dev_status = 'in_progress'`);
     if (devCount > 0) {
-      console.log(`Startup cleanup: ${devCount} release(s) dev_status reset to failed`);
+      log.info({ releases: devCount }, 'startup cleanup: dev_status reset to failed');
     }
   } catch (err) {
-    console.error('Startup cleanup failed:', err.message);
+    log.error({ err: err.message }, 'startup cleanup failed');
   }
 
   // Восстановить очередь и запустить планировщик
   try {
     await queueManager.restoreFromDb();
     scheduler.start();
-    console.log('QueueManager + Scheduler запущены');
+    log.info('QueueManager + Scheduler started');
   } catch (err) {
-    console.error('QueueManager/Scheduler init failed:', err.message);
+    log.error({ err: err.message }, 'QueueManager/Scheduler init failed');
   }
 });
 
 // ── Graceful shutdown ──────────────────────────────────
 
 async function shutdown(signal) {
-  console.log(`\n${signal} received. Graceful shutdown...`);
+  log.info({ signal }, 'graceful shutdown');
 
   // 1. Stop Scheduler (no new ticks)
   scheduler.stop();
-  console.log('Scheduler stopped');
+  log.info('Scheduler stopped');
 
   // 2. Mark running processes as failed (orphaned)
   try {
@@ -97,20 +99,20 @@ async function shutdown(signal) {
           completed_at = NOW(),
           duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000
       WHERE status = 'running'`);
-    if (rowCount > 0) console.log(`Shutdown: ${rowCount} running process(es) marked as failed`);
+    if (rowCount > 0) log.info({ orphaned: rowCount }, 'shutdown: running processes marked as failed');
 
     await pool.query(`UPDATE opii.kaizen_releases SET dev_status = 'failed' WHERE dev_status = 'in_progress'`);
   } catch (err) {
-    console.error('Shutdown cleanup error:', err.message);
+    log.error({ err: err.message }, 'shutdown cleanup error');
   }
 
   // 3. Close DB pool
   try {
     await pool.end();
-    console.log('DB pool closed');
+    log.info('DB pool closed');
   } catch { /* ignore */ }
 
-  console.log('Shutdown complete');
+  log.info('shutdown complete');
   process.exit(0);
 }
 
