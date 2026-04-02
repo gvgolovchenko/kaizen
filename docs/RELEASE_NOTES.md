@@ -14,6 +14,16 @@
 
 ---
 
+## 1.18.2 — Hotfix: sanitize branch names (2026-04-02)
+
+### Исправлено
+- validateBranchName теперь sanitize-ит невалидные символы вместо throw
+- Кириллица, пробелы, .lock, двойные точки — автоматически очищаются
+- Пример: "kaizen/release-1.2. Фикс" → "kaizen/release-1.2"
+- Стандартизированы события уведомлений для всех 8 продуктов (убраны мёртвые pipeline_completed/failed/improve_completed, добавлены scenario_completed/failed)
+
+---
+
 ## v1.18.0 — Автоматизация 2.0 + AI-агенты (2026-04-01)
 
 ### Удалено
