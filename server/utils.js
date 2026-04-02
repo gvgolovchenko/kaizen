@@ -132,16 +132,21 @@ export function detectLintCommand(techStack) {
  */
 export function validateBranchName(name) {
   if (!name || typeof name !== 'string') throw new Error('Branch name is required');
-  const trimmed = name.trim();
-  // Only allow alphanumeric, dots, hyphens, underscores, slashes
-  if (!/^[a-zA-Z0-9._\/-]+$/.test(trimmed)) {
-    throw new Error(`Invalid branch name: "${trimmed}". Allowed: letters, digits, . _ - /`);
-  }
-  // Disallow dangerous patterns
-  if (trimmed.startsWith('-') || trimmed.includes('..') || trimmed.includes('~') || trimmed.endsWith('.lock')) {
-    throw new Error(`Invalid branch name: "${trimmed}"`);
-  }
-  return trimmed;
+  // Sanitize: replace spaces, cyrillic and other invalid chars with hyphens
+  let sanitized = name.trim()
+    .replace(/\s+/g, '-')             // spaces → hyphens
+    .replace(/[^a-zA-Z0-9._\/-]/g, '') // strip everything else (cyrillic, specials)
+    .replace(/-{2,}/g, '-')           // collapse multiple hyphens
+    .replace(/\.{2,}/g, '.')          // collapse dots
+    .replace(/\/+/g, '/')             // collapse slashes
+    .replace(/[.\-/]+$/g, '')         // trim trailing dots, hyphens, slashes
+    .replace(/^[.\-]+/g, '');         // trim leading dots, hyphens
+  // Remove empty path segments and .lock suffix
+  sanitized = sanitized.split('/').filter(Boolean).join('/');
+  if (sanitized.endsWith('.lock')) sanitized = sanitized.slice(0, -5);
+  sanitized = sanitized.replace(/[.\-/]+$/g, ''); // re-trim after .lock removal
+  if (!sanitized) throw new Error(`Cannot create branch name from: "${name}"`);
+  return sanitized;
 }
 
 /**
