@@ -74,21 +74,24 @@ export function parseJsonFromAI(raw) {
 export function detectBuildCommand(techStack, projectPath) {
   const s = (techStack || '').toLowerCase();
   if (s.includes('dotnet') || s.includes('c#') || s.includes('asp')) {
-    // Check if backend/ subdirectory exists
     const backendPath = projectPath ? join(projectPath, 'backend') : null;
     const hasBackend = backendPath && existsSync(backendPath);
     return hasBackend ? 'cd backend && dotnet build' : 'dotnet build';
   }
-  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue') || s.includes('nuxt'))
-    return 'npm run build';
-  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
-    return null; // Python не компилируется
+  // Java/Spring — до Vue/Node: проекты Spring+Vue компилируются через mvn
+  if (s.includes('java') || s.includes('spring'))
+    return 'mvn compile -q';
   if (s.includes('go'))
     return 'go build ./...';
   if (s.includes('rust'))
     return 'cargo build';
-  if (s.includes('java') || s.includes('spring'))
-    return 'mvn compile';
+  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
+    return null;
+  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue') || s.includes('nuxt')) {
+    const frontendPath = projectPath ? join(projectPath, 'frontend') : null;
+    const hasFrontend = frontendPath && existsSync(frontendPath);
+    return hasFrontend ? 'cd frontend && npm run build' : 'npm run build';
+  }
   return null;
 }
 

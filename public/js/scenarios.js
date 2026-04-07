@@ -622,7 +622,7 @@ const PRESET_VISIBLE = {
   batch_develop: ['spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
   full_cycle:    ['improve', 'approve', 'release', 'spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
   analysis:      ['improve', 'approve', 'release', 'spec'],
-  auto_release:  ['release', 'spec', 'develop', 'publish'],
+  auto_release:  ['release', 'spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
 };
 
 // Default on/off per preset (only for unlocked stages)
@@ -630,7 +630,7 @@ const PRESET_DEFAULTS = {
   batch_develop: { develop: true, tests: false, docs: true, publish: false, deploy: false },
   full_cycle:    { develop: true, tests: true, docs: true, publish: true, deploy: false },
   analysis:      {},
-  auto_release:  { develop: true, publish: false },
+  auto_release:  { develop: true, tests: false, docs: false, publish: false, deploy: false },
 };
 
 let stageStates = {};
@@ -994,6 +994,13 @@ window.createScenario = async function (e) {
   } else if (preset === 'auto_release') {
     config.max_issues = parseInt(document.getElementById('fMaxIssues').value) || 10;
     config.auto_approve = document.getElementById('fAutoApproveAR').value;
+    config.develop = {
+      enabled: stageStates.develop !== false,
+      run_tests: stageStates.tests || false,
+      update_docs: stageStates.docs || false,
+      auto_publish: stageStates.publish || false,
+      deploy: stageStates.deploy || false,
+    };
   } else if (preset === 'nightly_audit') {
     config.template_id = document.getElementById('fTemplate').value;
     config.count = parseInt(document.getElementById('fCount').value) || 5;

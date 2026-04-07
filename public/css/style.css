@@ -813,6 +813,7 @@ tr:hover td { background: var(--bg-hover); }
 }
 .nav-logo:hover { text-decoration: none; }
 .nav-logo span { color: var(--accent); font-size: 1.1rem; }
+.nav-version { font-size: 0.7rem; font-weight: 400; color: var(--text-muted); opacity: 0.6; margin-left: 2px; }
 
 .nav-links {
   display: flex;

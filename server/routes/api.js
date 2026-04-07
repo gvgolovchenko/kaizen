@@ -19,6 +19,9 @@ import * as dashboard from '../db/dashboard.js';
 import * as scenariosDb from '../db/scenarios.js';
 import * as scenarioRunsDb from '../db/scenario-runs.js';
 import { pool } from '../db/pool.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { version } = require('../../package.json');
 
 const router = Router();
 
@@ -71,7 +74,7 @@ router.get('/health', async (req, res) => {
     checks.db_error = err.message;
   }
   const allOk = checks.db === 'ok';
-  res.status(allOk ? 200 : 503).json(checks);
+  res.status(allOk ? 200 : 503).json({ version, ...checks });
 });
 
 // ── Dashboard ────────────────────────────────────────────

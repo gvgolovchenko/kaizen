@@ -2017,9 +2017,10 @@ ${issuesList}`;
       branch: resultObj.branch, tests_passed: true, commit: resultObj.commit_hash,
     }, getNotifyOpts(product)).catch(() => {});
   } else {
+    const failReason = resultObj.build_failed ? 'сборка провалена' : 'тесты не пройдены';
     notify('develop_failed', {
       product: product.name, version: release.version,
-      error: 'тесты не пройдены',
+      error: failReason,
     }, getNotifyOpts(product)).catch(() => {});
   }
 }
