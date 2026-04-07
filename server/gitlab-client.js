@@ -85,10 +85,14 @@ export async function pushToDefaultBranch(projectPath, branchName, deploy) {
   }
   await execFileAsync('git', ['remote', 'set-url', remoteName, authUrl], opts);
 
-  // Checkout default branch, merge release branch, push
+  // Fetch latest, checkout default branch, sync with remote, merge release branch
+  await execFileAsync('git', ['fetch', remoteName], { ...opts, timeout: 120_000 }).catch(() => {});
   await execFileAsync('git', ['checkout', defaultBranch], opts);
-  await execFileAsync('git', ['pull', remoteName, defaultBranch], { ...opts, timeout: 120_000 }).catch(() => {});
-  await execFileAsync('git', ['merge', branchName, '--no-edit'], opts);
+  // Hard reset to remote to guarantee sync (local may have diverged from manual merges)
+  await execFileAsync('git', ['reset', '--hard', `${remoteName}/${defaultBranch}`], opts).catch(() => {});
+  // Fetch release branch too
+  await execFileAsync('git', ['fetch', remoteName, branchName], { ...opts, timeout: 60_000 }).catch(() => {});
+  await execFileAsync('git', ['merge', `${remoteName}/${branchName}`, '--allow-unrelated-histories', '--no-edit'], opts);
 
   try {
     const { stdout, stderr } = await execFileAsync(
@@ -103,9 +107,13 @@ export async function pushToDefaultBranch(projectPath, branchName, deploy) {
 
 /**
  * Check GitLab pipeline status via API.
+ * @param {object} deploy
+ * @param {string} sha - commit SHA to find pipeline for
+ * @param {string} [ref] - branch name fallback (search most recent pipeline on branch created after pushTime)
+ * @param {number} [pushTime] - timestamp of push (ms), used for fallback branch search
  * @returns {{ status: string, web_url: string, jobs: Array }}
  */
-export async function getPipelineStatus(deploy, sha) {
+export async function getPipelineStatus(deploy, sha, { ref, pushTime } = {}) {
   const gl = deploy?.gitlab;
   if (!gl?.url || !gl?.project_id || !gl?.access_token) {
     throw new Error('GitLab API не настроен (url, project_id, access_token)');
@@ -120,11 +128,25 @@ export async function getPipelineStatus(deploy, sha) {
   if (!pipelinesRes.ok) throw new Error(`GitLab API: ${pipelinesRes.status} ${pipelinesRes.statusText}`);
   const pipelines = await pipelinesRes.json();
 
-  if (!pipelines.length) {
-    return { status: 'not_found', web_url: null, jobs: [] };
+  let pipeline = pipelines[0];
+
+  // Fallback: if not found by SHA, search by branch ref (most recent pipeline created after push)
+  if (!pipeline && ref && pushTime) {
+    const since = new Date(pushTime - 30_000).toISOString(); // 30s before push
+    const refRes = await fetch(
+      `${baseUrl}/pipelines?ref=${encodeURIComponent(ref)}&per_page=5&order_by=id&sort=desc`,
+      fetchOpts
+    ).catch(() => null);
+    if (refRes?.ok) {
+      const refPipelines = await refRes.json();
+      // Find the first pipeline created after push time
+      pipeline = refPipelines.find(p => new Date(p.created_at).getTime() >= pushTime - 60_000);
+    }
   }
 
-  const pipeline = pipelines[0];
+  if (!pipeline) {
+    return { status: 'not_found', web_url: null, jobs: [] };
+  }
 
   // Get jobs for the pipeline
   const jobsRes = await fetch(`${baseUrl}/pipelines/${pipeline.id}/jobs`, fetchOpts);
@@ -175,24 +197,26 @@ export async function getIssues(deploy, { state = 'opened', per_page = 100 } = {
 
 /**
  * Wait for GitLab pipeline to complete (polling).
+ * @param {object} deploy
+ * @param {string} sha - commit SHA
+ * @param {object} [opts]
+ * @param {number} [opts.timeoutMs]
+ * @param {number} [opts.intervalMs]
+ * @param {string} [opts.ref] - branch name for fallback search
  * @returns {Promise<{ status: string, web_url: string, jobs: Array }>}
  */
-export async function waitForPipeline(deploy, sha, { timeoutMs = 600_000, intervalMs = 10_000 } = {}) {
+export async function waitForPipeline(deploy, sha, { timeoutMs = 600_000, intervalMs = 10_000, ref } = {}) {
   const deadline = Date.now() + timeoutMs;
+  const pushTime = Date.now();
 
   while (Date.now() < deadline) {
-    const result = await getPipelineStatus(deploy, sha);
+    const result = await getPipelineStatus(deploy, sha, { ref, pushTime });
 
     if (['success', 'failed', 'canceled', 'skipped'].includes(result.status)) {
       return result;
     }
 
-    if (result.status === 'not_found') {
-      // Pipeline may not be created yet, wait
-      await new Promise(r => setTimeout(r, intervalMs));
-      continue;
-    }
-
+    // Pipeline not found yet — wait and retry
     await new Promise(r => setTimeout(r, intervalMs));
   }
 

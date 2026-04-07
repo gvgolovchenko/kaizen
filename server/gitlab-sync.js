@@ -162,17 +162,54 @@ export async function importBulk(glIssueCacheIds) {
   return results;
 }
 
+// Priority order for min_priority filtering
+const PRIORITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
+
 /**
- * Auto-import by label rules.
+ * Auto-import by label rules (legacy — kept for backward compat).
  */
 export async function autoImportByLabels(productId, labelRules = []) {
-  if (!labelRules.length) return { imported: 0, tickets: [] };
+  return autoImport(productId, { label_rules: labelRules });
+}
+
+/**
+ * Unified auto-import with full filtering support.
+ *
+ * config:
+ *   import_all     {boolean}  — импортировать все новые issues без фильтра (GL1)
+ *   label_rules    {string[]} — импортировать если есть хотя бы один из labels
+ *   exclude_labels {string[]} — исключить если есть хотя бы один из labels (GL3)
+ *   min_priority   {string}   — 'critical'|'high'|'medium'|'low' — мин. приоритет (GL4)
+ */
+export async function autoImport(productId, config = {}) {
+  const { import_all = false, label_rules = [], exclude_labels = [], min_priority } = config;
+
+  // Нет ни import_all, ни label_rules — ничего не делаем
+  if (!import_all && !label_rules.length) return { imported: 0, tickets: [] };
 
   const newIssues = await gitlabIssues.getByProduct(productId, 'new');
 
   const matching = newIssues.filter(gi => {
-    const labels = Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]');
-    return labels.some(l => labelRules.includes(l.toLowerCase()));
+    const labels = (Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]'))
+      .map(l => l.toLowerCase());
+
+    // GL3: exclude_labels — исключить issues с нежелательными метками
+    if (exclude_labels.length > 0 && labels.some(l => exclude_labels.map(e => e.toLowerCase()).includes(l))) {
+      return false;
+    }
+
+    // GL4: min_priority — проверяем приоритет через маппинг меток
+    if (min_priority) {
+      const detectedPriority = detectPriority(Array.isArray(gi.labels) ? gi.labels : JSON.parse(gi.labels || '[]'));
+      const minLevel = PRIORITY_ORDER[min_priority] || 0;
+      if ((PRIORITY_ORDER[detectedPriority] || 0) < minLevel) return false;
+    }
+
+    // GL1: import_all — берём всё прошедшее фильтры
+    if (import_all) return true;
+
+    // label_rules — должен совпасть хотя бы один label
+    return labels.some(l => label_rules.map(r => r.toLowerCase()).includes(l));
   });
 
   const imported = [];
@@ -180,8 +217,42 @@ export async function autoImportByLabels(productId, labelRules = []) {
     try {
       const issue = await importIssue(gi.id);
       imported.push(issue);
-    } catch { /* skip */ }
+    } catch { /* skip already imported */ }
   }
 
   return { imported: imported.length, tickets: imported };
+}
+
+/**
+ * GL2: Закрытие Kaizen issues при закрытии связанных GL issues.
+ * Ищет все imported GL issues со state='closed' и переводит
+ * связанный kaizen_issue в status='done'.
+ */
+export async function closeSyncedIssues(productId) {
+  const { pool } = await import('./db/pool.js');
+
+  // Найти все GL issues которые закрыты в GitLab и связаны с открытыми Kaizen issues
+  const { rows } = await pool.query(`
+    SELECT gi.id AS gl_cache_id, gi.gitlab_issue_iid, i.id AS issue_id, i.title
+    FROM opii.kaizen_gitlab_issues gi
+    JOIN opii.kaizen_issues i
+      ON i.gitlab_issue_id = gi.gitlab_issue_iid AND i.product_id = gi.product_id
+    WHERE gi.product_id = $1
+      AND gi.state = 'closed'
+      AND gi.sync_status = 'imported'
+      AND i.status NOT IN ('done', 'cancelled')
+  `, [productId]);
+
+  let closedCount = 0;
+  for (const row of rows) {
+    try {
+      await issues.update(row.issue_id, { status: 'done' });
+      closedCount++;
+      log.info({ productId, issueId: row.issue_id, glIid: row.gitlab_issue_iid }, 'Issue closed via GitLab sync');
+    } catch (err) {
+      log.error({ issueId: row.issue_id, err: err.message }, 'Failed to close issue');
+    }
+  }
+
+  return { closed: closedCount };
 }

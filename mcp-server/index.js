@@ -994,11 +994,15 @@ server.tool(
 server.tool(
   'kaizen_update_docs',
   `Обновить документацию продукта. Использует Claude Code для анализа изменений и обновления docs/.
-При запуске из плана — автоматически мержит ветки develop_release из depends_on.`,
+При запуске из плана — автоматически мержит ветки develop_release из depends_on.
+Стандартный набор: USER_GUIDE, MAIN_FUNC, RELEASE_NOTES, DATABASE_SCHEMA, GAP_ANALYSIS, TECH_DEBT, SPEC.
+GAP_ANALYSIS — сопоставление ТЗ с реальным кодом (ГОТОВО/ЧАСТИЧНО/НЕ СДЕЛАНО).
+TECH_DEBT — технический долг (TODO, || true, hardcoded secrets, disabled modules).
+SPEC — техническое задание (создаётся если отсутствует, иначе используется как входные данные).`,
   {
     product_id: z.string().uuid().describe('UUID продукта'),
     model_id: z.string().uuid().describe('UUID модели (claude-code/qwen-code/kilo-code)'),
-    doc_files: z.array(z.string()).optional().describe('Файлы для обновления (по умолчанию: USER_GUIDE, MAIN_FUNC, RELEASE_NOTES, DATABASE_SCHEMA)'),
+    doc_files: z.array(z.string()).optional().describe('Файлы для обновления (по умолчанию: USER_GUIDE, MAIN_FUNC, RELEASE_NOTES, DATABASE_SCHEMA, GAP_ANALYSIS, TECH_DEBT, SPEC)'),
     branches: z.array(z.string()).optional().describe('Ветки для мержа перед обновлением'),
     timeout_min: z.number().optional().default(20),
   },

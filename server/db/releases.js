@@ -71,7 +71,7 @@ export async function create({ product_id, version, name, description, issue_ids
   }
 }
 
-export async function update(id, { version, name, description, status, add_issue_ids, remove_issue_ids }) {
+export async function update(id, { version, name, description, status, spec, add_issue_ids, remove_issue_ids }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -83,6 +83,7 @@ export async function update(id, { version, name, description, status, add_issue
     if (name !== undefined) { sets.push(`name = $${i++}`); vals.push(name); }
     if (description !== undefined) { sets.push(`description = $${i++}`); vals.push(description); }
     if (status !== undefined) { sets.push(`status = $${i++}`); vals.push(status); }
+    if (spec !== undefined) { sets.push(`spec = $${i++}`); vals.push(spec); }
 
     if (sets.length > 0) {
       vals.push(id);

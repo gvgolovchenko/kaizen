@@ -262,6 +262,15 @@ export class Scheduler {
 
   /**
    * Авто-синхронизация GitLab issues по расписанию.
+   *
+   * Поддерживаемые параметры auto_import:
+   *   enabled        {boolean}  — включить авто-импорт
+   *   import_all     {boolean}  — GL1: импортировать все новые issues без фильтра
+   *   label_rules    {string[]} — импортировать по совпадению labels
+   *   exclude_labels {string[]} — GL3: исключить issues с этими labels
+   *   min_priority   {string}   — GL4: мин. приоритет ('critical'|'high'|'medium'|'low')
+   *   ai_enrich      {object}   — GL5: { enabled, model_id } — AI-обогащение после импорта
+   *   close_sync     {boolean}  — GL2: закрывать Kaizen issues при закрытии в GitLab (дефолт: true)
    */
   async _autoGitlabSync(product, config) {
     try {
@@ -277,22 +286,54 @@ export class Scheduler {
       // Обновить время последней синхронизации
       await products.update(product.id, { last_gitlab_sync_at: new Date().toISOString() });
 
-      // Auto-import по label rules
+      // GL2: Закрытие Kaizen issues при закрытии в GitLab (по умолчанию включено)
+      const closeSyncEnabled = config.close_sync !== false;
+      let closedCount = 0;
+      if (closeSyncEnabled) {
+        const closeResult = await gitlabSync.closeSyncedIssues(product.id);
+        closedCount = closeResult.closed;
+        if (closedCount > 0) {
+          log.info({ product: product.name, closed: closedCount }, 'GitLab close-sync done');
+        }
+      }
+
+      // GL1/GL3/GL4: Авто-импорт с расширенными фильтрами
       let importedCount = 0;
-      if (config.auto_import?.enabled && config.auto_import.label_rules?.length > 0) {
-        const importResult = await gitlabSync.autoImportByLabels(product.id, config.auto_import.label_rules);
+      let importedIssues = [];
+      if (config.auto_import?.enabled) {
+        const importResult = await gitlabSync.autoImport(product.id, config.auto_import);
         importedCount = importResult.imported;
+        importedIssues = importResult.tickets;
         if (importedCount > 0) {
-          log.info({ product: product.name, imported: importedCount, labels: config.auto_import.label_rules }, 'GitLab auto-import done');
+          log.info({ product: product.name, imported: importedCount }, 'GitLab auto-import done');
+        }
+      }
+
+      // GL5: AI-обогащение — запустить improve для продукта после импорта
+      if (importedCount > 0 && config.auto_import?.ai_enrich?.enabled) {
+        const modelId = config.auto_import.ai_enrich.model_id;
+        if (modelId) {
+          try {
+            const proc = await processes.create({
+              product_id: product.id,
+              model_id: modelId,
+              type: 'improve',
+              input_count: importedCount + 2,
+            });
+            await this.queueManager.enqueue(proc.id);
+            log.info({ product: product.name, processId: proc.id, issues: importedCount }, 'GL AI enrich process queued');
+          } catch (err) {
+            log.error({ product: product.name, err: err.message }, 'GL AI enrich queue error');
+          }
         }
       }
 
       // Notify: GitLab sync done
-      if (syncResult.new > 0 || importedCount > 0) {
+      if (syncResult.new > 0 || importedCount > 0 || closedCount > 0) {
         notify('gitlab_sync_done', {
           product: product.name, product_id: product.id,
           new_count: syncResult.new, updated_count: syncResult.updated,
-          imported_count: importedCount,
+          imported_count: importedCount, closed_count: closedCount,
         }, getNotifyOpts(product)).catch(() => {});
       }
 

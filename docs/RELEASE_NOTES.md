@@ -2,6 +2,37 @@
 
 ---
 
+## v1.19.0 — Авто-релиз 2.0 + GitLab Auto-Import улучшения (2026-04-07)
+
+### Исправлено
+- **Критический баг авто-релиза**: `formProc.result` — объект `{releases:[...]}`, а не массив. Сценарий `auto_release` всегда возвращал "AI не предложил релизов" даже при наличии предложений AI
+
+### Авто-релиз (AR1–AR6)
+
+- **AR1**: Обработка ВСЕХ предложенных AI релизов (не только первого). Цикл по всем `proposed`, `on_failure: stop|skip`
+- **AR2**: Параметр `auto_approve` теперь реально фильтрует задачи по приоритету:
+  - `all` — создавать все задачи (по умолчанию)
+  - `high_and_critical` — только задачи с приоритетом high или critical
+  - `critical_only` — только критические задачи
+  - При пустом результате фильтрации релиз пропускается со стадией `skipped_no_issues_after_filter`
+- **AR3**: Добавлены опциональные шаги в `develop.*`: `run_tests`, `update_docs`, `deploy` — единообразно с `batch_develop`
+- **AR4**: Параметр `min_issues` — ранний выход с `below_min_issues` если открытых задач меньше порога
+- **AR5**: `develop.enabled === true` (явная проверка) — разработка больше не запускается без явного включения
+- **AR6**: Читаемый `summary`: `Rivc.BI v0.22.0: 3 задачи → опубликован (1 из 1 релизов)`
+- Новые параметры сценария: `min_issues`, `on_failure`, `develop.run_tests`, `develop.update_docs`, `develop.deploy`
+
+### GitLab Auto-Import (GL1–GL5)
+
+- **GL1**: Флаг `auto_import.import_all: true` — импортировать все новые открытые GL issues без фильтра по labels
+- **GL2**: `close_sync: true` (по умолчанию) — при sync `state=closed` в GitLab автоматически переводит связанный Kaizen issue в `done`. Новая функция `closeSyncedIssues(productId)` в `gitlab-sync.js`
+- **GL3**: `auto_import.exclude_labels: ["wontfix", "duplicate"]` — исключать issues с нежелательными метками
+- **GL4**: `auto_import.min_priority: 'high'` — импортировать только high+critical через маппинг labels → priority
+- **GL5**: `auto_import.ai_enrich: {enabled, model_id}` — после импорта создаёт `improve` процесс в очереди для AI-обогащения новых задач
+- `autoImportByLabels` сохранён для обратной совместимости, делегирует в новый `autoImport(productId, config)`
+- `closed_count` добавлен в уведомление `gitlab_sync_done`
+
+---
+
 ## v1.18.1 — Structured logging + Сценарии на странице продукта (2026-04-01)
 
 ### Добавлено

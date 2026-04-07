@@ -107,7 +107,9 @@ export class QueueManager {
         : await processes.getNextQueued(provider);
       if (!next) return;
 
-      this._execute(next.id, provider, { timeoutMs: 20 * 60 * 1000 });
+      // deploy processes need more time (pipeline can take up to 15 min)
+      const deployTimeout = next.type === 'deploy' ? 25 * 60 * 1000 : 20 * 60 * 1000;
+      this._execute(next.id, provider, { timeoutMs: deployTimeout });
     } catch (err) {
       log.error({ provider, err: err.message }, 'Dequeue next failed');
     }

@@ -1,6 +1,6 @@
 # Kaizen — Основные функции
 
-> Версия 1.18.0 | 2026-04-01
+> Версия 1.19.0 | 2026-04-07
 
 ---
 
@@ -175,7 +175,7 @@ Kaizen (改善) — веб-приложение для непрерывного 
 - Per-product JSONB-настройки автоматизации (таб «Автоматизация» на странице продукта)
 - **RC Auto-Sync**: автоматическая синхронизация тикетов из Rivc.Connect по расписанию (1–720 часов)
 - **Auto-Import**: импорт RC-тикетов по правилам приоритетов (critical, high, medium) без ручного вмешательства
-- **GitLab Auto-Sync**: автоматическая синхронизация issues из GitLab по расписанию с авто-импортом по лейблам
+- **GitLab Auto-Sync**: синхронизация каждые 30 мин. Расширенный авто-импорт: `import_all` (без фильтра), `label_rules` (по меткам), `exclude_labels` (исключить метки), `min_priority` (мин. приоритет), `ai_enrich` (improve-процесс после импорта). Авто-закрытие Kaizen issue при закрытии в GitLab (`close_sync: true` по умолчанию)
 - Компактный grid-layout: RC + GitLab синхронизация в 2 колонки
 - **Сценарии** — основной механизм автоматических конвейеров (вместо удалённого Auto-Pipeline). Настраиваются на странице `/scenarios.html` с пресетами, cron-расписанием и историей запусков
 
@@ -206,7 +206,7 @@ Kaizen (改善) — веб-приложение для непрерывного 
 - Автономные рабочие процессы с расписанием — замена Планов для практических задач
 - 5 пресетов:
   - `batch_develop` — spec → develop → [run_tests] → [update_docs] → [publish] → [deploy] для списка релизов (ночная разработка)
-  - `auto_release` — AI формирует релиз из open issues → spec → develop
+  - `auto_release` — AI формирует **все** предложенные релизы из open issues → (фильтр по `auto_approve`) → spec → develop → [run_tests] → [update_docs] → [publish] → [deploy]
   - `nightly_audit` — improve → auto-approve для нескольких продуктов
   - `full_cycle` — полный конвейер: improve → approve → release → spec → develop → publish → press_release
   - `analysis` — анализ без разработки: improve → approve → release → spec

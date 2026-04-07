@@ -12,6 +12,7 @@ import { pushToGitlab, pushToDefaultBranch, waitForPipeline, getPipelineStatus }
 import { runSmokeTests } from './smoke-tester.js';
 import { createLogger } from './logger.js';
 import { execFile as execFileCb } from 'node:child_process';
+import { writeFile, mkdir } from 'node:fs/promises';
 
 const log = createLogger('process-runner');
 import { promisify } from 'node:util';
@@ -121,7 +122,10 @@ async function runTests(processId, proc, product, startTime, timeoutMs) {
   let config = {};
   try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
 
-  const testCommand = config.test_command || detectTestCommand(product.tech_stack);
+  // Prefer test.sh in project root, then config, then auto-detect
+  const { existsSync } = await import('node:fs');
+  const hasTestScript = existsSync(`${cwd}/test.sh`);
+  const testCommand = config.test_command || (hasTestScript ? 'bash test.sh' : detectTestCommand(product.tech_stack));
 
   // 1. Collect branches from plan step dependencies
   let branches = [];
@@ -139,6 +143,21 @@ async function runTests(processId, proc, product, startTime, timeoutMs) {
           }
         }
       }
+    }
+  }
+
+  // If no branches from plan but process has release_id — find develop_release branch for same release
+  if (branches.length === 0 && proc.release_id) {
+    const allProcs = await processes.getAll({ product_id: proc.product_id });
+    const devProc = allProcs.find(p =>
+      p.type === 'develop_release' &&
+      p.release_id === proc.release_id &&
+      p.status === 'completed' &&
+      p.result?.branch
+    );
+    if (devProc?.result?.branch) {
+      branches.push(devProc.result.branch);
+      log.info({ branch: devProc.result.branch, release_id: proc.release_id }, 'Found develop_release branch for release');
     }
   }
 
@@ -230,7 +249,12 @@ async function runTests(processId, proc, product, startTime, timeoutMs) {
       cwd,
       timeout: cmdTimeoutMs,
       maxBuffer: 5 * 1024 * 1024,
-      env: { ...process.env, CI: 'true', NODE_ENV: 'test' },
+      env: {
+        ...process.env,
+        CI: 'true',
+        NODE_ENV: 'test',
+        ...(process.env.JAVA_HOME && { PATH: `${process.env.JAVA_HOME}/bin:${process.env.PATH}` }),
+      },
     });
     stdout = result.stdout;
     stderr = result.stderr;
@@ -848,6 +872,27 @@ ${historySection}
 
   // 9. Save spec
   await releases.saveSpec(release.id, rawResponse);
+
+  // 9.1 Save spec to project docs/ directory
+  if (product.project_path) {
+    try {
+      const docsDir = `${product.project_path}/docs`;
+      await mkdir(docsDir, { recursive: true });
+      const version = release.version || release.name || 'unknown';
+      const safeVersion = version.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const filePath = `${docsDir}/RELEASE_${safeVersion}_SPEC.md`;
+      await writeFile(filePath, rawResponse, 'utf-8');
+      log.info({ filePath, chars: rawResponse.length }, 'Spec saved to file');
+      await processLogs.create({
+        process_id: processId,
+        step: 'spec_file_saved',
+        message: `Спецификация сохранена в файл ${filePath}`,
+        data: { file_path: filePath, char_count: rawResponse.length },
+      });
+    } catch (fileErr) {
+      log.warn({ err: fileErr.message }, 'Failed to save spec to file');
+    }
+  }
 
   await processLogs.create({
     process_id: processId,
@@ -2037,10 +2082,14 @@ async function runDeploy(processId, proc, product, startTime, timeoutMs) {
     data: { sha: commitSha },
   });
 
-  const pipelineTimeoutMs = Math.min(timeoutMs - (Date.now() - startTime), 600_000);
+  const defaultBranch = deploy?.gitlab?.default_branch || 'main';
+  const pipelineTimeoutMs = Math.min(timeoutMs - (Date.now() - startTime), 900_000); // max 15 min for pipeline
   let pipelineResult;
   try {
-    pipelineResult = await waitForPipeline(deploy, commitSha, { timeoutMs: pipelineTimeoutMs });
+    pipelineResult = await waitForPipeline(deploy, commitSha, {
+      timeoutMs: pipelineTimeoutMs,
+      ref: defaultBranch,
+    });
   } catch (err) {
     pipelineResult = { status: 'timeout', web_url: null, jobs: [] };
   }

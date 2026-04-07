@@ -127,19 +127,30 @@ export async function remove(id) {
  * Получить сценарии, готовые к cron-запуску (enabled + cron + next_run_at <= NOW).
  */
 export async function getDueScenarios() {
+  // Атомарно: SELECT + сразу обнуляем next_run_at, чтобы параллельный запрос не нашёл тот же сценарий
   const { rows } = await pool.query(`
-    SELECT s.*, pr.name AS product_name
-    FROM ${TABLE} s
-    LEFT JOIN opii.kaizen_products pr ON pr.id = s.product_id
-    WHERE s.enabled = true
-      AND s.cron IS NOT NULL
-      AND s.next_run_at IS NOT NULL
-      AND s.next_run_at <= NOW()
-      AND NOT EXISTS (
-        SELECT 1 FROM opii.kaizen_scenario_runs r
-        WHERE r.scenario_id = s.id AND r.status = 'running'
-      )
-    ORDER BY s.next_run_at ASC`
+    WITH due AS (
+      SELECT s.id
+      FROM ${TABLE} s
+      WHERE s.enabled = true
+        AND s.cron IS NOT NULL
+        AND s.next_run_at IS NOT NULL
+        AND s.next_run_at <= NOW()
+        AND NOT EXISTS (
+          SELECT 1 FROM opii.kaizen_scenario_runs r
+          WHERE r.scenario_id = s.id AND r.status = 'running'
+        )
+      ORDER BY s.next_run_at ASC
+      FOR UPDATE SKIP LOCKED
+    ),
+    claimed AS (
+      UPDATE ${TABLE} s SET next_run_at = NULL
+      FROM due WHERE s.id = due.id
+      RETURNING s.*
+    )
+    SELECT c.*, pr.name AS product_name
+    FROM claimed c
+    LEFT JOIN opii.kaizen_products pr ON pr.id = c.product_id`
   );
   return rows;
 }
@@ -190,7 +201,7 @@ export function calcNextRun(cronExpr, from = new Date()) {
       return true;
     };
 
-    // Перебираем минуты вперёд (макс 7 дней)
+    // Перебираем минуты вперёд (макс 7 дней) в локальном времени (MSK)
     const candidate = new Date(from);
     candidate.setSeconds(0, 0);
     candidate.setMinutes(candidate.getMinutes() + 1);
