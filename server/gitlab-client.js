@@ -87,6 +87,8 @@ export async function pushToDefaultBranch(projectPath, branchName, deploy) {
 
   // Fetch latest, checkout default branch, sync with remote, merge release branch
   await execFileAsync('git', ['fetch', remoteName], { ...opts, timeout: 120_000 }).catch(() => {});
+  // Stash any local changes so checkout doesn't fail on modified tracked files (e.g. package-lock.json)
+  await execFileAsync('git', ['stash', '--include-untracked'], opts).catch(() => {});
   await execFileAsync('git', ['checkout', defaultBranch], opts);
   // Hard reset to remote to guarantee sync (local may have diverged from manual merges)
   await execFileAsync('git', ['reset', '--hard', `${remoteName}/${defaultBranch}`], opts).catch(() => {});
