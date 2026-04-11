@@ -1,7 +1,7 @@
 # Kaizen — Бэклог
 
 > Технический анализ + Бэклог задач + Технический долг
-> Версия: 1.21.0 | Обновлено: 2026-04-10
+> Версия: 1.22.0 | Обновлено: 2026-04-11
 
 ---
 
@@ -16,7 +16,7 @@
 | 2.1 | Управление продуктами | ГОТОВО | 1.0 | CRUD + automation + deploy + smoke_test |
 | 2.2 | Управление задачами | ГОТОВО | 1.0 | CRUD + bulk + RC/GitLab import + labels |
 | 2.3 | Управление релизами | ГОТОВО | 1.15 | Линейные статусы, spec, develop, press-release, publish |
-| 2.4 | AI-процессы | ГОТОВО | 1.18 | 9 типов, очередь, 4 код-агента (Claude/Qwen/Ollama/Kilo), base_url для Ollama |
+| 2.4 | AI-процессы | ГОТОВО | 1.22 | 10 типов (включая seed_data), очередь, 4 код-агента (Claude/Qwen/Ollama/Kilo), base_url для Ollama |
 | 2.5 | Сценарии | ГОТОВО | 1.19 | 3 пресета (full_cycle/analysis удалены), cron MSK, batch_develop, auto_release |
 | 2.6 | Планировщик | ГОТОВО | 1.18 | Планы + сценарии + RC/GitLab auto-sync |
 | 2.7 | Уведомления | ГОТОВО | 1.20 | 7 событий (Б24) + отчёты в группы (log.blogpost.add), Telegram частично |
@@ -98,6 +98,7 @@
 | AR7 | GitLab pre-sync в `auto_release`: sync + import + reopen перед поиском открытых задач | v1.21.0 |
 | UI.FR | Новый UI «Формирование релиза»: summary-баннер, пипки приоритетов, rationale, unassigned, read-only | v1.21.0 |
 | Fix1 | Фикс smoke-тестов: `-- --port` для npm, инъекция порта вне autodiscovery-блока | v1.21.0 |
+| SD1 | Новый тип процесса `seed_data`: claude-code анализирует миграции → INSERT новых сущностей + UPDATE FK в существующих | v1.22.0 |
 
 ---
 
