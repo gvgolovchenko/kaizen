@@ -415,6 +415,7 @@ const ACT_ICONS = {
   run_tests:             { icon: '🧪', label: 'Тесты' },
   update_docs:           { icon: '📝', label: 'Документация' },
   deploy:                { icon: '🚀', label: 'Деплой' },
+  seed_data:             { icon: '🌱', label: 'Моковые данные' },
   release_published:     { icon: '🚀', label: 'Релиз опубликован' },
   scenario_run:          { icon: '⚙', label: 'Сценарий' },
 };
@@ -458,6 +459,11 @@ function activityResultSummary(a) {
   }
   if (a.type === 'form_release' && r.releases) {
     return `<span class="af-result">${r.releases.length} рел.</span>`;
+  }
+  if (a.type === 'seed_data' && r.records_inserted !== undefined) {
+    const ins = r.records_inserted || 0;
+    const upd = r.records_updated || 0;
+    return `<span class="af-result" style="color:var(--green)">+${ins}${upd > 0 ? ` ~${upd}` : ''} записей</span>`;
   }
   return '';
 }

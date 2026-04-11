@@ -16,6 +16,7 @@ const PROC_TYPE_LABELS = {
   update_docs: 'Документация',
   validate_product: 'Анализ продукта',
   deploy: 'Деплой',
+  seed_data: 'Моковые данные',
 };
 
 export function procTypeLabel(type) {
@@ -162,6 +163,30 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
           <div>Тесты: <strong style="color:${r.tests_passed ? 'var(--green)' : 'var(--red)'}">
             ${r.tests_passed ? 'пройдены' : 'не пройдены'}</strong></div>
           ${r.summary ? `<div style="margin-top:8px;color:var(--text-dim)">${escapeHtml(r.summary)}</div>` : ''}
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('${modalId}')">Закрыть</button>
+        </div>
+      </div>`;
+    showedDetailSection = true;
+  }
+
+  // Результат seed_data
+  if (!showedDetailSection && proc.type === 'seed_data' && proc.status === 'completed' && proc.result) {
+    const r = proc.result;
+    const seeded = (r.tables_seeded || []).join(', ') || '—';
+    const updated = (r.tables_updated || []).join(', ') || '—';
+    html += `
+      <div>
+        <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-dim)">Результат генерации данных</div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:0.875rem">
+          <div>Записей добавлено: <strong style="color:var(--green)">${r.records_inserted ?? '—'}</strong></div>
+          <div>Записей обновлено: <strong style="color:var(--blue)">${r.records_updated ?? '—'}</strong></div>
+          <div>Таблицы (INSERT): <strong>${escapeHtml(seeded)}</strong></div>
+          <div>Таблицы (UPDATE): <strong>${escapeHtml(updated)}</strong></div>
+          ${r.branch ? `<div>Ветка: <strong>${escapeHtml(r.branch)}</strong></div>` : ''}
+          ${r.summary ? `<div style="margin-top:8px;color:var(--text-dim)">${escapeHtml(r.summary)}</div>` : ''}
+          ${r.parse_error ? `<div style="color:var(--yellow);margin-top:4px">⚠ Не удалось распарсить итоговый JSON — проверьте логи</div>` : ''}
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" onclick="closeModal('${modalId}')">Закрыть</button>

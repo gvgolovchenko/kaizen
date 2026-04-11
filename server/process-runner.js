@@ -394,6 +394,10 @@ export async function runProcess(processId, options = {}) {
       await runUpdateDocs(processId, proc, product, model, startTime, timeoutMs);
       return;
     }
+    if (proc.type === 'seed_data') {
+      await runSeedData(processId, proc, product, model, startTime, timeoutMs);
+      return;
+    }
     const taskCount = Math.min(Math.max(parseInt(proc.input_count) || 5, 1), 10);
     const outputMode = proc.config?.output_mode || 'tasks';
 
@@ -703,8 +707,8 @@ function shouldAutoRetry(proc, retryInfo, err) {
   const retryCount = retryInfo.retry_count || 0;
   if (retryCount >= MAX_RETRIES) return false;
 
-  // Don't retry local processes (run_tests, update_docs, deploy) — they have deterministic errors
-  if (['run_tests', 'update_docs', 'deploy'].includes(proc.type)) return false;
+  // Don't retry local processes (run_tests, update_docs, deploy, seed_data) — they have deterministic errors
+  if (['run_tests', 'update_docs', 'deploy', 'seed_data'].includes(proc.type)) return false;
 
   // Retry on timeout, network, or AI provider errors
   const msg = (err.message || '').toLowerCase();
@@ -1381,6 +1385,242 @@ ${releaseContext ? `=== РЕЛИЗЫ ===${releaseContext}\n` : ''}
     process_id: processId,
     step: 'parse_result',
     message: `Ветка: ${resultObj.branch} · коммит: ${resultObj.commit_hash || '—'} · файлов обновлено: ${resultObj.files_updated?.length || 0}`,
+    data: resultObj,
+  });
+
+  // 10. Complete
+  const durationMs = Date.now() - startTime;
+  await processes.update(processId, {
+    status: 'completed',
+    result: resultObj,
+    completed_at: new Date().toISOString(),
+    duration_ms: durationMs,
+  });
+}
+
+/**
+ * Run seed_data: analyse new/changed migrations and code via Claude Code,
+ * then INSERT new mock records AND UPDATE existing rows to link new entities.
+ */
+async function runSeedData(processId, proc, product, model, startTime, timeoutMs) {
+  const cwd = product.project_path;
+  if (!cwd) throw new Error('Product has no project_path configured');
+
+  let config = {};
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+
+  const seedCount  = Math.min(Math.max(parseInt(config.seed_count) || 20, 1), 200);
+  const focusTables = Array.isArray(config.tables) ? config.tables : [];
+  const useApi     = config.use_api === true;
+  const language   = config.language || 'ru';
+
+  // 1. Collect branches from plan step dependencies (same as run_tests/update_docs)
+  let branches = [];
+  if (proc.plan_step_id) {
+    const planSteps = await import('./db/plan-steps.js');
+    const step = await planSteps.getById(proc.plan_step_id);
+    if (step?.depends_on?.length) {
+      const allSteps = await planSteps.getByPlan(step.plan_id);
+      for (const depId of step.depends_on) {
+        const depStep = allSteps.find(s => s.id === depId);
+        if (depStep?.process_id && depStep.process_type === 'develop_release') {
+          const depProc = await processes.getById(depStep.process_id);
+          if (depProc?.result?.branch) branches.push(depProc.result.branch);
+        }
+      }
+    }
+  }
+  if (config.branches?.length) branches = config.branches;
+
+  // Also collect release context
+  let releaseContext = '';
+  if (proc.plan_step_id) {
+    const planSteps = await import('./db/plan-steps.js');
+    const step = await planSteps.getById(proc.plan_step_id);
+    if (step?.depends_on?.length) {
+      const allSteps = await planSteps.getByPlan(step.plan_id);
+      for (const depId of step.depends_on) {
+        const depStep = allSteps.find(s => s.id === depId);
+        if (depStep?.release_id) {
+          const rel = await releases.getById(depStep.release_id);
+          if (rel) {
+            releaseContext += `\n- ${rel.version} "${rel.name}": ${rel.issues?.map(i => i.title).join(', ') || 'нет задач'}`;
+          }
+        }
+      }
+    }
+  }
+
+  await processLogs.create({
+    process_id: processId,
+    step: 'seed_started',
+    message: `Генерация моковых данных. Веток: ${branches.length}, seed_count: ${seedCount}${focusTables.length ? `, фокус: ${focusTables.join(', ')}` : ''}`,
+    data: { branches, seed_count: seedCount, tables: focusTables, use_api: useApi },
+  });
+
+  // 2. Merge branches into integration branch
+  let integrationBranch = null;
+  if (branches.length > 0) {
+    integrationBranch = `kaizen/seed-${processId.slice(0, 8)}`;
+    try {
+      await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 15_000 });
+      await execFileAsync('git', ['pull', '--ff-only'], { cwd, timeout: 30_000 }).catch(() => {});
+      await execFileAsync('git', ['checkout', '-b', integrationBranch], { cwd, timeout: 10_000 });
+
+      for (const branch of branches) {
+        try {
+          await execFileAsync('git', ['merge', branch, '--no-edit'], { cwd, timeout: 30_000 });
+        } catch (mergeErr) {
+          await execFileAsync('git', ['merge', '--abort'], { cwd, timeout: 10_000 }).catch(() => {});
+          await execFileAsync('git', ['checkout', 'main'], { cwd, timeout: 10_000 }).catch(() => {});
+          await execFileAsync('git', ['branch', '-D', integrationBranch], { cwd, timeout: 10_000 }).catch(() => {});
+          throw new Error(`Конфликт при мерже ветки ${branch}: ${mergeErr.message}`);
+        }
+      }
+
+      await processLogs.create({
+        process_id: processId,
+        step: 'merge_complete',
+        message: `${branches.length} веток смержены в ${integrationBranch}`,
+        data: { integration_branch: integrationBranch, branches },
+      });
+    } catch (err) {
+      throw new Error(`Git merge error: ${err.message}`);
+    }
+  }
+
+  // 3. Get diff summary
+  let diffSummary = '';
+  try {
+    const { stdout } = await execFileAsync('git', ['diff', '--stat', 'main', 'HEAD'], { cwd, timeout: 15_000 });
+    diffSummary = stdout.trim();
+  } catch {}
+
+  // 4. Build prompt
+  const focusHint = focusTables.length
+    ? `\n  Особое внимание: таблицы/сущности — ${focusTables.join(', ')}`
+    : '';
+
+  const accessMode = useApi
+    ? `  Способ вставки данных: через REST API приложения (запускай curl/fetch к локальному серверу).
+  Перед вызовами убедись что сервер запущен (проверь порт через .env или README).`
+    : `  Способ вставки данных: прямые SQL-запросы через psql/sqlcmd/sqlite3.
+  Прочитай .env файл проекта чтобы получить connection string (DB_URL, DATABASE_URL или аналог).
+  Выполняй SQL через Bash, например: psql "$DATABASE_URL" -c "INSERT INTO ..."`;
+
+  const systemPrompt = `Ты — эксперт по тестовым данным. Твоя задача — проанализировать новый/изменённый код и наполнить базу данных реалистичными моковыми данными.
+
+Продукт: ${product.name}
+${product.description ? `Описание: ${product.description}` : ''}
+${product.tech_stack ? `Стек: ${product.tech_stack}` : ''}
+Путь к проекту: ${cwd}
+${releaseContext ? `\nРелизы:\n${releaseContext}` : ''}
+
+СТРОГИЙ ПОРЯДОК ДЕЙСТВИЙ:
+
+Шаг 1 — АНАЛИЗ ИЗМЕНЕНИЙ
+  Выполни: git diff main..HEAD -- '*.sql' '*.prisma' '*.py' '*migration*' '*schema*'
+  Изучи новые таблицы, колонки, FK-ограничения.
+  Также прочитай файлы схемы/миграций из папок migrations/, db/, prisma/, alembic/.
+  Определи:
+    a) НОВЫЕ таблицы → нужны INSERT
+    b) НОВЫЕ FK-колонки в существующих таблицах → нужны UPDATE существующих строк
+    c) НОВЫЕ NOT NULL колонки → обязательно заполнить
+    d) Порядок вставки (сначала родительские сущности, потом дочерние)${focusHint}
+
+Шаг 2 — ИЗУЧЕНИЕ СУЩЕСТВУЮЩИХ ДАННЫХ
+  Перед INSERT/UPDATE — сделай SELECT COUNT(*) для затронутых таблиц.
+  Для связей — получи реальные ID из родительских таблиц (SELECT id FROM ... LIMIT 20).
+  Используй реальные ID для FK вместо хардкода.
+
+Шаг 3 — ГЕНЕРАЦИЯ ДАННЫХ
+  Количество записей: ~${seedCount} на каждую новую сущность.
+  Данные должны быть реалистичными и соответствовать домену продукта.
+  Если существующие записи имеют NULL в новых FK-колонках — обнови их, равномерно распределив по новым сущностям.
+  Если FK nullable и неясно как связать — не трогай (оставь NULL).
+
+${accessMode}
+
+Шаг 4 — ИТОГОВЫЙ JSON
+  Последней строкой ответа выведи ТОЛЬКО этот JSON (без пояснений):
+  {"tables_seeded":["таблица1","таблица2"],"tables_updated":["таблица3"],"records_inserted":42,"records_updated":15,"summary":"краткое описание что было создано и связано"}
+
+ПРАВИЛА:
+- Не изменяй код приложения — только данные в БД
+- Не удаляй существующие данные (только INSERT/UPDATE, никаких DELETE/TRUNCATE)
+- Если FK обязательный (NOT NULL) — обязательно проставь всем существующим записям
+- При ошибке подключения к БД — сообщи и остановись
+- Пиши комментарии к SQL на ${language === 'en' ? 'английском' : 'русском'} языке`;
+
+  const userPrompt = `Наполни базу данных моковыми данными для нового функционала.
+
+${diffSummary ? `=== ИЗМЕНЕНИЯ (git diff --stat) ===\n${diffSummary}\n` : ''}
+${releaseContext ? `=== РЕЛИЗЫ ===${releaseContext}\n` : ''}
+Количество записей на сущность: ${seedCount}
+${focusTables.length ? `Приоритет: ${focusTables.join(', ')}` : 'Покрой все новые/изменённые сущности.'}`;
+
+  // 5. Log request_sent
+  await processLogs.create({
+    process_id: processId,
+    step: 'request_sent',
+    message: `Запрос отправлен ${model.name}. Ветка: ${integrationBranch || 'текущая'}, seed_count: ${seedCount}`,
+    data: { branch: integrationBranch, seed_count: seedCount, use_api: useApi },
+  });
+
+  // 6. Call Claude Code with streaming
+  const onEvent = createCheckpointTracker(processId);
+  const watchdogMs = timeoutMs + 60_000;
+  const { text: rawResponse, events } = await withWatchdog(
+    _pickStreamingCaller(model?.provider)(
+      model?.model_id || 'claude-sonnet-4-6', systemPrompt, userPrompt, {
+        cwd,
+        timeoutMs,
+        allowedTools: ['Read', 'Glob', 'Grep', 'Bash'],
+        onEvent,
+      }
+    ),
+    watchdogMs,
+    `seed_data/${model?.name || 'claude-code'}`,
+  );
+
+  // 7. Log response_received
+  await processLogs.create({
+    process_id: processId,
+    step: 'response_received',
+    message: `Ответ получен (${rawResponse.length} символов, ${events.length} событий)`,
+    data: { response_length: rawResponse.length, event_count: events.length },
+  });
+
+  // 8. Parse result
+  const parsedArr = parseJsonFromAI(rawResponse);
+  const parsed = parsedArr ? parsedArr[0] : null;
+  let resultObj;
+  if (parsed && (parsed.tables_seeded || parsed.records_inserted !== undefined)) {
+    resultObj = {
+      tables_seeded:    parsed.tables_seeded    || [],
+      tables_updated:   parsed.tables_updated   || [],
+      records_inserted: parsed.records_inserted || 0,
+      records_updated:  parsed.records_updated  || 0,
+      summary:          parsed.summary          || '',
+      branch:           integrationBranch       || null,
+    };
+  } else {
+    resultObj = {
+      tables_seeded:    [],
+      tables_updated:   [],
+      records_inserted: 0,
+      records_updated:  0,
+      summary:          'Не удалось распарсить итоговый JSON',
+      branch:           integrationBranch || null,
+      parse_error:      true,
+    };
+  }
+
+  // 9. Log parse_result
+  await processLogs.create({
+    process_id: processId,
+    step: 'parse_result',
+    message: `Засеяно: ${resultObj.records_inserted} записей в [${resultObj.tables_seeded.join(', ') || '—'}] · обновлено: ${resultObj.records_updated} в [${resultObj.tables_updated.join(', ') || '—'}]`,
     data: resultObj,
   });
 

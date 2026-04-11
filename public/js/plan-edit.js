@@ -220,10 +220,11 @@ window.hideStepForm = function () {
 window.onProcessTypeChange = function () {
   const type = document.getElementById('stepProcessType').value;
   const isLocal = type === 'run_tests' || type === 'deploy';
+  const isJsonConfig = isLocal || type === 'update_docs' || type === 'seed_data';
   document.getElementById('stepModelGroup').style.display = isLocal ? 'none' : '';
   document.getElementById('stepCountGroup').style.display = isLocal ? 'none' : '';
   const promptEl = document.getElementById('stepPrompt');
-  promptEl.placeholder = isLocal
+  promptEl.placeholder = isJsonConfig
     ? 'JSON конфиг (необязательно)'
     : 'Промпт для AI...';
 
@@ -248,7 +249,8 @@ window.saveStep = async function () {
   const processType = document.getElementById('stepProcessType').value;
   const modelId = document.getElementById('stepModel').value;
   const isLocal = processType === 'run_tests' || processType === 'deploy';
-  if (!isLocal && !modelId) return toast('Выберите модель', 'error');
+  const needsModel = !isLocal;
+  if (needsModel && !modelId) return toast('Выберите модель', 'error');
 
   const body = {
     name: document.getElementById('stepName').value.trim() || null,

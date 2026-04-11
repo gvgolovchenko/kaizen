@@ -298,6 +298,7 @@ const DURATION_THRESHOLDS = {
   run_tests: 10 * 60_000,
   update_docs: 15 * 60_000,
   deploy: 10 * 60_000,
+  seed_data: 15 * 60_000,
   prepare_press_release: 5 * 60_000,
   roadmap_from_doc: 5 * 60_000,
 };

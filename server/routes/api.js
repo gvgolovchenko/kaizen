@@ -37,6 +37,7 @@ const STEP_REQUIREMENTS = {
   roadmap_from_doc:      { model: true,  release: false },
   run_tests:             { model: false, release: false },
   deploy:                { model: false, release: false },
+  seed_data:             { model: true,  release: false },
 };
 
 function validateStepConfig(step) {
@@ -708,12 +709,12 @@ router.post('/processes', async (req, res) => {
     if (type === 'roadmap_from_doc' && !prompt) {
       return res.status(400).json({ error: 'prompt (document text) is required for roadmap_from_doc' });
     }
-    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && type !== 'validate_product' && type !== 'deploy' && !prompt && !template_id) {
+    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && type !== 'validate_product' && type !== 'deploy' && type !== 'seed_data' && !prompt && !template_id) {
       return res.status(400).json({ error: 'prompt or template_id is required' });
     }
 
-    // For form_release/run_tests/deploy, store config as JSON in input_prompt
-    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs' || type === 'validate_product' || type === 'deploy')
+    // For form_release/run_tests/deploy/seed_data, store config as JSON in input_prompt
+    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs' || type === 'validate_product' || type === 'deploy' || type === 'seed_data')
       ? JSON.stringify(config || {}) : (prompt || null);
 
     const proc = await processes.create({
