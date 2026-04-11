@@ -132,7 +132,8 @@ export class ScenarioRunner {
 
   async _batchDevelop(scenario, config) {
     const { release_ids, model_id, timeout_min = 30, auto_publish = true, on_failure = 'stop',
-            run_tests: runTestsOpt = false, update_docs: updateDocsOpt = false, deploy: deployOpt = false } = config;
+            seed_data: seedDataOpt = false, run_tests: runTestsOpt = false,
+            update_docs: updateDocsOpt = false, deploy: deployOpt = false } = config;
     if (!release_ids?.length) throw new Error('release_ids required for batch_develop');
     if (!model_id) throw new Error('model_id required for batch_develop');
 
@@ -202,7 +203,29 @@ export class ScenarioRunner {
         continue;
       }
 
-      // Этап 3: Тестирование (опционально)
+      // Этап 3: Моковые данные (опционально)
+      if (developOk && seedDataOpt) {
+        try {
+          const seedProc = await this._createAndWait({
+            product_id: scenario.product_id,
+            model_id,
+            type: 'seed_data',
+            config: {},
+          }, timeout_min);
+          processIds.push(seedProc.id);
+
+          if (seedProc.status === 'completed') {
+            const seedData = seedProc.result || {};
+            stages.push({ release: label, stage: 'seed_completed', records_inserted: seedData.records_inserted, records_updated: seedData.records_updated });
+          } else {
+            stages.push({ release: label, stage: 'seed_failed', error: seedProc.error });
+          }
+        } catch (err) {
+          stages.push({ release: label, stage: 'seed_error', error: err.message });
+        }
+      }
+
+      // Этап 4: Тестирование (опционально)
       if (developOk && runTestsOpt) {
         try {
           const testProc = await this._createAndWait({
@@ -489,6 +512,24 @@ export class ScenarioRunner {
         stages.push({ release: label, stage: 'develop_error', error: err.message });
         if (on_failure === 'stop') throw err;
         continue;
+      }
+
+      // Моковые данные (опционально)
+      if (developOk && develop.seed_data) {
+        try {
+          const seedProc = await this._createAndWait({
+            product_id: scenario.product_id,
+            model_id: devModelId,
+            type: 'seed_data',
+            config: {},
+          }, timeout_min);
+          processIds.push(seedProc.id);
+          const seedData = seedProc.result || {};
+          stages.push({ release: label, stage: seedProc.status === 'completed' ? 'seed_completed' : 'seed_failed',
+            records_inserted: seedData.records_inserted, records_updated: seedData.records_updated, error: seedProc.error });
+        } catch (err) {
+          stages.push({ release: label, stage: 'seed_error', error: err.message });
+        }
       }
 
       // AR3: Тестирование (опционально)

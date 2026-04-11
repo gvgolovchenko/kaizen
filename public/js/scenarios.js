@@ -388,11 +388,14 @@ window.editScenario = async function (id) {
     if (PRESET_VISIBLE[s.preset]) {
       if (config.run_tests !== undefined) stageStates.tests = config.run_tests;
       if (config.update_docs !== undefined) stageStates.docs = config.update_docs;
+      if (config.seed_data !== undefined) stageStates.seed = config.seed_data;
       if (config.auto_publish !== undefined) stageStates.publish = config.auto_publish;
       if (config.deploy !== undefined) stageStates.deploy = config.deploy;
       if (config.develop !== undefined) {
-        if (typeof config.develop === 'object') stageStates.develop = config.develop.enabled !== false;
-        else stageStates.develop = config.develop;
+        if (typeof config.develop === 'object') {
+          stageStates.develop = config.develop.enabled !== false;
+          if (config.develop.seed_data !== undefined) stageStates.seed = config.develop.seed_data;
+        } else stageStates.develop = config.develop;
       }
       drawStages();
     }
@@ -604,6 +607,7 @@ const ALL_STAGES = [
   { id: 'release',  label: 'Форм. релиза',      icon: '📦', requires: ['approve'], locked: true },
   { id: 'spec',     label: 'Спецификация',      icon: '📋', requires: ['release'], locked: true },
   { id: 'develop',  label: 'Разработка',        icon: '⚙️', requires: ['spec'],    locked: false },
+  { id: 'seed',     label: 'Моковые данные',    icon: '🌱', requires: ['develop'], locked: false },
   { id: 'tests',    label: 'Тестирование',      icon: '🧪', requires: ['develop'], locked: false },
   { id: 'docs',     label: 'Документирование',  icon: '📝', requires: ['develop'], locked: false },
   { id: 'publish',  label: 'Публикация',        icon: '🚀', requires: ['develop'], locked: false },
@@ -612,14 +616,14 @@ const ALL_STAGES = [
 
 // Which stages are visible per preset
 const PRESET_VISIBLE = {
-  batch_develop: ['spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
-  auto_release:  ['release', 'spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
+  batch_develop: ['spec', 'develop', 'seed', 'tests', 'docs', 'publish', 'deploy'],
+  auto_release:  ['release', 'spec', 'develop', 'seed', 'tests', 'docs', 'publish', 'deploy'],
 };
 
 // Default on/off per preset (only for unlocked stages)
 const PRESET_DEFAULTS = {
-  batch_develop: { develop: true, tests: false, docs: true, publish: false, deploy: false },
-  auto_release:  { develop: true, tests: false, docs: false, publish: false, deploy: false },
+  batch_develop: { develop: true, seed: false, tests: false, docs: true, publish: false, deploy: false },
+  auto_release:  { develop: true, seed: false, tests: false, docs: false, publish: false, deploy: false },
 };
 
 let stageStates = {};
@@ -976,6 +980,7 @@ window.createScenario = async function (e) {
     // Read from stage states
     config.run_tests = stageStates.tests || false;
     config.update_docs = stageStates.docs || false;
+    config.seed_data = stageStates.seed || false;
     config.auto_publish = stageStates.publish || false;
     config.deploy = stageStates.deploy || false;
   } else if (preset === 'auto_release') {
@@ -983,6 +988,7 @@ window.createScenario = async function (e) {
     config.auto_approve = document.getElementById('fAutoApproveAR').value;
     config.develop = {
       enabled: stageStates.develop !== false,
+      seed_data: stageStates.seed || false,
       run_tests: stageStates.tests || false,
       update_docs: stageStates.docs || false,
       auto_publish: stageStates.publish || false,
