@@ -40,7 +40,7 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
   }
 
   // Check if Docker Compose mode is enabled
-  const dockerComposeMode = config.docker_compose === true || 
+  const dockerComposeMode = config.docker_compose === true ||
     (config.start_command && config.start_command.includes('docker compose'));
 
   if (!config.url || !config.pages?.length || (!config.start_command && !dockerComposeMode)) {
@@ -52,24 +52,29 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
     if (!config.pages?.length) config.pages = discovered.pages;
     if (!config.ready_timeout_ms) config.ready_timeout_ms = discovered.ready_timeout_ms;
 
-    // Override discovered port with dev_ports if available
-    if (dp.frontend && config.url) {
-      try {
-        const u = new URL(config.url);
-        u.port = String(dp.frontend);
-        config.url = u.href;
-      } catch { /* keep discovered url */ }
-    }
-    // Inject --port into start_command if dev_ports specifies a port
-    if (dp.frontend && config.start_command && !config.start_command.includes('--port')) {
-      config.start_command += ` --port ${dp.frontend}`;
-    }
-
     await log('smoke_autodiscover_done', `Обнаружено: ${config.start_command} → ${config.url}, ${config.pages.length} страниц`, {
       discovered,
       merged: config,
       dev_ports: dp,
     });
+  }
+
+  // Always apply port from dev_ports (outside autodiscovery — works even when pages are cached)
+  if (dp.frontend && config.url && !dockerComposeMode) {
+    // Override URL port
+    try {
+      const u = new URL(config.url);
+      u.port = String(dp.frontend);
+      config.url = u.href;
+    } catch { /* keep url */ }
+    // Inject --port into start_command.
+    // For "npm run <script>" commands the separator "--" is required to pass args to the underlying tool.
+    if (config.start_command && !config.start_command.includes('--port')) {
+      const isNpmScript = /npm run /.test(config.start_command);
+      config.start_command += isNpmScript
+        ? ` -- --port ${dp.frontend}`
+        : ` --port ${dp.frontend}`;
+    }
   }
 
   const {

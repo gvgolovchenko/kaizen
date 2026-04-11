@@ -19,6 +19,7 @@ import * as scenarioRuns from './db/scenario-runs.js';
 import * as scenarios from './db/scenarios.js';
 import { notify, getNotifyOpts } from './notifier.js';
 import { createLogger } from './logger.js';
+import { syncIssues, autoImport, reopenSyncedIssues } from './gitlab-sync.js';
 
 const log = createLogger('scenario-runner');
 
@@ -315,6 +316,39 @@ export class ScenarioRunner {
     const stages = [];
     const processIds = [];
 
+    // Пре-шаг: синхронизация GitLab (если настроена)
+    const productCfg = await products.getById(scenario.product_id);
+    if (productCfg?.deploy?.gitlab?.project_id) {
+      try {
+        // 1. Обновляем кэш GitLab issues
+        const syncResult = await syncIssues(scenario.product_id);
+
+        // 2. Импортируем новые issues (не импортированные ранее)
+        const gitlabAutoImportCfg = productCfg?.automation?.gitlab_auto_sync?.auto_import || {};
+        const importResult = await autoImport(scenario.product_id, {
+          import_all: true,
+          ...gitlabAutoImportCfg,
+        });
+
+        // 3. Возвращаем в open задачи, которые ещё открыты в GitLab
+        // (могли быть закрыты в Kaizen при публикации предыдущего релиза,
+        //  но в GitLab остались открытыми — значит работа ещё не завершена)
+        const reopenResult = await reopenSyncedIssues(scenario.product_id);
+
+        stages.push({
+          stage: 'gitlab_sync_done',
+          synced: syncResult?.synced ?? 0,
+          imported: importResult?.imported ?? 0,
+          reopened: reopenResult?.reopened ?? 0,
+        });
+        log.info({ productId: scenario.product_id, ...reopenResult }, 'auto_release: GitLab pre-sync done');
+      } catch (syncErr) {
+        // Не блокируем — продолжаем с теми задачами что есть
+        stages.push({ stage: 'gitlab_sync_failed', error: syncErr.message });
+        log.warn({ err: syncErr.message }, 'auto_release: GitLab pre-sync failed, continuing');
+      }
+    }
+
     // Проверить наличие open issues
     const openIssues = await issues.getByProduct(scenario.product_id, 'open');
     if (!openIssues || openIssues.length === 0) {
@@ -523,6 +557,13 @@ export class ScenarioRunner {
       } else if (developOk) {
         successCount++;
       }
+    }
+
+    // Отметить form_release процесс как использованный (approved_count = кол-во созданных релизов)
+    if (createdReleases.length > 0) {
+      try {
+        await processes.update(formProc.id, { approved_count: createdReleases.length });
+      } catch { /* некритично */ }
     }
 
     // AR6: читаемый summary

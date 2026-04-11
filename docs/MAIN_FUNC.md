@@ -204,12 +204,10 @@ Kaizen (改善) — веб-приложение для непрерывного 
 ### 21. Сценарии (ScenarioRunner)
 
 - Автономные рабочие процессы с расписанием — замена Планов для практических задач
-- 5 пресетов:
+- 3 пресета:
   - `batch_develop` — spec → develop → [run_tests] → [update_docs] → [publish] → [deploy] для списка релизов (ночная разработка)
   - `auto_release` — AI формирует **все** предложенные релизы из open issues → (фильтр по `auto_approve`) → spec → develop → [run_tests] → [update_docs] → [publish] → [deploy]
   - `nightly_audit` — improve → auto-approve для нескольких продуктов
-  - `full_cycle` — полный конвейер: improve → approve → release → spec → develop → publish → press_release
-  - `analysis` — анализ без разработки: improve → approve → release → spec
 - Три режима запуска:
   - Сейчас — создаётся и сразу выполняется
   - В указанное время — дата + час (MSK), одноразовый запуск, авто-отключение

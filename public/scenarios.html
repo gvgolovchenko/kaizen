@@ -29,8 +29,6 @@
           <option value="batch_develop">Пакетная разработка</option>
           <option value="auto_release">Авто-релиз</option>
           <option value="nightly_audit">Ночной аудит</option>
-          <option value="full_cycle">Полный цикл</option>
-          <option value="analysis">Анализ</option>
         </select>
         <button class="btn btn-primary" onclick="showCreateModal()">+ Создать</button>
       </div>
@@ -110,8 +108,6 @@
               <option value="batch_develop">Пакетная разработка</option>
               <option value="auto_release">Авто-релиз</option>
               <option value="nightly_audit">Ночной аудит</option>
-              <option value="full_cycle">Полный цикл</option>
-              <option value="analysis">Анализ</option>
             </select>
           </div>
           <div class="form-group">
@@ -271,23 +267,6 @@
           </div>
         </div>
 
-        <!-- full_cycle / analysis -->
-        <div id="cfgPipeline" class="scenario-config-section" style="display:none">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div class="form-group">
-              <label style="font-size:0.8rem">Авто-утверждение</label>
-              <select id="fAutoApproveFC">
-                <option value="all">Все</option>
-                <option value="high_and_critical" selected>High + Critical</option>
-                <option value="critical_only">Только Critical</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label style="font-size:0.8rem">Таймаут (мин)</label>
-              <input type="number" id="fTimeoutFC" value="20" min="5" max="60">
-            </div>
-          </div>
-        </div>
 
         <!-- Название + Описание (внизу, автогенерация) -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
@@ -311,5 +290,6 @@
   </div>
 
   <script type="module" src="/js/scenarios.js"></script>
+  <script src="/js/common.js"></script>
 </body>
 </html>

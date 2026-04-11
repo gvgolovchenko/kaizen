@@ -12,7 +12,7 @@ import * as planSteps from '../db/plan-steps.js';
 import * as rcClient from '../rc-client.js';
 import * as rcTickets from '../db/rc-tickets.js';
 import * as rcSync from '../rc-sync.js';
-import { generateGitlabCI, generateDockerfile, generateDockerCompose } from '../ci-generator.js';
+import { generateGitlabCI, generateDockerfile, generateDockerCompose, syncCIVariablesToGitLab } from '../ci-generator.js';
 import { getPipelineStatus } from '../gitlab-client.js';
 import * as searchDb from '../db/search.js';
 import * as dashboard from '../db/dashboard.js';
@@ -270,7 +270,7 @@ router.post('/releases/:id/publish', async (req, res) => {
       release.git_tag = tagName;
 
       // Push tag to GitLab if configured
-      if (product.deploy?.gitlab?.remote_url) {
+      if (product.deploy?.gitlab?.access_token && (product.deploy?.gitlab?.remote_url || product.deploy?.gitlab?.project_id)) {
         await exec('git', ['push', 'origin', tagName], { cwd: product.project_path, timeout: 15_000 }).catch(() => {});
       }
     }
@@ -297,6 +297,19 @@ router.post('/releases/:id/publish', async (req, res) => {
       }
     }
   } catch { /* GitLab sync errors should not block publish */ }
+
+  // Post release report to Б24 group (fire-and-forget)
+  try {
+    const { postReleaseReport } = await import('../notifier.js');
+    const releaseWithIssues = { ...release, issues: await issues.getByRelease(release.id) };
+    const gitlabUrl = product?.deploy?.gitlab?.url;
+    const gitlabProjectId = product?.deploy?.gitlab?.project_id;
+    const pipelineUrl = gitlabUrl && gitlabProjectId ? `${gitlabUrl}/${gitlabProjectId}/-/pipelines` : undefined;
+    postReleaseReport(product, releaseWithIssues, {
+      deploy_status: product?.deploy?.auto_deploy?.on_publish ? 'queued' : undefined,
+      pipeline_url: pipelineUrl,
+    }).catch(() => {});
+  } catch { /* never block publish */ }
 
   // Auto-deploy if configured
   try {
@@ -353,7 +366,7 @@ router.post('/releases/:id/prepare-spec', async (req, res) => {
 
 router.post('/releases/:id/develop', async (req, res) => {
   try {
-    const { model_id, git_branch, test_command, timeout_min } = req.body;
+    const { model_id, git_branch, test_command, timeout_min, auto_publish, run_tests, update_docs, deploy } = req.body;
 
     // Load release
     const release = await releases.getById(req.params.id);
@@ -388,7 +401,7 @@ router.post('/releases/:id/develop', async (req, res) => {
       product_id:  release.product_id,
       model_id,
       type:        'develop_release',
-      input_prompt: JSON.stringify({ git_branch: branchName, test_command: testCmd }),
+      input_prompt: JSON.stringify({ git_branch: branchName, test_command: testCmd, auto_publish, run_tests, update_docs, deploy }),
       release_id:  release.id,
     });
 
@@ -682,7 +695,7 @@ router.post('/processes', async (req, res) => {
     const { product_id, model_id, type, prompt, template_id, count, timeout_min, config } = req.body;
 
     if (!product_id) return res.status(400).json({ error: 'product_id is required' });
-    if (!model_id && type !== 'run_tests' && type !== 'validate_product') return res.status(400).json({ error: 'model_id is required' });
+    if (!model_id && type !== 'run_tests' && type !== 'validate_product' && type !== 'deploy') return res.status(400).json({ error: 'model_id is required' });
 
     const product = await products.getById(product_id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
@@ -695,12 +708,12 @@ router.post('/processes', async (req, res) => {
     if (type === 'roadmap_from_doc' && !prompt) {
       return res.status(400).json({ error: 'prompt (document text) is required for roadmap_from_doc' });
     }
-    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && type !== 'validate_product' && !prompt && !template_id) {
+    if (type !== 'roadmap_from_doc' && type !== 'form_release' && type !== 'run_tests' && type !== 'update_docs' && type !== 'validate_product' && type !== 'deploy' && !prompt && !template_id) {
       return res.status(400).json({ error: 'prompt or template_id is required' });
     }
 
-    // For form_release/run_tests, store config as JSON in input_prompt
-    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs' || type === 'validate_product')
+    // For form_release/run_tests/deploy, store config as JSON in input_prompt
+    const inputPrompt = (type === 'form_release' || type === 'run_tests' || type === 'update_docs' || type === 'validate_product' || type === 'deploy')
       ? JSON.stringify(config || {}) : (prompt || null);
 
     const proc = await processes.create({
@@ -1619,13 +1632,20 @@ router.post('/import-roadmap', async (req, res) => {
 
 // ── Deploy / CI/CD ────────────────────────────────────────
 
-// Generate .gitlab-ci.yml
+// Generate .gitlab-ci.yml and sync CI/CD variables to GitLab from Kaizen deploy config
 router.post('/products/:id/generate-ci', async (req, res) => {
   try {
     const product = await products.getById(req.params.id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
     const ci = generateGitlabCI(product, product.deploy);
-    res.json({ content: ci, filename: '.gitlab-ci.yml' });
+
+    // Sync deploy config values as CI/CD variables to GitLab (DEPLOY_HOST, DEPLOY_USER, etc.)
+    let vars_sync = null;
+    if (product.deploy?.gitlab?.access_token) {
+      vars_sync = await syncCIVariablesToGitLab(product.deploy);
+    }
+
+    res.json({ content: ci, filename: '.gitlab-ci.yml', vars_sync });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

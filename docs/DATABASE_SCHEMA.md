@@ -319,7 +319,7 @@ kaizen_ai_models (независимая таблица, ссылается из
     "access_token": "glpat-xxxx"
   },
   "target": {
-    "host": "192.168.196.213",
+    "host": "192.168.178.213",
     "port": 22,
     "user": "opii",
     "method": "docker|native",

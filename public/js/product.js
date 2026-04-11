@@ -1,5 +1,5 @@
 import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate, notifyStatusChanges, renderBreadcrumbs } from './app.js';
-import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess, procTypeLabel } from './process-detail.js';
+import { formatDuration, renderProcessDetailHtml, renderFormReleaseHtml, toggleAllSuggestions, updateApproveCount, approveProcess, procTypeLabel } from './process-detail.js';
 
 const productId = new URLSearchParams(location.search).get('id');
 if (!productId) location.href = '/';
@@ -2190,54 +2190,28 @@ function showFormReleaseReview(proc) {
   formReleaseProcessId = proc.id;
   formReleaseResult = proc.result;
 
-  const result = proc.result;
-  const releasesArr = result.releases || [];
-  const unassigned = result.unassigned || [];
+  // Проверить: созданы ли уже релизы с предложенными версиями
+  let procForRender = proc;
+  if (!proc.approved_count && !proc.result?.auto_approved) {
+    const existingVersions = new Set((releases || []).map(r => r.version));
+    const proposedVersions = (proc.result?.releases || []).map(r => r.version);
+    if (proposedVersions.length > 0 && proposedVersions.every(v => existingVersions.has(v))) {
+      procForRender = { ...proc, approved_count: proposedVersions.length };
+    }
+  }
 
-  const totalIssues = releasesArr.reduce((s, r) => s + (r.issues?.length || 0), 0);
-  document.getElementById('frReviewTitle').textContent =
-    `Предложение ИИ: ${releasesArr.length} релиз(ов) из ${totalIssues} задач`;
-
-  let html = '';
-  releasesArr.forEach((rel, idx) => {
-    const priorityBadge = rel.priority
-      ? `<span class="badge badge-${rel.priority}">${rel.priority.toUpperCase()}</span>`
-      : '';
-    html += `
-    <div style="border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h3 style="margin:0">Релиз ${idx + 1}: ${escapeHtml(rel.version)} — ${escapeHtml(rel.name)}</h3>
-        ${priorityBadge}
-      </div>
-      ${rel.description ? `<p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:10px">${escapeHtml(rel.description)}</p>` : ''}
-      <div style="margin-bottom:8px">
-        ${(rel.issues || []).map(iss => `
-          <label class="checkbox-item" style="margin-bottom:4px">
-            <input type="checkbox" checked data-release-idx="${idx}" data-issue-id="${iss.id}">
-            <span class="badge badge-${iss.type || 'improvement'}">${iss.type || 'improvement'}</span>
-            <span class="badge badge-${iss.priority || 'medium'}">${iss.priority || 'medium'}</span>
-            ${escapeHtml(iss.title)}
-          </label>
-        `).join('')}
-      </div>
-      ${rel.rationale ? `<div style="font-size:0.8rem;color:var(--text-dim);font-style:italic">Почему: ${escapeHtml(rel.rationale)}</div>` : ''}
-    </div>`;
+  document.getElementById('frReviewTitle').textContent = 'Формирование релиза';
+  document.getElementById('frReviewContent').innerHTML = renderFormReleaseHtml(procForRender, {
+    modalId: 'formReleaseReviewModal',
+    onApprove: 'handleFormReleaseApprove()',
+    onSelectAll: 'frSelectAll(true)',
+    onSelectNone: 'frSelectAll(false)',
+    onToggleRelease: 'frToggleReleaseProduct',
+    onToggleIssue: 'frUpdateCount',
   });
 
-  if (unassigned.length > 0) {
-    html += `<div style="padding:12px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;font-size:0.85rem;color:var(--text-dim)">
-      Не включены: ${unassigned.length} задач(а)
-    </div>`;
-  }
-
-  if (result.summary) {
-    html += `<div style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)">${escapeHtml(result.summary)}</div>`;
-  }
-
-  document.getElementById('frReviewContent').innerHTML = html;
-
-  // Show/hide approve button based on whether already approved
-  document.getElementById('frApproveBtn').style.display = proc.approved_count ? 'none' : '';
+  // Hide the external approve button — new UI has its own inside frReviewContent
+  document.getElementById('frApproveBtn').style.display = 'none';
 
   openModal('formReleaseReviewModal');
 }
@@ -2245,22 +2219,24 @@ function showFormReleaseReview(proc) {
 window.handleFormReleaseApprove = async function () {
   if (!formReleaseProcessId || !formReleaseResult) return;
 
-  // Collect checked issues per release
   const releasesArr = formReleaseResult.releases || [];
-  const toCreate = [];
-
-  releasesArr.forEach((rel, idx) => {
-    const checkboxes = document.querySelectorAll(`#frReviewContent input[data-release-idx="${idx}"]:checked`);
-    const issueIds = Array.from(checkboxes).map(cb => cb.dataset.issueId);
-    if (issueIds.length > 0) {
-      toCreate.push({
-        version: rel.version,
-        name: rel.name,
-        description: rel.description || null,
-        issue_ids: issueIds,
-      });
-    }
+  // Group checked issue checkboxes by rel-idx
+  const byRel = {};
+  document.querySelectorAll('input.fr-issue-cb:checked').forEach(cb => {
+    const idx = cb.dataset.relIdx;
+    if (!byRel[idx]) byRel[idx] = [];
+    byRel[idx].push(cb.dataset.issueId);
   });
+
+  const toCreate = releasesArr
+    .map((rel, idx) => ({ rel, ids: byRel[String(idx)] || [] }))
+    .filter(({ ids }) => ids.length > 0)
+    .map(({ rel, ids }) => ({
+      version: rel.version,
+      name: rel.name,
+      description: rel.description || null,
+      issue_ids: ids,
+    }));
 
   if (toCreate.length === 0) return toast('Нет задач для создания релизов', 'error');
 
@@ -2281,6 +2257,35 @@ window.handleFormReleaseApprove = async function () {
 function isFormReleaseProcess(proc) {
   return proc.type === 'form_release' && proc.status === 'completed' && proc.result && !proc.result.auto_approved;
 }
+
+// ── FR helpers (product page) ────────────────────────────
+
+window.frToggleRelease = function (idx) {
+  document.getElementById(`fr-rel-${idx}`)?.classList.toggle('open');
+};
+
+window.frToggleReleaseProduct = function (checkbox, idx) {
+  const checked = checkbox.checked;
+  document.querySelectorAll(`input.fr-issue-cb[data-rel-idx="${idx}"]`)
+    .forEach(cb => { cb.checked = checked; });
+  frUpdateCount();
+};
+
+window.frSelectAll = function (state) {
+  document.querySelectorAll('input.fr-issue-cb').forEach(cb => { cb.checked = state; });
+  document.querySelectorAll('input.fr-release-cb').forEach(cb => { cb.checked = state; });
+  frUpdateCount();
+};
+
+window.frUpdateCount = function () {
+  const issues = document.querySelectorAll('input.fr-issue-cb:checked');
+  const rels = new Set(Array.from(issues).map(cb => cb.dataset.relIdx));
+  const btn = document.getElementById('frApproveBtnModal');
+  if (btn) {
+    btn.innerHTML = `Создать релизы (${rels.size})<span class="fr-approve-sub">· ${issues.length} задач</span>`;
+    btn.disabled = issues.length === 0;
+  }
+};
 
 // Expose closeModal globally for inline onclick handlers
 window.closeModal = closeModal;
@@ -2346,6 +2351,7 @@ function loadAutomationSettings() {
   document.getElementById('autoNotifyEnabled').checked = !!notif.enabled;
   toggleAutoSection('notify', !!notif.enabled);
   document.getElementById('autoNotifyUserId').value = notif.bitrix24_user_id || 9;
+  document.getElementById('autoNotifyGroupId').value = notif.b24_group_id || '';
   const notifEvents = notif.events || ['pipeline_completed', 'pipeline_failed', 'release_published', 'develop_completed', 'develop_failed'];
   document.querySelectorAll('.autoNotifyEvent').forEach(cb => {
     cb.checked = notifEvents.includes(cb.value);
@@ -2363,6 +2369,7 @@ window.handleSaveAutomation = async function () {
     notifications: {
       enabled: document.getElementById('autoNotifyEnabled').checked,
       bitrix24_user_id: parseInt(document.getElementById('autoNotifyUserId').value) || 9,
+      b24_group_id: document.getElementById('autoNotifyGroupId').value.trim() || undefined,
       events: notifyEvents,
     },
     rc_auto_sync: {

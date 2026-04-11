@@ -1,5 +1,5 @@
 import { api, toast, confirm, escapeHtml, openModal, closeModal, formatDate } from './app.js';
-import { formatDuration, renderProcessDetailHtml, toggleAllSuggestions, updateApproveCount, approveProcess, procTypeLabel } from './process-detail.js';
+import { formatDuration, renderProcessDetailHtml, renderFormReleaseHtml, toggleAllSuggestions, updateApproveCount, approveProcess, procTypeLabel } from './process-detail.js';
 
 let allProcesses = [];
 let pollingTimer = null;
@@ -377,6 +377,9 @@ window.toggleSection = function (sectionId) {
 
 // ── Process detail ───────────────────────────────────────
 
+let _frProcId = null;
+let _frProcResult = null;
+
 window.showProcessDetail = async function (id) {
   try {
     const [proc, logs] = await Promise.all([
@@ -385,6 +388,46 @@ window.showProcessDetail = async function (id) {
     ]);
 
     document.getElementById('processDetailTitle').textContent = procTypeLabel(proc.type);
+
+    // form_release — special rich view
+    if (proc.type === 'form_release' && proc.status === 'completed' && proc.result?.releases) {
+      _frProcId = proc.id;
+      _frProcResult = proc.result;
+
+      // Проверить: созданы ли уже релизы с предложенными версиями
+      let alreadyHandled = !!proc.approved_count || !!proc.result.auto_approved;
+      if (!alreadyHandled && proc.product_id) {
+        try {
+          const existingReleases = await api(`/products/${proc.product_id}/releases`);
+          const existingVersions = new Set(existingReleases.map(r => r.version));
+          const proposedVersions = (proc.result.releases || []).map(r => r.version);
+          if (proposedVersions.length > 0 && proposedVersions.every(v => existingVersions.has(v))) {
+            alreadyHandled = true;
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Patch approved_count locally so renderFormReleaseHtml sees it
+      const procForRender = alreadyHandled && !proc.approved_count
+        ? { ...proc, approved_count: (proc.result.releases || []).length }
+        : proc;
+
+      document.getElementById('processDetailMeta').innerHTML = `
+        <span class="badge badge-process-completed">завершён</span>
+        <span class="badge badge-process-form_release">form_release</span>
+        ${proc.product_name ? `<span style="font-size:0.8rem;color:var(--text-dim)">${escapeHtml(proc.product_name)}</span>` : ''}`;
+      document.getElementById('processDetailContent').innerHTML = renderFormReleaseHtml(procForRender, {
+        modalId: 'processDetailModal',
+        onApprove: 'handleFrApproveProcesses()',
+        onSelectAll: 'frSelectAll(true)',
+        onSelectNone: 'frSelectAll(false)',
+        onToggleRelease: 'frToggleReleaseProcesses',
+        onToggleIssue: 'frUpdateCount',
+      });
+      openModal('processDetailModal');
+      return;
+    }
+
     document.getElementById('processDetailContent').innerHTML = renderProcessDetailHtml(proc, logs, {
       showProductName: true,
       showSpecLink: false,
@@ -401,6 +444,67 @@ window.showProcessDetail = async function (id) {
 window.toggleAllProcessSuggestions = (state) => toggleAllSuggestions('processSuggestionsList', state);
 window.updateProcessApproveCount = () => updateApproveCount('processSuggestionsList', 'processApproveBtn');
 window.handleProcessApprove = (processId) => approveProcess(processId, 'processSuggestionsList', { modalId: 'processDetailModal' });
+
+// ── FR helpers (processes page) ──────────────────────────
+
+window.frToggleRelease = function (idx) {
+  document.getElementById(`fr-rel-${idx}`)?.classList.toggle('open');
+};
+
+window.frToggleReleaseProcesses = function (checkbox, idx) {
+  const checked = checkbox.checked;
+  document.querySelectorAll(`input.fr-issue-cb[data-rel-idx="${idx}"]`)
+    .forEach(cb => { cb.checked = checked; });
+  frUpdateCount();
+};
+
+window.frSelectAll = function (state) {
+  document.querySelectorAll('input.fr-issue-cb').forEach(cb => { cb.checked = state; });
+  document.querySelectorAll('input.fr-release-cb').forEach(cb => { cb.checked = state; });
+  frUpdateCount();
+};
+
+window.frUpdateCount = function () {
+  const issues = document.querySelectorAll('input.fr-issue-cb:checked');
+  const rels = new Set(Array.from(issues).map(cb => cb.dataset.relIdx));
+  const btn = document.getElementById('frApproveBtnModal');
+  if (btn) {
+    btn.innerHTML = `Создать релизы (${rels.size})<span class="fr-approve-sub">· ${issues.length} задач</span>`;
+    btn.disabled = issues.length === 0;
+  }
+};
+
+window.handleFrApproveProcesses = async function () {
+  if (!_frProcId || !_frProcResult) return;
+  const releasesArr = _frProcResult.releases || [];
+  const byRel = {};
+  document.querySelectorAll('input.fr-issue-cb:checked').forEach(cb => {
+    const idx = cb.dataset.relIdx;
+    if (!byRel[idx]) byRel[idx] = [];
+    byRel[idx].push(cb.dataset.issueId);
+  });
+  const toCreate = releasesArr
+    .map((rel, idx) => ({ rel, ids: byRel[String(idx)] || [] }))
+    .filter(({ ids }) => ids.length > 0)
+    .map(({ rel, ids }) => ({
+      version: rel.version,
+      name: rel.name,
+      description: rel.description || null,
+      issue_ids: ids,
+    }));
+  if (toCreate.length === 0) return toast('Нет задач для создания релизов', 'error');
+  try {
+    const result = await api(`/processes/${_frProcId}/approve-releases`, {
+      method: 'POST',
+      body: { releases: toCreate },
+    });
+    toast(`Создано ${result.created_releases} релиз(ов), ${result.total_issues} задач`);
+    closeModal('processDetailModal');
+    loadProcesses();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
 
 // Roadmap approval handlers (from processes page)
 window.toggleRoadmapRelease = function (checkbox, releaseIndex) {

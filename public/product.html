@@ -297,9 +297,16 @@
             <span style="font-size:0.78rem;color:var(--text-dim)">АФИИНА</span>
           </div>
           <div id="autoNotifySettings" style="display:none;margin-top:8px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <label style="font-size:0.8rem;margin:0;white-space:nowrap">ID пользователя Б24</label>
-              <input type="number" id="autoNotifyUserId" value="9" min="1" style="max-width:80px">
+            <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px">
+                <label style="font-size:0.8rem;margin:0;white-space:nowrap">ID пользователя Б24</label>
+                <input type="number" id="autoNotifyUserId" value="9" min="1" style="max-width:80px">
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <label style="font-size:0.8rem;margin:0;white-space:nowrap">ID группы для отчётов</label>
+                <input type="number" id="autoNotifyGroupId" placeholder="Не задан" min="1" style="max-width:100px">
+                <span style="font-size:0.75rem;color:var(--text-dim)">отчёт при публикации релиза</span>
+              </div>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:4px 16px">
               <label style="display:flex;align-items:center;gap:5px;font-size:0.8rem">
@@ -392,7 +399,7 @@
             <div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;margin-bottom:8px">
               <div class="form-group" style="margin:0">
                 <label>Хост</label>
-                <input type="text" id="deployTargetHost" placeholder="192.168.196.213">
+                <input type="text" id="deployTargetHost" placeholder="192.168.178.213">
               </div>
               <div class="form-group" style="margin:0">
                 <label>SSH порт</label>
@@ -442,11 +449,11 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
               <div class="form-group" style="margin:0">
                 <label>Прод Frontend URL</label>
-                <input type="text" id="deployUrlFrontend" placeholder="http://192.168.196.213:7012">
+                <input type="text" id="deployUrlFrontend" placeholder="http://192.168.178.213:7012">
               </div>
               <div class="form-group" style="margin:0">
                 <label>Прод Backend URL</label>
-                <input type="text" id="deployUrlBackend" placeholder="http://192.168.196.213:7013">
+                <input type="text" id="deployUrlBackend" placeholder="http://192.168.178.213:7013">
               </div>
             </div>
             <div style="height:1px;background:var(--border);margin-bottom:10px"></div>
@@ -1033,5 +1040,6 @@
   </div>
 
   <script type="module" src="/js/product.js"></script>
+  <script src="/js/common.js"></script>
 </body>
 </html>

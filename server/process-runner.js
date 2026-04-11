@@ -7,7 +7,7 @@ import * as aiModels from './db/ai-models.js';
 import { callAI, callClaudeCodeStreaming, callQwenCodeStreaming, callKiloCodeStreaming } from './ai-caller.js';
 import { parseJsonFromAI, detectTestCommand, detectBuildCommand, detectLintCommand, validateBranchName } from './utils.js';
 import { collectProjectContext } from './context-collector.js';
-import { notify, getNotifyOpts } from './notifier.js';
+import { notify, getNotifyOpts, postReleaseReport } from './notifier.js';
 import { pushToGitlab, pushToDefaultBranch, waitForPipeline, getPipelineStatus } from './gitlab-client.js';
 import { runSmokeTests } from './smoke-tester.js';
 import { createLogger } from './logger.js';
@@ -1196,13 +1196,11 @@ async function runUpdateDocs(processId, proc, product, model, startTime, timeout
 
   const docFiles = config.doc_files || [
     'CLAUDE.md',
+    'docs/BACKLOG.md',
     'docs/USER_GUIDE.md',
     'docs/MAIN_FUNC.md',
     'docs/RELEASE_NOTES.md',
     'docs/DATABASE_SCHEMA.md',
-    'docs/GAP_ANALYSIS.md',
-    'docs/TECH_DEBT.md',
-    'docs/SPEC.md',
   ];
 
   await processLogs.create({
@@ -1286,25 +1284,26 @@ ${docFiles.map(f => `  - ${f}`).join('\n')}
   - Формат: ## версия — название (дата)
 ${releaseContext ? `\n  Релизы для документирования:${releaseContext}` : ''}
 
-  Для SPEC.md (техническое задание):
-  - Если файл docs/SPEC.md или docs/ТЗ_*.md УЖЕ СУЩЕСТВУЕТ — НЕ ТРОГАТЬ, использовать как входные данные для GAP_ANALYSIS
-  - Если НИ ОДНОГО ТЗ нет — СОЗДАТЬ docs/SPEC.md на основе анализа кода: описание продукта, модули, API, стек, целевая аудитория, критерии готовности
+  Для BACKLOG.md (единый документ: технический анализ + бэклог + технический долг):
+  - Это главный аналитический документ — 3-в-1, заменяет GAP_ANALYSIS.md, TECH_DEBT.md, TECH_ANALYSIS.md
+  - Если файл не существует — создать с нуля, если существует — обновить затронутые разделы
 
-  Для GAP_ANALYSIS.md:
-  - Прочитать SPEC/ТЗ (docs/SPEC.md или docs/ТЗ_*.md) → получить список модулей и критериев
-  - Для каждого критерия проверить по коду: grep маршрутов, конфигов, docker-compose, тестов
-  - Статус: ГОТОВО / ЧАСТИЧНО / НЕ СДЕЛАНО + краткий комментарий
-  - Таблица: # | Модуль | Статус | Релиз | Комментарий
-  - Метрика прогресса: % готовности по фазам
-  - Дорожная карта следующих релизов (если информация доступна)
+  Структура BACKLOG.md:
+  ## Технический анализ
+  - Состояние кодовой базы после текущих изменений
+  - Прочитать SPEC/ТЗ (docs/SPEC.md или docs/ТЗ_*.md, если есть) → сопоставить с кодом
+  - Таблица: # | Модуль | Статус (ГОТОВО/ЧАСТИЧНО/НЕ СДЕЛАНО) | Релиз | Комментарий
+  - Метрика прогресса: % готовности
 
-  Для TECH_DEBT.md:
-  - Пакеты с || true в Dockerfile (не установились при сборке)
+  ## Бэклог
+  - Задачи P0 (критичные), P1 (важные), P2 (желательные), P3 (идеи)
+  - Формат: | Приоритет | Задача | Описание |
+
+  ## Технический долг
   - TODO/FIXME/HACK/XXX в коде (grep с указанием файл:строка)
-  - Отключённые модули (profiles в docker-compose, закомментированный код)
-  - Захардкоженные секреты (пароли не из переменных окружения)
-  - Несовместимости зависимостей (конфликты pip/npm)
-  - Тесты-заглушки (функции с pass или assert True)
+  - Захардкоженные секреты, отключённые модули, тесты-заглушки
+  - Пакеты с || true в Dockerfile
+  - Несовместимости зависимостей
 
 Шаг 3 — КОММИТ И ПУШ
   git add -A
@@ -1877,7 +1876,15 @@ ${issuesList}`;
         step: 'validate_build_start',
         message: `Проверка сборки: ${buildCmd}`,
       });
-      const buildOpts = { cwd: product.project_path, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 };
+      const buildOpts = {
+        cwd: product.project_path,
+        timeout: 120_000,
+        maxBuffer: 2 * 1024 * 1024,
+        env: {
+          ...process.env,
+          ...(process.env.JAVA_HOME && { PATH: `${process.env.JAVA_HOME}/bin:${process.env.PATH}` }),
+        },
+      };
       const { stdout, stderr } = await execFileAsync('sh', ['-c', buildCmd], buildOpts);
       await processLogs.create({
         process_id: processId,
@@ -1899,7 +1906,7 @@ ${issuesList}`;
   }
 
   // 11. GitLab push (if configured)
-  if (product.deploy?.gitlab?.remote_url && product.deploy?.gitlab?.access_token) {
+  if (product.deploy?.gitlab?.access_token && (product.deploy?.gitlab?.remote_url || product.deploy?.gitlab?.project_id)) {
     try {
       const pushResult = await pushToGitlab(product.project_path, resultObj.branch || branchName, product.deploy);
       await processLogs.create({
@@ -2000,6 +2007,11 @@ ${issuesList}`;
         product: product.name, version: release.version,
         issues_count: release.issues?.length || 0, product_id: product.id,
       }, getNotifyOpts(product)).catch(() => {});
+      postReleaseReport(product, release, {
+        tests_passed: resultObj.tests_passed,
+        develop_duration_ms: durationMs,
+        model_name: model?.name,
+      }).catch(() => {});
     } catch (pubErr) {
       await processLogs.create({
         process_id: processId,
@@ -2030,8 +2042,8 @@ ${issuesList}`;
  */
 async function runDeploy(processId, proc, product, startTime, timeoutMs) {
   const deploy = product.deploy;
-  if (!deploy?.gitlab?.remote_url || !deploy?.gitlab?.access_token) {
-    throw new Error('GitLab не настроен для этого продукта (deploy.gitlab.remote_url, access_token)');
+  if ((!deploy?.gitlab?.remote_url && !(deploy?.gitlab?.url && deploy?.gitlab?.project_id)) || !deploy?.gitlab?.access_token) {
+    throw new Error('GitLab не настроен для этого продукта (deploy.gitlab.remote_url или url+project_id, access_token)');
   }
   if (!product.project_path) throw new Error('product.project_path не задан');
 

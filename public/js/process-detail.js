@@ -267,6 +267,152 @@ export function renderProcessDetailHtml(proc, logs, options = {}) {
   return html;
 }
 
+// ── Form Release rich view ───────────────────────────────
+
+/**
+ * Строит HTML для модала «Формирование релиза» (form_release).
+ * @param {Object} proc — процесс с proc.result.releases
+ * @param {Object} opts
+ * @param {string} opts.modalId — ID модала (для кнопки Закрыть)
+ * @param {string} opts.onApprove — JS-выражение onclick для кнопки «Создать релизы»
+ * @param {string} opts.onSelectAll — JS-выражение onclick «Выбрать все»
+ * @param {string} opts.onSelectNone — JS-выражение onclick «Снять все»
+ * @param {string} opts.onToggleRelease — JS-функция(checkbox, idx) при переключении чекбокса релиза
+ * @param {string} opts.onToggleIssue — JS-функция() при переключении чекбокса задачи
+ */
+export function renderFormReleaseHtml(proc, opts = {}) {
+  const {
+    modalId = 'processDetailModal',
+    onApprove = '',
+    onSelectAll = '',
+    onSelectNone = '',
+    onToggleRelease = '',
+    onToggleIssue = '',
+  } = opts;
+
+  const result = proc.result || {};
+  const releases = result.releases || [];
+  const unassigned = result.unassigned || [];
+  const totalIssues = releases.reduce((s, r) => s + (r.issues?.length || 0), 0);
+  const alreadyApproved = !!proc.approved_count || !!result.auto_approved;
+
+  const STRAT_LABELS = {
+    balanced: 'сбалансированная',
+    critical_first: 'критическое — первым',
+    by_topic: 'по темам',
+    single: 'один релиз',
+  };
+  const strategy = result.strategy || proc.config?.strategy;
+  const stratLabel = strategy ? (STRAT_LABELS[strategy] || strategy) : null;
+
+  // Priority pips helper
+  function prioPips(issues) {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    (issues || []).forEach(i => { if (counts[i.priority] !== undefined) counts[i.priority]++; });
+    return ['critical', 'high', 'medium', 'low']
+      .flatMap(p => Array(counts[p]).fill(p))
+      .slice(0, 8)
+      .map(p => `<div class="fr-prio-pip ${p}"></div>`)
+      .join('');
+  }
+
+  // Summary banner
+  let html = `
+    <div class="fr-summary">
+      <div class="fr-summary-stats">
+        <div class="fr-stat">
+          <div class="fr-stat-num accent">${releases.length}</div>
+          <div class="fr-stat-label">Релиза предложено</div>
+        </div>
+        <div class="fr-stat-divider"></div>
+        <div class="fr-stat">
+          <div class="fr-stat-num green">${totalIssues}</div>
+          <div class="fr-stat-label">Задачи распределены</div>
+        </div>
+        ${unassigned.length > 0 ? `
+        <div class="fr-stat-divider"></div>
+        <div class="fr-stat">
+          <div class="fr-stat-num dim">${unassigned.length}</div>
+          <div class="fr-stat-label">Не включены</div>
+        </div>` : ''}
+      </div>
+      ${result.summary ? `<div class="fr-summary-text">${escapeHtml(result.summary)}</div>` : ''}
+      ${stratLabel ? `<div class="fr-strategy">⚖ Стратегия: ${escapeHtml(stratLabel)}</div>` : ''}
+    </div>`;
+
+  // Releases
+  html += `<div class="fr-section-title">Предложенные релизы</div>`;
+  releases.forEach((rel, idx) => {
+    const pips = prioPips(rel.issues);
+    html += `
+      <div class="fr-release open" id="fr-rel-${idx}">
+        <div class="fr-release-header" onclick="frToggleRelease(${idx})">
+          ${!alreadyApproved ? `<input type="checkbox" class="fr-release-cb" data-rel-idx="${idx}" checked
+            onclick="event.stopPropagation(); ${onToggleRelease ? `${onToggleRelease}(this, ${idx})` : ''}">` : ''}
+          <span class="fr-release-arrow">&#9654;</span>
+          <span class="fr-release-name">${escapeHtml(rel.name)}</span>
+          <div class="fr-release-right">
+            <div class="fr-prio-bar">${pips}</div>
+            <span class="fr-release-count">${rel.issues?.length || 0} задач</span>
+            <span class="fr-release-version">v${escapeHtml(rel.version)}</span>
+          </div>
+        </div>
+        <div class="fr-release-body">
+          ${rel.description ? `<div class="fr-release-desc">${escapeHtml(rel.description)}</div>` : ''}
+          ${rel.rationale ? `<div class="fr-rationale"><span class="fr-rationale-label">AI: </span>${escapeHtml(rel.rationale)}</div>` : ''}
+          ${(rel.issues || []).map(iss => `
+            <div class="fr-issue">
+              <div class="fr-issue-bar ${iss.priority || 'medium'}"></div>
+              <div class="fr-issue-inner">
+                ${!alreadyApproved ? `<input type="checkbox" class="fr-issue-cb" data-rel-idx="${idx}" data-issue-id="${iss.id}" checked
+                  ${onToggleIssue ? `onchange="${onToggleIssue}()"` : ''}>` : ''}
+                <span class="fr-issue-title">${escapeHtml(iss.title)}</span>
+                <div class="fr-issue-badges">
+                  <span class="badge badge-${iss.type || 'improvement'}" style="font-size:0.68rem">${iss.type || ''}</span>
+                  <span class="badge badge-${iss.priority || 'medium'}" style="font-size:0.68rem">${iss.priority || ''}</span>
+                </div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  });
+
+  // Unassigned
+  if (unassigned.length > 0) {
+    html += `
+      <div class="fr-unassigned" id="fr-unassigned-block">
+        <div class="fr-unassigned-header" onclick="this.closest('.fr-unassigned').classList.toggle('open')">
+          <span>⚠</span>
+          <span class="fr-unassigned-title">Не вошли в релизы (${unassigned.length})</span>
+          <span class="fr-unassigned-arrow">&#9654;</span>
+        </div>
+        <div class="fr-unassigned-body">
+          ${unassigned.map(u => `<div class="fr-unassigned-item">${escapeHtml(u.title)}</div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  // Actions
+  html += `
+    <div class="fr-actions">
+      ${alreadyApproved ? `
+        <span style="font-size:0.8rem;color:var(--green)">✓ Релизы созданы (${proc.approved_count})</span>
+      ` : `
+        <div class="fr-select-btns">
+          ${onSelectAll ? `<button type="button" class="btn btn-ghost btn-sm" onclick="${onSelectAll}">Выбрать все</button>` : ''}
+          ${onSelectNone ? `<button type="button" class="btn btn-ghost btn-sm" onclick="${onSelectNone}">Снять все</button>` : ''}
+        </div>
+      `}
+      <button type="button" class="btn btn-ghost" onclick="closeModal('${modalId}')">Закрыть</button>
+      ${!alreadyApproved && onApprove ? `
+        <button type="button" class="btn btn-primary fr-approve-btn" id="frApproveBtnModal" onclick="${onApprove}">
+          Создать релизы (${releases.length})<span class="fr-approve-sub">· ${totalIssues} задач</span>
+        </button>` : ''}
+    </div>`;
+
+  return html;
+}
+
 // ── Toggle all suggestions ───────────────────────────────
 
 export function toggleAllSuggestions(containerId, state) {

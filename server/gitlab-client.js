@@ -28,13 +28,45 @@ export function buildAuthUrl(deploy) {
 }
 
 /**
+ * Resolve authenticated remote URL — from explicit remote_url or by fetching project info via API.
+ * @returns {Promise<string|null>}
+ */
+async function resolveAuthUrl(deploy) {
+  const gl = deploy?.gitlab;
+  if (!gl?.access_token) return null;
+
+  // Prefer explicit remote_url
+  if (gl.remote_url) return buildAuthUrl(deploy);
+
+  // Derive from url + project_id via GitLab API
+  if (gl.url && gl.project_id) {
+    try {
+      const res = await fetch(`${gl.url}/api/v4/projects/${gl.project_id}`, {
+        headers: { 'PRIVATE-TOKEN': gl.access_token },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      const project = await res.json();
+      const url = new URL(project.http_url_to_repo);
+      url.username = 'oauth2';
+      url.password = gl.access_token;
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * Ensure GitLab remote is configured in the repo, then push branch.
+ * Works with explicit remote_url or with url+project_id (resolved via API).
  * @returns {{ pushed: boolean, output: string }}
  */
 export async function pushToGitlab(projectPath, branchName, deploy) {
-  const authUrl = buildAuthUrl(deploy);
+  const authUrl = await resolveAuthUrl(deploy);
   if (!authUrl) {
-    return { pushed: false, output: 'GitLab не настроен (нет remote_url или access_token)' };
+    return { pushed: false, output: 'GitLab не настроен (нет access_token или url+project_id)' };
   }
 
   const remoteName = 'gitlab';
@@ -68,7 +100,7 @@ export async function pushToGitlab(projectPath, branchName, deploy) {
  * Push to default branch (merge + push for deploy).
  */
 export async function pushToDefaultBranch(projectPath, branchName, deploy) {
-  const authUrl = buildAuthUrl(deploy);
+  const authUrl = await resolveAuthUrl(deploy);
   if (!authUrl) {
     return { pushed: false, output: 'GitLab не настроен' };
   }

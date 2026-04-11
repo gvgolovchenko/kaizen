@@ -25,9 +25,6 @@ export function generateGitlabCI(product, deploy) {
 }
 
 function generateDockerCI(image, testCmd, deploy) {
-  const host = deploy?.target?.host || '$DEPLOY_HOST';
-  const user = deploy?.target?.user || '$DEPLOY_USER';
-  const composePath = deploy?.target?.docker_compose_path || '$DEPLOY_PATH/docker-compose.yml';
   const postCmd = deploy?.target?.post_deploy_cmd || '';
 
   return `stages:
@@ -72,7 +69,7 @@ deploy:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
   script:
-    - ssh ${user}@${host} "cd $(composePath.replace(/\/docker-compose\.yml$/, '')) && docker compose pull && docker compose up -d"${postCmd ? `\n    - ssh ${user}@${host} "${postCmd}"` : ''}
+    - ssh $DEPLOY_USER@$DEPLOY_HOST "cd $DEPLOY_PATH && docker compose pull && docker compose up -d"${postCmd ? `\n    - ssh $DEPLOY_USER@$DEPLOY_HOST "${postCmd}"` : ''}
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   environment:
@@ -81,10 +78,6 @@ deploy:
 }
 
 function generateNativeCI(image, testCmd, deploy) {
-  const host = deploy?.target?.host || '$DEPLOY_HOST';
-  const user = deploy?.target?.user || '$DEPLOY_USER';
-  const pm2Name = deploy?.target?.pm2_name || '$PM2_NAME';
-  const projectPath = deploy?.target?.project_path_on_server || '$PROJECT_PATH';
   const postCmd = deploy?.target?.post_deploy_cmd || '';
 
   return `stages:
@@ -110,12 +103,65 @@ deploy:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
   script:
-    - ssh ${user}@${host} "cd ${projectPath} && git pull && npm ci --production && pm2 restart ${pm2Name}"${postCmd ? `\n    - ssh ${user}@${host} "${postCmd}"` : ''}
+    - ssh $DEPLOY_USER@$DEPLOY_HOST "cd $DEPLOY_PATH && git pull && npm ci --production && pm2 restart $PM2_NAME"${postCmd ? `\n    - ssh $DEPLOY_USER@$DEPLOY_HOST "${postCmd}"` : ''}
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   environment:
     name: production
 `;
+}
+
+/**
+ * Sync deploy config values as CI/CD variables to GitLab project.
+ * Sets DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH (and optionally others) from Kaizen deploy config.
+ * @returns {{ synced: number, errors: string[] }}
+ */
+export async function syncCIVariablesToGitLab(deploy) {
+  const gl = deploy?.gitlab;
+  if (!gl?.url || !gl?.project_id || !gl?.access_token) {
+    return { synced: 0, errors: ['GitLab не настроен (url, project_id, access_token обязательны)'] };
+  }
+
+  const vars = {};
+  if (deploy?.target?.host) vars.DEPLOY_HOST = deploy.target.host;
+  if (deploy?.target?.user) vars.DEPLOY_USER = deploy.target.user;
+  if (deploy?.target?.project_path_on_server) vars.DEPLOY_PATH = deploy.target.project_path_on_server;
+  if (deploy?.target?.pm2_name) vars.PM2_NAME = deploy.target.pm2_name;
+  if (deploy?.target?.docker_compose_path) vars.DEPLOY_PATH = deploy.target.docker_compose_path.replace('/docker-compose.yml', '');
+
+  const baseUrl = `${gl.url}/api/v4/projects/${gl.project_id}/variables`;
+  const headers = { 'PRIVATE-TOKEN': gl.access_token, 'Content-Type': 'application/json' };
+
+  let synced = 0;
+  const errors = [];
+
+  for (const [key, value] of Object.entries(vars)) {
+    try {
+      // Try update first, then create
+      const putRes = await fetch(`${baseUrl}/${key}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ value }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (putRes.ok) {
+        synced++;
+      } else {
+        const postRes = await fetch(baseUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key, value, protected: false, masked: false }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (postRes.ok) synced++;
+        else errors.push(`${key}: HTTP ${postRes.status}`);
+      }
+    } catch (err) {
+      errors.push(`${key}: ${err.message}`);
+    }
+  }
+
+  return { synced, errors };
 }
 
 /**

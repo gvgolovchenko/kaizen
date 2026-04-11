@@ -210,3 +210,120 @@ export function getNotifyOpts(product) {
   const notif = product?.automation?.notifications;
   return notif ? { notifications: notif } : {};
 }
+
+const TYPE_LABELS = {
+  bug_fix: '🐛 Исправления',
+  feature: '✨ Новое',
+  improvement: '⚡ Улучшения',
+  refactoring: '🔧 Рефакторинг',
+  documentation: '📄 Документация',
+  other: '📌 Прочее',
+};
+
+/**
+ * Опубликовать отчёт о релизе в Живую ленту Б24-группы.
+ * Публикует только если в product.automation.notifications.b24_group_id задан ID группы.
+ * @param {object} product — объект продукта
+ * @param {object} release — объект релиза (с issues[])
+ * @param {object} [extra] — доп. данные: { tests_passed, deploy_status, develop_duration_ms, model_name, pipeline_url }
+ */
+export async function postReleaseReport(product, release, extra = {}) {
+  if (!B24_WEBHOOK) return;
+
+  const groupId = product?.automation?.notifications?.b24_group_id;
+  if (!groupId) return;
+
+  const issues = release.issues || [];
+  const version = release.version;
+  const productName = product.name;
+  const gitlabBase = product?.deploy?.gitlab?.url;
+  const gitlabProjectId = product?.deploy?.gitlab?.project_id;
+
+  // Строим URL задачи GitLab если возможно
+  const issueUrl = (issue) => {
+    if (!gitlabBase || !gitlabProjectId || !issue.gitlab_issue_id) return null;
+    // Попробуем найти namespace по repo_url
+    const repoUrl = product?.repo_url || '';
+    const match = repoUrl.match(/\/([^/]+\/[^/]+?)(?:\.git)?$/);
+    if (match) return `${gitlabBase}/${match[1]}/-/issues/${issue.gitlab_issue_id}`;
+    return null;
+  };
+
+  // Группируем задачи по типу
+  const byType = {};
+  for (const issue of issues) {
+    const key = issue.type || 'other';
+    if (!byType[key]) byType[key] = [];
+    byType[key].push(issue);
+  }
+
+  // Саммари-строка: X улучшений · Y исправлений · ...
+  const TYPE_SHORT = {
+    bug: 'исправлений', improvement: 'улучшений', feature: 'функций',
+    refactoring: 'рефакторинг', docs: 'документация', other: 'прочих',
+  };
+  const summaryParts = Object.entries(byType).map(([type, list]) => `${list.length} ${TYPE_SHORT[type] || TYPE_SHORT.other}`);
+  const summary = summaryParts.join(' · ');
+
+  // Формируем тело отчёта
+  let body = `[B]📦 ${productName} — v${version}[/B]\n`;
+  if (release.name) body += `${release.name}\n`;
+  if (summary) body += `[I]${summary}[/I]\n`;
+  body += `\n`;
+
+  if (issues.length === 0) {
+    body += `Задач в релизе: 0\n`;
+  } else {
+    for (const [type, list] of Object.entries(byType)) {
+      const label = TYPE_LABELS[type] || TYPE_LABELS.other;
+      body += `[B]${label}[/B]\n`;
+      for (const i of list) {
+        const prio = i.priority === 'critical' ? ' 🔴' : i.priority === 'high' ? ' 🟠' : i.priority === 'medium' ? ' 🟡' : '';
+        const url = issueUrl(i);
+        const issueRef = i.gitlab_issue_id ? (url ? ` [url=${url}]#${i.gitlab_issue_id}[/url]` : ` #${i.gitlab_issue_id}`) : '';
+        body += `• ${i.title}${issueRef}${prio}\n`;
+      }
+      body += `\n`;
+    }
+  }
+
+  // Метаданные
+  if (extra.tests_passed === true) body += `✅ Тесты пройдены\n`;
+  else if (extra.tests_passed === false) body += `⚠️ Тесты не запускались\n`;
+
+  if (extra.deploy_status === 'queued') body += `🚀 Деплой поставлен в очередь\n`;
+  if (extra.pipeline_url) body += `🔗 [url=${extra.pipeline_url}]GitLab Pipeline[/url]\n`;
+
+  if (extra.model_name) body += `🤖 Разработано: ${extra.model_name}\n`;
+
+  if (extra.develop_duration_ms) {
+    const sec = Math.round(extra.develop_duration_ms / 1000);
+    const min = Math.floor(sec / 60);
+    const s = sec % 60;
+    body += `⏱ Время разработки: ${min > 0 ? `${min}м ` : ''}${s}с\n`;
+  }
+
+  body += `\n📅 Опубликован: ${new Date().toLocaleString('ru', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} MSK`;
+
+  try {
+    const params = new URLSearchParams({
+      POST_TITLE: `🚀 ${productName} v${version} — Релиз опубликован`,
+      POST_MESSAGE: body,
+      IMPORTANT: 'N',
+    });
+    params.append('DEST[]', `SG${groupId}`);
+    const resp = await fetch(`${B24_WEBHOOK}log.blogpost.add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    const result = await resp.json();
+    if (result.error) {
+      log.error({ error: result.error, groupId }, 'Б24 group post error');
+    } else {
+      log.info({ postId: result.result, groupId, version }, 'Release report posted to Б24 group');
+    }
+  } catch (err) {
+    log.error({ err: err.message }, 'postReleaseReport error');
+  }
+}

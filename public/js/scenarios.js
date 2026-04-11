@@ -9,8 +9,6 @@ const PRESET_LABELS = {
   batch_develop: 'Пакетная разработка',
   auto_release: 'Авто-релиз',
   nightly_audit: 'Ночной аудит',
-  full_cycle: 'Полный цикл',
-  analysis: 'Анализ',
   custom: 'Кастом',
 };
 
@@ -18,8 +16,6 @@ const PRESET_BADGES = {
   batch_develop: 'badge-plan-active',
   auto_release: 'badge-plan-scheduled',
   nightly_audit: 'badge-improvement',
-  full_cycle: 'badge-plan-completed',
-  analysis: 'badge-feature',
   custom: 'badge-plan-draft',
 };
 
@@ -419,9 +415,6 @@ window.editScenario = async function (id) {
       if (config.template_id) document.getElementById('fTemplate').value = config.template_id;
       if (config.count) document.getElementById('fCount').value = config.count;
       if (config.auto_approve) document.getElementById('fAutoApproveNA').value = config.auto_approve;
-    } else if (s.preset === 'full_cycle' || s.preset === 'analysis') {
-      if (config.auto_approve) document.getElementById('fAutoApproveFC').value = config.auto_approve;
-      if (config.timeout_min) document.getElementById('fTimeoutFC').value = config.timeout_min;
     }
 
     // Name + description last (after autoGenerate may have run)
@@ -620,16 +613,12 @@ const ALL_STAGES = [
 // Which stages are visible per preset
 const PRESET_VISIBLE = {
   batch_develop: ['spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
-  full_cycle:    ['improve', 'approve', 'release', 'spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
-  analysis:      ['improve', 'approve', 'release', 'spec'],
   auto_release:  ['release', 'spec', 'develop', 'tests', 'docs', 'publish', 'deploy'],
 };
 
 // Default on/off per preset (only for unlocked stages)
 const PRESET_DEFAULTS = {
   batch_develop: { develop: true, tests: false, docs: true, publish: false, deploy: false },
-  full_cycle:    { develop: true, tests: true, docs: true, publish: true, deploy: false },
-  analysis:      {},
   auto_release:  { develop: true, tests: false, docs: false, publish: false, deploy: false },
 };
 
@@ -723,8 +712,6 @@ function autoGenerateName() {
     batch_develop: 'Пакетная разработка',
     auto_release: 'Авто-релиз',
     nightly_audit: 'Ночной аудит',
-    full_cycle: 'Полный цикл',
-    analysis: 'Анализ',
   };
 
   let name = presetNames[preset] || preset;
@@ -891,7 +878,7 @@ window.onPresetChange = function () {
   const preset = document.getElementById('fPreset').value;
   // Hide all config sections
   document.querySelectorAll('.scenario-config-section').forEach(el => el.style.display = 'none');
-  const map = { batch_develop: 'cfgBatchDevelop', auto_release: 'cfgAutoRelease', nightly_audit: 'cfgNightlyAudit', full_cycle: 'cfgPipeline', analysis: 'cfgPipeline' };
+  const map = { batch_develop: 'cfgBatchDevelop', auto_release: 'cfgAutoRelease', nightly_audit: 'cfgNightlyAudit' };
   const sectionId = map[preset];
   if (sectionId) document.getElementById(sectionId).style.display = '';
   if (preset === 'batch_develop') loadReleasesForProduct();
@@ -1005,16 +992,6 @@ window.createScenario = async function (e) {
     config.template_id = document.getElementById('fTemplate').value;
     config.count = parseInt(document.getElementById('fCount').value) || 5;
     config.auto_approve = document.getElementById('fAutoApproveNA').value;
-  } else if (preset === 'full_cycle' || preset === 'analysis') {
-    config.auto_approve = document.getElementById('fAutoApproveFC').value;
-    config.timeout_min = parseInt(document.getElementById('fTimeoutFC').value) || 20;
-    if (preset === 'full_cycle') {
-      config.develop = { enabled: stageStates.develop || true, auto_publish: stageStates.publish || false };
-      config.press_release = { enabled: false };
-      config.run_tests = stageStates.tests || false;
-      config.update_docs = stageStates.docs || false;
-      config.deploy = stageStates.deploy || false;
-    }
   }
 
   try {

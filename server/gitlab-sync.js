@@ -228,6 +228,39 @@ export async function autoImport(productId, config = {}) {
  * Ищет все imported GL issues со state='closed' и переводит
  * связанный kaizen_issue в status='done'.
  */
+/**
+ * GL-reopen: если GitLab-issue открыт, а Kaizen-issue закрыт (done) — возвращаем в open.
+ * Используется в auto_release чтобы «воскресить» задачи после публикации релиза,
+ * если они не были закрыты в GitLab.
+ */
+export async function reopenSyncedIssues(productId) {
+  const { pool } = await import('./db/pool.js');
+
+  const { rows } = await pool.query(`
+    SELECT gi.gitlab_issue_iid, i.id AS issue_id, i.title
+    FROM opii.kaizen_gitlab_issues gi
+    JOIN opii.kaizen_issues i
+      ON i.gitlab_issue_id = gi.gitlab_issue_iid AND i.product_id = gi.product_id
+    WHERE gi.product_id = $1
+      AND gi.state = 'opened'
+      AND gi.sync_status = 'imported'
+      AND i.status = 'done'
+  `, [productId]);
+
+  let reopenedCount = 0;
+  for (const row of rows) {
+    try {
+      await issues.update(row.issue_id, { status: 'open' });
+      reopenedCount++;
+      log.info({ productId, issueId: row.issue_id, glIid: row.gitlab_issue_iid }, 'Issue reopened via GitLab sync');
+    } catch (err) {
+      log.error({ issueId: row.issue_id, err: err.message }, 'Failed to reopen issue');
+    }
+  }
+
+  return { reopened: reopenedCount };
+}
+
 export async function closeSyncedIssues(productId) {
   const { pool } = await import('./db/pool.js');
 
