@@ -680,28 +680,34 @@
 
   <!-- Edit Release Modal -->
   <div class="modal-overlay" id="editReleaseModal">
-    <div class="modal" style="max-width:560px">
-      <h2>Редактировать релиз</h2>
-      <form id="editReleaseForm" onsubmit="return handleEditReleaseSubmit(event)">
-        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="form-group">
+    <div class="modal" style="max-width:600px;display:flex;flex-direction:column;max-height:90vh">
+      <h2 style="margin-bottom:12px">Редактировать релиз</h2>
+      <form id="editReleaseForm" onsubmit="return handleEditReleaseSubmit(event)" style="display:flex;flex-direction:column;flex:1;min-height:0;gap:10px">
+        <div style="display:grid;grid-template-columns:140px 1fr;gap:10px">
+          <div class="form-group" style="margin:0">
             <label>Версия *</label>
-            <input type="text" id="erVersion" placeholder="1.0.0" required>
+            <input type="text" id="erVersion" placeholder="1.0.0" required style="font-family:monospace">
           </div>
-          <div class="form-group">
+          <div class="form-group" style="margin:0">
             <label>Название *</label>
             <input type="text" id="erName" required>
           </div>
         </div>
-        <div class="form-group">
-          <label>Описание (Release notes)</label>
-          <textarea id="erDesc" rows="3"></textarea>
+        <div class="form-group" style="margin:0">
+          <label>Описание</label>
+          <textarea id="erDesc" rows="2" style="resize:vertical;min-height:52px"></textarea>
         </div>
-        <div class="form-group">
-          <label>Задачи в релизе</label>
-          <div id="erIssuesList" class="checkbox-list" style="max-height:200px;overflow-y:auto"></div>
+        <div class="form-group" style="margin:0;flex:1;display:flex;flex-direction:column;min-height:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="margin:0">Задачи <span id="erIssuesCount" style="color:var(--text-dim);font-weight:normal;font-size:0.82rem"></span></label>
+            <div style="display:flex;gap:6px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="erToggleAll(true)">Все</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="erToggleAll(false)">Снять</button>
+            </div>
+          </div>
+          <div id="erIssuesList" style="flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:4px 0;min-height:80px;max-height:300px"></div>
         </div>
-        <div class="modal-actions">
+        <div class="modal-actions" style="margin-top:4px;padding-top:10px;border-top:1px solid var(--border)">
           <button type="button" class="btn btn-ghost" onclick="closeModal('editReleaseModal')">Отмена</button>
           <button type="submit" class="btn btn-primary">Сохранить</button>
         </div>

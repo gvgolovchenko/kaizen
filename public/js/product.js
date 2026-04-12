@@ -1047,26 +1047,36 @@ window.openEditReleaseModal = async function (id) {
 
   // Build issues list: release issues + open issues (for adding)
   const releaseIssueIds = new Set((release.issues || []).map(i => i.id));
-  const openIssues = allIssues.filter(i => i.status === 'open' || releaseIssueIds.has(i.id));
+  const availableIssues = allIssues.filter(i => i.status === 'open' || releaseIssueIds.has(i.id));
 
   const listEl = document.getElementById('erIssuesList');
-  if (openIssues.length === 0) {
-    listEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem">Нет доступных задач</div>';
+  if (availableIssues.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem;padding:8px 12px">Нет доступных задач</div>';
   } else {
-    listEl.innerHTML = openIssues.map(i => `
-      <label class="checkbox-item" style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer">
-        <input type="checkbox" value="${i.id}" ${releaseIssueIds.has(i.id) ? 'checked' : ''}>
-        <span>
-          <span class="badge badge-${i.priority}" style="font-size:0.7rem">${i.priority}</span>
-          ${escapeHtml(i.title)}
-        </span>
+    listEl.innerHTML = availableIssues.map(i => `
+      <label style="display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04)" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
+        <input type="checkbox" value="${i.id}" ${releaseIssueIds.has(i.id) ? 'checked' : ''} onchange="erUpdateCount()">
+        <span class="badge badge-${i.priority}" style="font-size:0.68rem;flex-shrink:0;min-width:52px;text-align:center">${i.priority}</span>
+        <span style="font-size:0.83rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(i.title)}">${escapeHtml(i.title)}</span>
       </label>`).join('');
   }
 
   // Store original issue ids for diff calculation
-  document.getElementById('erIssuesList').dataset.original = JSON.stringify([...releaseIssueIds]);
+  listEl.dataset.original = JSON.stringify([...releaseIssueIds]);
+  erUpdateCount();
 
   openModal('editReleaseModal');
+};
+
+window.erUpdateCount = function () {
+  const checked = document.getElementById('erIssuesList').querySelectorAll('input:checked').length;
+  const total = document.getElementById('erIssuesList').querySelectorAll('input').length;
+  document.getElementById('erIssuesCount').textContent = total ? `(${checked} из ${total})` : '';
+};
+
+window.erToggleAll = function (state) {
+  document.getElementById('erIssuesList').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = state);
+  erUpdateCount();
 };
 
 window.handleEditReleaseSubmit = async function (e) {
