@@ -1066,7 +1066,7 @@ window.openEditReleaseModal = async function (id) {
   // Store original issue ids for diff calculation
   document.getElementById('erIssuesList').dataset.original = JSON.stringify([...releaseIssueIds]);
 
-  document.getElementById('editReleaseModal').classList.add('open');
+  openModal('editReleaseModal');
 };
 
 window.handleEditReleaseSubmit = async function (e) {
