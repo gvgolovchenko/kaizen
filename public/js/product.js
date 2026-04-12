@@ -1054,10 +1054,10 @@ window.openEditReleaseModal = async function (id) {
     listEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem;padding:8px 12px">Нет доступных задач</div>';
   } else {
     listEl.innerHTML = availableIssues.map(i => `
-      <label style="display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04)" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
-        <input type="checkbox" value="${i.id}" ${releaseIssueIds.has(i.id) ? 'checked' : ''} onchange="erUpdateCount()">
-        <span class="badge badge-${i.priority}" style="font-size:0.68rem;flex-shrink:0;min-width:52px;text-align:center">${i.priority}</span>
-        <span style="font-size:0.83rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(i.title)}">${escapeHtml(i.title)}</span>
+      <label style="display:flex;align-items:center;gap:10px;padding:6px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.05);user-select:none" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
+        <input type="checkbox" value="${i.id}" ${releaseIssueIds.has(i.id) ? 'checked' : ''} onchange="erUpdateCount()" style="flex-shrink:0;width:15px;height:15px;cursor:pointer">
+        <span class="badge badge-${i.priority}" style="flex-shrink:0;font-size:0.7rem;min-width:56px;text-align:center">${i.priority}</span>
+        <span style="font-size:0.84rem;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(i.title)}">${escapeHtml(i.title)}</span>
       </label>`).join('');
   }
 
