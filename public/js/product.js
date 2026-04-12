@@ -72,6 +72,19 @@ async function loadProduct() {
   try {
     product = await api(`/products/${productId}`);
     renderProductHeader();
+    // Load code version async (non-blocking)
+    if (product.project_path) {
+      api(`/products/${productId}/code-version`).then(cv => {
+        if (!cv?.version) return;
+        const el = document.getElementById('prodCodeVersion');
+        if (!el) return;
+        const lastKaizenVer = (window._lastPublishedVersion || '');
+        const mismatch = lastKaizenVer && cv.version !== lastKaizenVer;
+        el.innerHTML = `<span title="Версия в файле ${cv.file}" style="cursor:default">
+          📦 ${escapeHtml(cv.version)}${mismatch ? ` <span style="color:var(--yellow)" title="Расхождение с Kaizen (${lastKaizenVer})">⚠</span>` : ''}
+        </span>`;
+      }).catch(() => {});
+    }
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -91,6 +104,10 @@ async function loadIssues() {
 async function loadReleases() {
   try {
     releases = await api(`/products/${productId}/releases`);
+    // Track last published version for code-version mismatch detection
+    const published = releases.filter(r => r.status === 'published').sort((a, b) =>
+      new Date(b.released_at) - new Date(a.released_at));
+    if (published.length) window._lastPublishedVersion = published[0].version;
     renderReleases();
   } catch (err) {
     toast(err.message, 'error');
@@ -169,6 +186,7 @@ function renderProductHeader() {
     meta.push(`<span>RC: ${parts.join(' / ')}</span>`);
   }
   meta.push(`<span class="badge badge-${product.status}">${product.status}</span>`);
+  if (product.project_path) meta.push(`<span id="prodCodeVersion" style="color:var(--text-dim);font-size:0.82rem" title="Версия в коде проекта">📦 …</span>`);
   document.getElementById('prodMeta').innerHTML = meta.join('');
 }
 

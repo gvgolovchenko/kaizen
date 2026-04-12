@@ -1653,6 +1653,17 @@ async function runFormRelease(processId, proc, product, model, startTime, timeou
   const publishedReleases = await releases.getPublishedByProduct(product.id, 1);
   const lastVersion = publishedReleases.length > 0 ? publishedReleases[0].version : '0.0.0';
 
+  // Determine recommended semver bump from issue types
+  const hasBreaking = openIssues.some(i =>
+    (i.title + ' ' + (i.description || '')).toLowerCase().includes('breaking')
+  );
+  const hasFeature = openIssues.some(i => i.type === 'feature' || i.type === 'improvement');
+  const recommendedBump = hasBreaking ? 'major' : hasFeature ? 'minor' : 'patch';
+  const [lMaj, lMin, lPat] = lastVersion.split('.').map(Number);
+  const suggestedFirst = recommendedBump === 'major' ? `${lMaj + 1}.0.0`
+    : recommendedBump === 'minor' ? `${lMaj}.${lMin + 1}.0`
+    : `${lMaj}.${lMin}.${lPat + 1}`;
+
   // 4. Build issues context (compact)
   const issuesContext = openIssues.map((iss, i) => ({
     index: i,
@@ -1683,6 +1694,13 @@ ${strategyDescriptions[strategy] || strategyDescriptions.balanced}
 
 Максимум релизов: ${maxReleases}
 Последняя версия: ${lastVersion}
+Рекомендуемая версия первого релиза: ${suggestedFirst} (тип: ${recommendedBump})
+
+Правила семантического версионирования:
+- major (X.0.0) — breaking changes, несовместимые изменения API
+- minor (X.Y.0) — новые функции (feature/improvement), обратно совместимые
+- patch (X.Y.Z) — только баги (bug), без новых функций
+Каждый следующий релиз — инкремент от предыдущего предложенного.
 
 ВАЖНО: Верни ответ ТОЛЬКО как JSON без markdown. Не используй <think> блоки.
 
@@ -1690,7 +1708,7 @@ ${strategyDescriptions[strategy] || strategyDescriptions.balanced}
 {
   "releases": [
     {
-      "version": "семантическая версия (инкремент от ${lastVersion})",
+      "version": "семантическая версия (начиная с ${suggestedFirst})",
       "name": "Краткое название (2-4 слова)",
       "description": "Release notes — что входит и зачем",
       "issue_indices": [0, 2, 5],
@@ -1982,7 +2000,17 @@ ${product.tech_stack  ? `Стек: ${product.tech_stack}`       : ''}
   Создай ветку: git checkout -b ${branchName}
   (если ветка существует: git checkout ${branchName})
 
-Шаг 2 — ИЗУЧЕНИЕ ПРОЕКТА И ДОКУМЕНТАЦИИ (КРИТИЧНО!)
+Шаг 2 — ОБНОВЛЕНИЕ ВЕРСИИ В КОДЕ
+  Найди файл версии проекта и обнови его до ${release.version}:
+  - package.json / package-lock.json → поле "version"
+  - *.csproj → тег <Version> или <AssemblyVersion>
+  - pom.xml → первый тег <version> (НЕ в зависимостях)
+  - build.gradle / build.gradle.kts → поле version
+  - pyproject.toml → поле version в [tool.poetry] или [project]
+  - Если ни один не найден — пропусти этот шаг
+  Сделай отдельный коммит: git add <файл_версии> && git commit -m "chore: bump version to ${release.version}"
+
+Шаг 3 — ИЗУЧЕНИЕ ПРОЕКТА И ДОКУМЕНТАЦИИ (КРИТИЧНО!)
   ОБЯЗАТЕЛЬНО прочитай файл CLAUDE.md в корне проекта — там архитектура, схема БД, имена таблиц и колонок, API, бизнес-логика.
   Прочитай файлы из папки docs/ — там детальная документация проекта.
   Если задача затрагивает базу данных — найди ТОЧНЫЕ имена таблиц и колонок в документации.
@@ -1994,18 +2022,18 @@ ${product.tech_stack  ? `Стек: ${product.tech_stack}`       : ''}
   Запомни, какие тесты проходят — это baseline.${buildCommand ? `\n  Запусти сборку: ${buildCommand}\n  Убедись, что проект собирается ДО твоих изменений.` : ''}
   Если baseline-тесты уже падают — зафиксируй это, но НЕ ломай то, что работало.
 
-Шаг 4 — РЕАЛИЗАЦИЯ ВСЕХ ЗАДАЧ
+Шаг 5 — РЕАЛИЗАЦИЯ ВСЕХ ЗАДАЧ
   Реализуй каждую задачу из спецификации полностью.
   Пиши код в стиле существующего проекта.
   Не пропускай задачи — реализуй все.
   НЕ обновляй документацию (docs/) — это делается отдельным процессом.
   КРИТИЧНО: Не ломай существующий функционал! Если меняешь файл — сначала пойми, что он делает сейчас.
 ${buildStep}
-Шаг ${buildCommand ? '6' : '5'} — НАПИСАНИЕ ТЕСТОВ
+Шаг ${buildCommand ? '7' : '6'} — НАПИСАНИЕ ТЕСТОВ
   Напиши тесты для каждого реализованного компонента / функции / эндпоинта.
   Покрой основные сценарии использования и граничные случаи.
 
-Шаг ${buildCommand ? '7' : '6'} — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
+Шаг ${buildCommand ? '8' : '7'} — ПРОВЕРКА ТЕСТОВ (максимум 3 итерации)
   Запусти: ${testCommand}
   Если тесты упали:
     - Проанализируй ошибки
@@ -2014,7 +2042,7 @@ ${buildStep}
   После 3 неудачных итераций: зафиксируй причину в summary и переходи к следующему шагу.
   ВАЖНО: все baseline-тесты (которые проходили ДО твоих изменений) ДОЛЖНЫ продолжать проходить.
 
-Шаг ${buildCommand ? '8' : '7'} — КОММИТ И ПУШ
+Шаг ${buildCommand ? '9' : '8'} — КОММИТ И ПУШ
   git add -A
   git commit -m "feat: ${release.version} — ${release.name}"
   git push origin ${branchName}
@@ -2320,6 +2348,29 @@ async function runDeploy(processId, proc, product, startTime, timeoutMs) {
     message: `Push в ${deploy.gitlab.default_branch || 'main'} выполнен`,
     data: pushResult,
   });
+
+  // 1.5. Create git tag if release has version
+  if (release?.version) {
+    const tagName = `v${release.version}`;
+    try {
+      await execFileAsync('git', ['tag', '-a', tagName, '-m', `Release ${tagName}`],
+        { cwd: product.project_path, timeout: 10_000 });
+      await execFileAsync('git', ['push', 'origin', tagName],
+        { cwd: product.project_path, timeout: 30_000 });
+      await processLogs.create({
+        process_id: processId,
+        step: 'git_tag',
+        message: `Git-тег ${tagName} создан и запушен`,
+        data: { tag: tagName },
+      });
+    } catch (tagErr) {
+      await processLogs.create({
+        process_id: processId,
+        step: 'git_tag_warning',
+        message: `Тег ${tagName} не создан (возможно уже существует): ${tagErr.message}`,
+      });
+    }
+  }
 
   // 2. Get commit SHA for pipeline tracking
   const { stdout: sha } = await execFileAsync('git', ['rev-parse', 'HEAD'], {

@@ -20,6 +20,8 @@ import * as scenariosDb from '../db/scenarios.js';
 import * as scenarioRunsDb from '../db/scenario-runs.js';
 import { pool } from '../db/pool.js';
 import { createRequire } from 'module';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 const require = createRequire(import.meta.url);
 const { version } = require('../../package.json');
 
@@ -224,6 +226,18 @@ router.post('/releases', async (req, res) => {
     }
     if (!req.body.version) {
       return res.status(400).json({ error: 'version is required' });
+    }
+    // Validate version doesn't go backwards
+    const publishedForValidation = await releases.getPublishedByProduct(req.body.product_id, 1);
+    if (publishedForValidation.length > 0) {
+      const lastVer = publishedForValidation[0].version.split('.').map(Number);
+      const newVer = req.body.version.split('.').map(Number);
+      const isBackward = (newVer[0] || 0) < (lastVer[0] || 0)
+        || ((newVer[0] || 0) === (lastVer[0] || 0) && (newVer[1] || 0) < (lastVer[1] || 0))
+        || ((newVer[0] || 0) === (lastVer[0] || 0) && (newVer[1] || 0) === (lastVer[1] || 0) && (newVer[2] || 0) < (lastVer[2] || 0));
+      if (isBackward) {
+        return res.status(400).json({ error: `Версия ${req.body.version} меньше последней опубликованной ${publishedForValidation[0].version}` });
+      }
     }
     const release = await releases.create(req.body);
     res.status(201).json(release);
@@ -1698,6 +1712,38 @@ router.post('/releases/:id/deploy', async (req, res) => {
 });
 
 // Get pipeline status
+router.get('/products/:id/code-version', async (req, res) => {
+  try {
+    const product = await products.getById(req.params.id);
+    if (!product?.project_path) return res.json({ version: null, file: null });
+    const candidates = [
+      { file: 'package.json',    read: c => JSON.parse(c).version },
+      { file: 'pyproject.toml',  read: c => (c.match(/^\s*version\s*=\s*["']([^"']+)["']/m) || [])[1] },
+      { file: 'pom.xml',         read: c => (c.match(/<version>([^<]+)<\/version>/) || [])[1] },
+      { file: 'build.gradle',    read: c => (c.match(/^version\s*=\s*['"]([^'"]+)['"]/m) || [])[1] },
+      { file: 'build.gradle.kts',read: c => (c.match(/^version\s*=\s*"([^"]+)"/m) || [])[1] },
+    ];
+    // Also search *.csproj
+    try {
+      const { readdir } = await import('node:fs/promises');
+      const files = await readdir(product.project_path);
+      const csproj = files.find(f => f.endsWith('.csproj'));
+      if (csproj) candidates.push({ file: csproj, read: c => (c.match(/<Version>([^<]+)<\/Version>/) || [])[1] });
+    } catch {}
+
+    for (const { file, read } of candidates) {
+      try {
+        const content = await readFile(join(product.project_path, file), 'utf8');
+        const ver = read(content);
+        if (ver) return res.json({ version: ver, file });
+      } catch {}
+    }
+    res.json({ version: null, file: null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/products/:id/pipeline-status', async (req, res) => {
   try {
     const product = await products.getById(req.params.id);
