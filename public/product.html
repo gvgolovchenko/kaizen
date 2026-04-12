@@ -678,6 +678,37 @@
     </div>
   </div>
 
+  <!-- Edit Release Modal -->
+  <div class="modal-overlay" id="editReleaseModal">
+    <div class="modal" style="max-width:560px">
+      <h2>Редактировать релиз</h2>
+      <form id="editReleaseForm" onsubmit="return handleEditReleaseSubmit(event)">
+        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label>Версия *</label>
+            <input type="text" id="erVersion" placeholder="1.0.0" required>
+          </div>
+          <div class="form-group">
+            <label>Название *</label>
+            <input type="text" id="erName" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Описание (Release notes)</label>
+          <textarea id="erDesc" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Задачи в релизе</label>
+          <div id="erIssuesList" class="checkbox-list" style="max-height:200px;overflow-y:auto"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('editReleaseModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Create Tasks Modal (unified: AI-анализ + Из документа) -->
   <div class="modal-overlay" id="createTasksModal">
     <div class="modal" style="max-width:600px">

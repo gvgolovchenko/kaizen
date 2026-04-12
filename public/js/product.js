@@ -557,6 +557,7 @@ function renderReleases() {
         </h3>
         <div style="display:flex;gap:6px">
           ${canPublish ? `<button class="btn btn-green btn-sm" onclick="publishRelease('${r.id}')">Опубликовать</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="openEditReleaseModal('${r.id}')">✏ Изменить</button>
           ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteRelease('${r.id}')">Удалить</button>` : ''}
         </div>
       </div>
@@ -1025,6 +1026,73 @@ window.deleteRelease = async function (id) {
         changes.issues_to_open ? `${changes.issues_to_open} задач(и) → open` : null,
       ].filter(Boolean)
     });
+    loadIssues();
+    loadReleases();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
+// ── Edit Release ─────────────────────────────────────────
+
+let _editingReleaseId = null;
+
+window.openEditReleaseModal = async function (id) {
+  _editingReleaseId = id;
+  const release = await api(`/releases/${id}`);
+
+  document.getElementById('erVersion').value = release.version || '';
+  document.getElementById('erName').value = release.name || '';
+  document.getElementById('erDesc').value = release.description || '';
+
+  // Build issues list: release issues + open issues (for adding)
+  const releaseIssueIds = new Set((release.issues || []).map(i => i.id));
+  const openIssues = allIssues.filter(i => i.status === 'open' || releaseIssueIds.has(i.id));
+
+  const listEl = document.getElementById('erIssuesList');
+  if (openIssues.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem">Нет доступных задач</div>';
+  } else {
+    listEl.innerHTML = openIssues.map(i => `
+      <label class="checkbox-item" style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer">
+        <input type="checkbox" value="${i.id}" ${releaseIssueIds.has(i.id) ? 'checked' : ''}>
+        <span>
+          <span class="badge badge-${i.priority}" style="font-size:0.7rem">${i.priority}</span>
+          ${escapeHtml(i.title)}
+        </span>
+      </label>`).join('');
+  }
+
+  // Store original issue ids for diff calculation
+  document.getElementById('erIssuesList').dataset.original = JSON.stringify([...releaseIssueIds]);
+
+  document.getElementById('editReleaseModal').classList.add('open');
+};
+
+window.handleEditReleaseSubmit = async function (e) {
+  e.preventDefault();
+  const version = document.getElementById('erVersion').value.trim();
+  const name = document.getElementById('erName').value.trim();
+  const desc = document.getElementById('erDesc').value.trim();
+
+  // Calculate add/remove issue diffs
+  const originalIds = new Set(JSON.parse(document.getElementById('erIssuesList').dataset.original || '[]'));
+  const checkedIds = new Set([...document.getElementById('erIssuesList').querySelectorAll('input[type=checkbox]:checked')].map(cb => cb.value));
+  const add_issue_ids = [...checkedIds].filter(id => !originalIds.has(id));
+  const remove_issue_ids = [...originalIds].filter(id => !checkedIds.has(id));
+
+  try {
+    const result = await api(`/releases/${_editingReleaseId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ version, name, description: desc, add_issue_ids, remove_issue_ids }),
+    });
+    const changes = result.status_changes || {};
+    const details = [];
+    if (changes.issues_to_in_release) details.push(`${changes.issues_to_in_release} задач(и) добавлено`);
+    if (changes.issues_to_open) details.push(`${changes.issues_to_open} задач(и) убрано`);
+    if (details.length) notifyStatusChanges({ action: 'Релиз обновлён', details });
+    else toast('Релиз обновлён', 'success');
+    closeModal('editReleaseModal');
     loadIssues();
     loadReleases();
   } catch (err) {
