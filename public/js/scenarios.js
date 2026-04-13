@@ -9,6 +9,7 @@ const PRESET_LABELS = {
   batch_develop: 'Пакетная разработка',
   auto_release: 'Авто-релиз',
   nightly_audit: 'Ночной аудит',
+  weekly_digest: 'Еженедельный дайджест',
   custom: 'Кастом',
 };
 
@@ -16,6 +17,7 @@ const PRESET_BADGES = {
   batch_develop: 'badge-plan-active',
   auto_release: 'badge-plan-scheduled',
   nightly_audit: 'badge-improvement',
+  weekly_digest: 'badge-plan-scheduled',
   custom: 'badge-plan-draft',
 };
 
@@ -716,6 +718,7 @@ function autoGenerateName() {
     batch_develop: 'Пакетная разработка',
     auto_release: 'Авто-релиз',
     nightly_audit: 'Ночной аудит',
+    weekly_digest: 'Еженедельный дайджест',
   };
 
   let name = presetNames[preset] || preset;
@@ -882,9 +885,14 @@ window.onPresetChange = function () {
   const preset = document.getElementById('fPreset').value;
   // Hide all config sections
   document.querySelectorAll('.scenario-config-section').forEach(el => el.style.display = 'none');
-  const map = { batch_develop: 'cfgBatchDevelop', auto_release: 'cfgAutoRelease', nightly_audit: 'cfgNightlyAudit' };
+  const map = { batch_develop: 'cfgBatchDevelop', auto_release: 'cfgAutoRelease', nightly_audit: 'cfgNightlyAudit', weekly_digest: 'cfgWeeklyDigest' };
   const sectionId = map[preset];
   if (sectionId) document.getElementById(sectionId).style.display = '';
+  // weekly_digest не требует продукта и модели
+  const modelRow = document.getElementById('fModel')?.closest('.form-group');
+  const productRow = document.getElementById('fProduct')?.closest('.form-group');
+  if (modelRow) modelRow.style.display = preset === 'weekly_digest' ? 'none' : '';
+  if (productRow) productRow.style.display = preset === 'weekly_digest' ? 'none' : '';
   if (preset === 'batch_develop') loadReleasesForProduct();
   renderStages(); // works for all presets that have PRESET_VISIBLE
   autoGenerateName();
@@ -953,7 +961,7 @@ window.createScenario = async function (e) {
   const description = document.getElementById('fDesc').value.trim() || null;
 
   if (!name) { toast('Укажите название', 'error'); return false; }
-  if (!model_id) { toast('Выберите AI-модель', 'error'); return false; }
+  if (!model_id && preset !== 'weekly_digest') { toast('Выберите AI-модель', 'error'); return false; }
 
   const launch = buildCronFromLaunchMode();
   if (launch.error) { toast(launch.error, 'error'); return false; }
@@ -998,6 +1006,12 @@ window.createScenario = async function (e) {
     config.template_id = document.getElementById('fTemplate').value;
     config.count = parseInt(document.getElementById('fCount').value) || 5;
     config.auto_approve = document.getElementById('fAutoApproveNA').value;
+  } else if (preset === 'weekly_digest') {
+    const b24GroupId = parseInt(document.getElementById('fB24GroupId').value);
+    if (!b24GroupId) { toast('Укажите ID группы Б24', 'error'); return false; }
+    config.b24_group_id = b24GroupId;
+    config.days = parseInt(document.getElementById('fDigestDays').value) || 7;
+    delete config.model_id;
   }
 
   try {

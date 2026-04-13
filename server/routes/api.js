@@ -1994,7 +1994,7 @@ router.post('/scenarios', async (req, res) => {
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (!preset) return res.status(400).json({ error: 'preset is required' });
 
-    const validPresets = ['batch_develop', 'auto_release', 'nightly_audit', 'full_cycle', 'analysis', 'custom'];
+    const validPresets = ['batch_develop', 'auto_release', 'nightly_audit', 'weekly_digest', 'full_cycle', 'analysis', 'custom'];
     if (!validPresets.includes(preset)) {
       return res.status(400).json({ error: `Invalid preset. Valid: ${validPresets.join(', ')}` });
     }

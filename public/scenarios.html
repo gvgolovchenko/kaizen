@@ -108,6 +108,7 @@
               <option value="batch_develop">Пакетная разработка</option>
               <option value="auto_release">Авто-релиз</option>
               <option value="nightly_audit">Ночной аудит</option>
+              <option value="weekly_digest">Еженедельный дайджест</option>
             </select>
           </div>
           <div class="form-group">
@@ -267,6 +268,23 @@
           </div>
         </div>
 
+
+        <!-- weekly_digest -->
+        <div id="cfgWeeklyDigest" class="scenario-config-section" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group">
+              <label style="font-size:0.8rem">ID группы Б24 <span style="color:var(--danger)">*</span></label>
+              <input type="number" id="fB24GroupId" placeholder="338" min="1">
+            </div>
+            <div class="form-group">
+              <label style="font-size:0.8rem">Период (дней)</label>
+              <input type="number" id="fDigestDays" value="7" min="1" max="30">
+            </div>
+          </div>
+          <div style="font-size:0.78rem;color:var(--text-dim);margin-top:4px">
+            ID группы можно найти в URL: rivc.bitrix24.ru/workgroups/group/<b>&lt;ID&gt;</b>/
+          </div>
+        </div>
 
         <!-- Название + Описание (внизу, автогенерация) -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">

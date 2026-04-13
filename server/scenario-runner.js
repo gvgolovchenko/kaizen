@@ -78,6 +78,9 @@ export class ScenarioRunner {
         case 'nightly_audit':
           result = await this._nightlyAudit(scenario, config);
           break;
+        case 'weekly_digest':
+          result = await this._weeklyDigest(scenario, config);
+          break;
         case 'full_cycle':
         case 'analysis':
           result = await this._pipeline(scenario, config, preset);
@@ -181,7 +184,12 @@ export class ScenarioRunner {
           model_id,
           type: 'develop_release',
           release_id: releaseId,
-          config: { auto_publish: false },
+          config: {
+            auto_publish: false,
+            ...(config.test_command   && { test_command:   config.test_command }),
+            ...(config.build_command  && { build_command:  config.build_command }),
+            ...(config.git_branch     && { git_branch:     config.git_branch }),
+          },
         }, timeout_min * 2);
         processIds.push(devProc.id);
 
@@ -713,6 +721,130 @@ export class ScenarioRunner {
       stages,
       processes: processIds,
       summary: `Аудит ${productIds.length} продуктов, создано ${totalCreated} задач`,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Пресет: weekly_digest
+  //  Еженедельный дайджест релизов → публикация в Б24-группу
+  // ═══════════════════════════════════════════════════════════
+
+  async _weeklyDigest(scenario, config) {
+    const { b24_group_id, days = 7 } = config;
+    if (!b24_group_id) throw new Error('b24_group_id required for weekly_digest');
+
+    const B24_WEBHOOK = process.env.BITRIX24_WEBHOOK_URL;
+    if (!B24_WEBHOOK) throw new Error('BITRIX24_WEBHOOK_URL not configured in .env');
+
+    // Период
+    const toDate = new Date();
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - days);
+    fromDate.setHours(0, 0, 0, 0);
+
+    // Релизы за период по всем продуктам
+    const allProducts = await products.getAll();
+    const productReleases = [];
+
+    for (const product of allProducts) {
+      const allRels = await releases.getByProduct(product.id);
+      const weekRels = allRels.filter(r => {
+        if (r.status !== 'published') return false;
+        const t = new Date(r.released_at || r.updated_at);
+        return t >= fromDate && t < toDate;
+      });
+      if (weekRels.length === 0) continue;
+
+      // Сортировка по semver
+      weekRels.sort((a, b) => {
+        const va = (a.version || '0').split('.').map(Number);
+        const vb = (b.version || '0').split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+          if ((va[i] || 0) !== (vb[i] || 0)) return (va[i] || 0) - (vb[i] || 0);
+        }
+        return 0;
+      });
+      productReleases.push({ product, releases: weekRels });
+    }
+
+    // Процессы за период
+    const allProcs = await processes.getAll({ status: 'completed' });
+    const weekProcs = allProcs.filter(p => {
+      const t = new Date(p.completed_at || p.updated_at);
+      return t >= fromDate && t < toDate;
+    });
+    const byType = {};
+    weekProcs.forEach(p => { byType[p.type] = (byType[p.type] || 0) + 1; });
+
+    const totalReleases = productReleases.reduce((s, pr) => s + pr.releases.length, 0);
+    const totalIssues = productReleases.reduce((s, pr) =>
+      s + pr.releases.reduce((ss, r) => ss + Number(r.issue_count || 0), 0), 0);
+
+    if (totalReleases === 0) {
+      return { summary: 'Нет опубликованных релизов за период', releases: 0, products: 0 };
+    }
+
+    // Форматирование дат
+    const fmtDate = (d) => d.toLocaleDateString('ru', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit' });
+    const fromStr = fmtDate(fromDate);
+    const toStr = fmtDate(new Date(toDate.getTime() - 86400000));
+    const todayStr = new Date().toLocaleDateString('ru', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    // Сортируем продукты по количеству релизов
+    productReleases.sort((a, b) => b.releases.length - a.releases.length);
+
+    // BB-code пост
+    let body = `За прошедшую неделю команда разработки выпустила [B]${totalReleases} релизов[/B] по [B]${productReleases.length} продуктам[/B] и закрыла [B]${totalIssues} задач[/B]. Работа велась в автономном режиме с применением AI: ${weekProcs.length} процессов обработаны системой Kaizen.\n\n`;
+
+    body += `[B]📊 Сводка недели[/B]\n\n[LIST]\n`;
+    body += `[*]📦 Релизов выпущено: [B]${totalReleases}[/B]\n`;
+    body += `[*]✅ Задач закрыто: [B]${totalIssues}[/B]\n`;
+    body += `[*]🤖 AI-процессов выполнено: [B]${weekProcs.length}[/B]\n`;
+    if (byType.develop_release) body += `— разработка кода (develop): ${byType.develop_release}\n`;
+    if (byType.prepare_spec) body += `— спецификации (spec): ${byType.prepare_spec}\n`;
+    if (byType.update_docs) body += `— обновление документации: ${byType.update_docs}\n`;
+    if (byType.run_tests) body += `— тестирование: ${byType.run_tests}\n`;
+    if (byType.form_release) body += `— формирование релизов: ${byType.form_release}\n`;
+    body += `[/LIST]`;
+
+    for (const { product, releases: pRels } of productReleases) {
+      const productIssues = pRels.reduce((s, r) => s + Number(r.issue_count || 0), 0);
+      body += `\n\n[B]${product.name} — ${pRels.length} релизов · ${productIssues} задач[/B]\n`;
+      if (product.description) body += `[I]${product.description}[/I]\n`;
+      body += `\n[LIST]\n`;
+      for (const r of pRels) {
+        body += `[*][B]v${r.version}[/B]  ${r.name} — ${r.issue_count || 0} задач\n`;
+      }
+      body += `[/LIST]`;
+    }
+
+    body += `\n\n[I]Сформировано системой Kaizen (改善) · ${todayStr}[/I]`;
+
+    // Публикация в Б24
+    const params = new URLSearchParams();
+    params.set('POST_TITLE', `🚀 Дайджест релизов · ${fromStr}–${toStr}`);
+    params.set('POST_MESSAGE', body);
+    params.set('IMPORTANT', 'N');
+    params.append('DEST[]', `SG${b24_group_id}`);
+
+    const resp = await fetch(`${B24_WEBHOOK}log.blogpost.add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    const b24Result = await resp.json();
+    if (b24Result.error) throw new Error(`Б24 ошибка: ${b24Result.error_description || b24Result.error}`);
+
+    log.info({ postId: b24Result.result, groupId: b24_group_id, releases: totalReleases }, 'weekly digest published');
+
+    return {
+      post_id: b24Result.result,
+      b24_group_id,
+      releases: totalReleases,
+      issues: totalIssues,
+      processes: weekProcs.length,
+      products: productReleases.length,
+      summary: `Дайджест опубликован (пост #${b24Result.result}): ${totalReleases} релизов, ${totalIssues} задач, ${productReleases.length} продуктов`,
     };
   }
 
