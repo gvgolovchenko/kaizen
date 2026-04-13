@@ -97,18 +97,19 @@ export function detectBuildCommand(techStack, projectPath) {
 
 export function detectTestCommand(techStack) {
   const s = (techStack || '').toLowerCase();
-  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue'))
-    return 'npm test';
-  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
-    return 'pytest';
-  if (s.includes('go'))
-    return 'go test ./...';
   if (s.includes('dotnet') || s.includes('c#') || s.includes('asp'))
     return 'dotnet test';
   if (s.includes('rust'))
     return 'cargo test';
+  if (s.includes('go'))
+    return 'go test ./...';
+  if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
+    return 'pytest';
+  // Java/Spring проверяется ДО Vue/Node — полностековые проекты Spring+Vue тестируются через mvn
   if (s.includes('java') || s.includes('spring'))
     return 'mvn test';
+  if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue'))
+    return 'npm test';
   return 'npm test';
 }
 

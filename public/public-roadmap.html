@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Дорожная карта разработки — РИВЦ</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+    .header { background: #1a1d2e; border-bottom: 1px solid #2d3748; padding: 20px 32px; display: flex; align-items: center; gap: 16px; }
+    .header h1 { font-size: 1.3rem; font-weight: 600; }
+    .header .subtitle { font-size: 0.85rem; color: #94a3b8; margin-top: 2px; }
+    .badge-updated { font-size: 0.75rem; background: rgba(96,165,250,0.1); color: #60a5fa; border: 1px solid rgba(96,165,250,0.2); border-radius: 4px; padding: 2px 8px; margin-left: auto; }
+    .container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+    .filters { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+    .filter-btn { padding: 5px 14px; border-radius: 20px; border: 1px solid #2d3748; background: transparent; color: #94a3b8; cursor: pointer; font-size: 0.82rem; transition: all 0.15s; }
+    .filter-btn:hover, .filter-btn.active { background: rgba(96,165,250,0.1); border-color: #60a5fa; color: #60a5fa; }
+    .product-card { background: #1a1d2e; border: 1px solid #2d3748; border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
+    .product-header { padding: 16px 20px; display: flex; align-items: center; gap: 12px; }
+    .product-name { font-weight: 600; font-size: 1rem; }
+    .product-desc { font-size: 0.8rem; color: #94a3b8; margin-top: 2px; }
+    .release-list { border-top: 1px solid #2d3748; }
+    .release-row { display: grid; grid-template-columns: 80px 1fr 100px 120px; align-items: center; gap: 12px; padding: 11px 20px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.87rem; }
+    .release-row:last-child { border-bottom: none; }
+    .release-row:hover { background: rgba(255,255,255,0.02); }
+    .version { font-family: monospace; font-size: 0.82rem; color: #94a3b8; }
+    .release-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .issue-count { font-size: 0.78rem; color: #64748b; text-align: right; }
+    .status-badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.72rem; font-weight: 500; text-align: center; }
+    .status-spec     { background: rgba(251,191,36,0.1); color: #fbbf24; }
+    .status-developing { background: rgba(96,165,250,0.1); color: #60a5fa; }
+    .status-developed  { background: rgba(167,139,250,0.1); color: #a78bfa; }
+    .status-published  { background: rgba(52,211,153,0.1); color: #34d399; }
+    .status-labels { spec: 'Спецификация', developing: 'В разработке', developed: 'Разработано', published: 'Опубликован' }
+    .empty { text-align: center; color: #475569; padding: 60px 20px; font-size: 0.9rem; }
+    .loading { text-align: center; padding: 80px; color: #475569; }
+    .footer { text-align: center; font-size: 0.75rem; color: #334155; padding: 32px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>🗺️ Дорожная карта разработки</h1>
+      <div class="subtitle">Текущий статус продуктов РИВЦ-Пулково</div>
+    </div>
+    <div class="badge-updated" id="updatedAt">Загрузка...</div>
+  </div>
+
+  <div class="container">
+    <div class="filters">
+      <button class="filter-btn active" data-status="all" onclick="setFilter('all', this)">Все</button>
+      <button class="filter-btn" data-status="spec" onclick="setFilter('spec', this)">📋 Спецификация</button>
+      <button class="filter-btn" data-status="developing" onclick="setFilter('developing', this)">⚙️ В разработке</button>
+      <button class="filter-btn" data-status="developed" onclick="setFilter('developed', this)">✅ Разработано</button>
+      <button class="filter-btn" data-status="published" onclick="setFilter('published', this)">🚀 Опубликовано</button>
+    </div>
+    <div id="content"><div class="loading">Загрузка...</div></div>
+  </div>
+
+  <div class="footer">Обновляется автоматически · Kaizen (改善) · РИВЦ-Пулково</div>
+
+  <script>
+    const STATUS_LABELS = { spec: 'Спецификация', developing: 'В разработке', developed: 'Разработано', published: 'Опубликован' };
+    let allData = [];
+    let activeFilter = 'all';
+
+    async function load() {
+      try {
+        const r = await fetch('/api/public/roadmap?days=30');
+        const data = await r.json();
+        allData = data.products || [];
+        const d = new Date(data.generated_at);
+        document.getElementById('updatedAt').textContent = 'Обновлено: ' + d.toLocaleString('ru', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' МСК';
+        render();
+      } catch (e) {
+        document.getElementById('content').innerHTML = '<div class="empty">Не удалось загрузить данные</div>';
+      }
+    }
+
+    function setFilter(status, btn) {
+      activeFilter = status;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      render();
+    }
+
+    function render() {
+      const content = document.getElementById('content');
+      const filtered = allData.map(p => ({
+        ...p,
+        releases: activeFilter === 'all' ? p.releases : p.releases.filter(r => r.status === activeFilter),
+      })).filter(p => p.releases.length > 0);
+
+      if (filtered.length === 0) {
+        content.innerHTML = '<div class="empty">Нет данных по выбранному фильтру</div>';
+        return;
+      }
+
+      content.innerHTML = filtered.map(p => `
+        <div class="product-card">
+          <div class="product-header">
+            <div>
+              <div class="product-name">${esc(p.product.name)}</div>
+              ${p.product.description ? `<div class="product-desc">${esc(p.product.description)}</div>` : ''}
+            </div>
+          </div>
+          <div class="release-list">
+            ${p.releases.map(r => `
+              <div class="release-row">
+                <span class="version">v${esc(r.version)}</span>
+                <span class="release-name" title="${esc(r.name)}">${esc(r.name)}</span>
+                <span><span class="status-badge status-${r.status}">${STATUS_LABELS[r.status] || r.status}</span></span>
+                <span class="issue-count">${r.issue_count > 0 ? r.issue_count + ' задач' : ''}</span>
+              </div>`).join('')}
+          </div>
+        </div>`).join('');
+    }
+
+    function esc(s) {
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    load();
+    setInterval(load, 60_000);
+  </script>
+</body>
+</html>

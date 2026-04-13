@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import helmet from 'helmet';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import apiRouter from './routes/api.js';
@@ -25,6 +26,7 @@ queueManager.onProcessDone = (processId, status) => {
   scheduler.onProcessComplete(processId, status);
 };
 
+app.use(helmet({ contentSecurityPolicy: false })); // CSP отключён — inline scripts в Vanilla JS фронте
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(join(__dirname, '..', 'public')));
 

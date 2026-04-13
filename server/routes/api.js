@@ -96,6 +96,44 @@ router.get('/search', async (req, res) => {
   res.json(results);
 });
 
+// ── Public Roadmap (без авторизации) ──────────────────────
+
+router.get('/public/roadmap', async (req, res) => {
+  const days = Math.min(parseInt(req.query.days) || 30, 90);
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const allProducts = await products.getAll();
+  const result = [];
+
+  for (const product of allProducts) {
+    const productReleases = await releases.getByProduct(product.id);
+    const relevant = productReleases.filter(r => {
+      if (['spec', 'developing', 'developed'].includes(r.status)) return true;
+      if (r.status === 'published' && r.released_at && new Date(r.released_at) >= since) return true;
+      return false;
+    });
+    if (relevant.length === 0) continue;
+
+    result.push({
+      product: { id: product.id, name: product.name, description: product.description, tech_stack: product.tech_stack },
+      releases: relevant.map(r => ({
+        id: r.id,
+        version: r.version,
+        name: r.name,
+        status: r.status,
+        released_at: r.released_at,
+        issue_count: Number(r.issue_count || 0),
+      })).sort((a, b) => {
+        const order = { spec: 0, developing: 1, developed: 2, published: 3 };
+        return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+      }),
+    });
+  }
+
+  res.json({ generated_at: new Date().toISOString(), days, products: result });
+});
+
 // ── Products ──────────────────────────────────────────────
 
 router.get('/products', async (req, res) => {
@@ -324,6 +362,28 @@ router.post('/releases/:id/publish', async (req, res) => {
       deploy_status: product?.deploy?.auto_deploy?.on_publish ? 'queued' : undefined,
       pipeline_url: pipelineUrl,
     }).catch(() => {});
+  } catch { /* never block publish */ }
+
+  // Auto press-release: если задан marketing_group_id — запускаем prepare_press_release (fire-and-forget)
+  try {
+    const marketingGroupId = product?.automation?.notifications?.marketing_group_id;
+    if (marketingGroupId) {
+      const allModels = await aiModels.getAll();
+      const defaultModel = allModels.find(m => m.provider === 'anthropic' || m.provider === 'openai' || m.provider === 'google');
+      if (defaultModel) {
+        const prProc = await processes.create({
+          product_id: release.product_id,
+          model_id: defaultModel.id,
+          type: 'prepare_press_release',
+          release_id: release.id,
+          input_prompt: `Сформируй пресс-релиз для группы маркетинга (b24_group_id=${marketingGroupId}). После генерации автоматически опубликуй в Б24.`,
+          config: { auto_publish_b24: true, b24_group_id: marketingGroupId },
+        });
+        const qm = getQueueManager(req);
+        await qm.enqueue(prProc.id, { timeoutMs: 10 * 60 * 1000 });
+        release.auto_press_release = { process_id: prProc.id, status: 'queued' };
+      }
+    }
   } catch { /* never block publish */ }
 
   // Auto-deploy if configured

@@ -31,11 +31,21 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
   let config = { ...smokeConfig };
   const dp = devPorts || {};
 
+  // Check if URL points to external host (not localhost) — skip server start in that case
+  const isExternalUrl = (url) => {
+    try {
+      const h = new URL(url).hostname;
+      return h !== 'localhost' && h !== '127.0.0.1' && h !== '::1';
+    } catch { return false; }
+  };
+  const externalMode = config.url && isExternalUrl(config.url);
+
   // Apply dev_ports from product deploy config (priority over auto-discovery)
+  // Only apply localhost URL from dev_ports if no external URL is configured
   if (!config.url && dp.frontend) {
     config.url = `http://localhost:${dp.frontend}`;
   }
-  if (!config.start_command && dp.start_command) {
+  if (!externalMode && !config.start_command && dp.start_command) {
     config.start_command = dp.start_command;
   }
 
@@ -43,24 +53,25 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
   const dockerComposeMode = config.docker_compose === true ||
     (config.start_command && config.start_command.includes('docker compose'));
 
-  if (!config.url || !config.pages?.length || (!config.start_command && !dockerComposeMode)) {
+  if (!config.url || !config.pages?.length || (!externalMode && !config.start_command && !dockerComposeMode)) {
     await log('smoke_autodiscover', 'Автообнаружение настроек smoke test...');
     const discovered = await discoverSmokeConfig(projectPath, techStack);
 
     if (!config.url) config.url = discovered.url;
-    if (!config.start_command) config.start_command = discovered.start_command;
+    if (!externalMode && !config.start_command) config.start_command = discovered.start_command;
     if (!config.pages?.length) config.pages = discovered.pages;
     if (!config.ready_timeout_ms) config.ready_timeout_ms = discovered.ready_timeout_ms;
 
-    await log('smoke_autodiscover_done', `Обнаружено: ${config.start_command} → ${config.url}, ${config.pages.length} страниц`, {
+    await log('smoke_autodiscover_done', `Обнаружено: ${config.start_command || '(external)'} → ${config.url}, ${config.pages.length} страниц`, {
       discovered,
       merged: config,
       dev_ports: dp,
+      external_mode: externalMode,
     });
   }
 
-  // Always apply port from dev_ports (outside autodiscovery — works even when pages are cached)
-  if (dp.frontend && config.url && !dockerComposeMode) {
+  // Only apply dev_ports port override for localhost URLs (not external)
+  if (!externalMode && dp.frontend && config.url && !dockerComposeMode) {
     // Override URL port
     try {
       const u = new URL(config.url);
@@ -91,14 +102,18 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
     return { passed: true, results: [], discoveredConfig: null };
   }
 
-  await log('smoke_start', `Smoke test: ${pages.length} страниц на ${url}`);
+  const isExternal = isExternalUrl(url);
+  await log('smoke_start', `Smoke test: ${pages.length} страниц на ${url}${isExternal ? ' (внешний сервер)' : ''}`);
 
-  // 1. Start server (dev server or Docker Compose)
+  // 1. Start server (dev server or Docker Compose) — skip for external URLs
   let serverProcess = null;
   let dockerComposeProject = null;
-  
+
   try {
-    if (docker_compose || dockerComposeMode) {
+    if (isExternal) {
+      // External server (e.g. production) — no need to start anything
+      await log('smoke_external', `Внешний сервер: ${url} — запуск не требуется`);
+    } else if (docker_compose || dockerComposeMode) {
       // Docker Compose mode: start containers
       dockerComposeProject = await startDockerCompose(start_command, projectPath, log);
       await log('smoke_docker_compose_starting', `Запуск Docker Compose: ${projectPath}`);
@@ -123,7 +138,7 @@ export async function runSmokeTests({ smokeConfig, devPorts, projectPath, techSt
     await log('smoke_server_ready', `Сервер готов: ${url}`);
 
     // 3. Run browser checks
-    const results = await checkPages(url, pages, check_timeout_ms, log);
+    const results = await checkPages(url, pages, check_timeout_ms, log, config);
 
     const allPassed = results.every(r => r.ok);
     const summary = results.map(r =>
@@ -545,14 +560,14 @@ async function waitForReady(baseUrl, timeoutMs) {
 
 // ── Browser checks ──────────────────────────────────────
 
-async function checkPages(baseUrl, pages, timeoutMs, log) {
+async function checkPages(baseUrl, pages, timeoutMs, log, smokeConfig = {}) {
   const browser = await chromium.launch({ headless: true });
   const results = [];
 
   try {
     for (const pagePath of pages) {
       const fullUrl = new URL(pagePath, baseUrl).href;
-      const result = await checkSinglePage(browser, fullUrl, timeoutMs);
+      const result = await checkSinglePage(browser, fullUrl, timeoutMs, smokeConfig);
       results.push(result);
       await log('smoke_page', `${result.ok ? '✓' : '✗'} ${pagePath}`, {
         url: fullUrl,
@@ -567,7 +582,19 @@ async function checkPages(baseUrl, pages, timeoutMs, log) {
   return results;
 }
 
-async function checkSinglePage(browser, url, timeoutMs) {
+// Error text patterns that indicate a broken page
+const ERROR_TEXT_PATTERNS = [
+  /не удалось загрузить/i,
+  /ошибка загрузки/i,
+  /failed to fetch/i,
+  /500\s*internal server/i,
+  /cannot read prop/i,
+  /uncaught typeerror/i,
+  /network error/i,
+];
+
+async function checkSinglePage(browser, url, timeoutMs, smokeConfig = {}) {
+  const { auth, expect_elements = [], expect_no_errors = true } = smokeConfig;
   const context = await browser.newContext();
   const page = await context.newPage();
   const errors = [];
@@ -584,6 +611,15 @@ async function checkSinglePage(browser, url, timeoutMs) {
 
   let status = 0;
   try {
+    // Авторизация: если задан auth.login_url — заходим сначала туда
+    if (auth?.login_url && auth?.username && auth?.password) {
+      await page.goto(auth.login_url, { waitUntil: 'networkidle', timeout: timeoutMs });
+      if (auth.username_selector) await page.fill(auth.username_selector, auth.username);
+      if (auth.password_selector) await page.fill(auth.password_selector, auth.password);
+      if (auth.submit_selector) await page.click(auth.submit_selector);
+      await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => {});
+    }
+
     const response = await page.goto(url, {
       waitUntil: 'networkidle',
       timeout: timeoutMs,
@@ -594,13 +630,31 @@ async function checkSinglePage(browser, url, timeoutMs) {
       errors.push(`HTTP ${status}`);
     }
 
-    // Wait a bit for any deferred JS to run
+    // Ждём немного для отложенного JS
     await page.waitForTimeout(1500);
 
-    // Check page has visible content
+    // Проверка: страница не пустая
     const bodyText = await page.evaluate(() => document.body?.innerText?.trim() || '');
     if (bodyText.length < 10) {
       errors.push('Страница пустая или почти пустая');
+    }
+
+    // Проверка: нет текстов ошибок в теле страницы
+    if (expect_no_errors) {
+      for (const pattern of ERROR_TEXT_PATTERNS) {
+        if (pattern.test(bodyText)) {
+          errors.push(`Текст ошибки на странице: "${bodyText.match(pattern)?.[0]}"`);
+          break;
+        }
+      }
+    }
+
+    // Проверка: наличие ожидаемых DOM-элементов (CSS-селекторы из конфига)
+    for (const selector of expect_elements) {
+      const found = await page.locator(selector).count();
+      if (found === 0) {
+        errors.push(`Элемент не найден: ${selector}`);
+      }
     }
 
   } catch (err) {

@@ -1,0 +1,177 @@
+{
+  "extracted_at": "2026-03-19T13:51:42.067Z",
+  "time_range": "за 2 месяца",
+  "user": {
+    "id": "648",
+    "nameuser": "Клебанова Александра",
+    "login": "klebanova",
+    "mailuser": "kam@airkhv.ru",
+    "idcomp": "167",
+    "position": ""
+  },
+  "companies": [
+    {
+      "idcomp": 2507,
+      "namecomp": "АГ ОАО «ХАБАРОВСКИЙ АЭРОПОРТ»",
+      "ShortName": "",
+      "iata": null
+    },
+    {
+      "idcomp": 2311,
+      "namecomp": "АО &quot;Хабаровский Аэропорт&quot;",
+      "ShortName": "",
+      "iata": null
+    },
+    {
+      "idcomp": 167,
+      "namecomp": "АП ОАО «ХАБАРОВСКИЙ АЭРОПОРТ»",
+      "ShortName": "АП Хабаровск",
+      "iata": null
+    }
+  ],
+  "tickets": [
+    {
+      "ticket_id": 1393936810,
+      "title": "Счётчик",
+      "description": "&lt;p&gt;Здравствуйте.&lt;/p&gt;\r\n\r\n&lt;p&gt;У нас 4 марта один пассажир с посадки засчитался в регистрацию.&lt;/p&gt;\r\n\r\n&lt;p&gt;Во вложении детальный отчёт регистрации, но выделенная запись относится к посадке - в это время агент работала на посадке, и стойка&amp;nbsp;GWD-2 это стойка посадки.&lt;/p&gt;",
+      "author": "klebanova",
+      "author_email": "kam@airkhv.ru",
+      "created_at": "2026-03-11T10:27:50.947Z",
+      "updated_at": "2026-03-11T10:57:33.237Z",
+      "finish_time": "0001-01-01T00:00:00.000Z",
+      "client_finish": "0001-01-01T00:00:00.000Z",
+      "status_name": "В обработке",
+      "status_id": 9,
+      "priority_name": "Обычный",
+      "type_name": null,
+      "system_name": "Кобра",
+      "module_name": "Контроль досмотра пассажиров и багажа",
+      "module_id": 197,
+      "system_id": 4,
+      "extra_info": "",
+      "time_cost": null,
+      "company_name": "АП Хабаровск"
+    },
+    {
+      "ticket_id": 1393936798,
+      "title": "АП9224, почему рейс не найден",
+      "description": "&lt;p&gt;Здравствуйте.&lt;/p&gt;\r\n\r\n&lt;p&gt;Рейс АП9224 11.03, телеграмма не привязалась к рейсу - Рейс не найден. Но я не могу найти причин почему.&lt;/p&gt;",
+      "author": "klebanova",
+      "author_email": "kam@airkhv.ru",
+      "created_at": "2026-03-11T04:11:15.553Z",
+      "updated_at": "2026-03-12T10:06:21.490Z",
+      "finish_time": "0001-01-01T00:00:00.000Z",
+      "client_finish": "0001-01-01T00:00:00.000Z",
+      "status_name": "Закрыта",
+      "status_id": 6,
+      "priority_name": "Обычный",
+      "type_name": null,
+      "system_name": "Кобра",
+      "module_name": "Центр сообщений",
+      "module_id": 59,
+      "system_id": 4,
+      "extra_info": null,
+      "time_cost": null,
+      "company_name": "АП Хабаровск"
+    },
+    {
+      "ticket_id": 1393936120,
+      "title": "Ошибка List index out of bounds (2)",
+      "description": "&lt;p&gt;Здравствуйте.&lt;/p&gt;\r\n\r\n&lt;p&gt;Уже давно появляется ошибка (см. вложение). Отправить отчёт об ошибке не могу, так как отчёт пытается добавится в Outlook, а он не работает.&lt;/p&gt;\r\n\r\n&lt;p&gt;Ошибка обязательно есть утром и периодически появляется в течение дня. Если нажат на продолжить, то работа в модуле продолжается.&lt;/p&gt;\r\n\r\n&lt;p&gt;Ошибка возникает у меня aleksandra, видела её у пользователя iis. Возможно, это связано с Быстрым просмотром предупреждений - отключила, проверим.&lt;/p&gt;\r\n\r\n&lt;p&gt;Ошибка стала возникать после последнего обновления Интеграла.&amp;nbsp;&lt;/p&gt;\r\n\r\n&lt;p&gt;Никаких действий для её возникновения от пользователей не требуется, например, я не выключаю на ночь компьютер и утром ошибка у меня обязательно будет. Также в течение дня - я могу работать в других программах или не работать вообще и сообщение отображается.&lt;/p&gt;",
+      "author": "klebanova",
+      "author_email": "kam@airkhv.ru",
+      "created_at": "2026-02-11T02:23:46.530Z",
+      "updated_at": "2026-03-19T11:39:13.063Z",
+      "finish_time": "0001-01-01T00:00:00.000Z",
+      "client_finish": "0001-01-01T00:00:00.000Z",
+      "status_name": "В обработке",
+      "status_id": 9,
+      "priority_name": "Обычный",
+      "type_name": "Ошибка",
+      "system_name": "Кобра",
+      "module_name": "СПП",
+      "module_id": 40,
+      "system_id": 4,
+      "extra_info": null,
+      "time_cost": null,
+      "company_name": "АП Хабаровск"
+    },
+    {
+      "ticket_id": 1393935849,
+      "title": "Выгрузка SeasonRoute",
+      "description": "&lt;p&gt;Здравствуйте.&lt;/p&gt;\r\n\r\n&lt;p&gt;В выгрузку SeasonRoute стали выгружаться Прочие нерегулярные и Грузовые, хотя не должны. Просьба скорректировать.&lt;/p&gt;",
+      "author": "klebanova",
+      "author_email": "kam@airkhv.ru",
+      "created_at": "2026-01-30T09:03:52.960Z",
+      "updated_at": "2026-02-02T16:57:41.500Z",
+      "finish_time": "0001-01-01T00:00:00.000Z",
+      "client_finish": "0001-01-01T00:00:00.000Z",
+      "status_name": "На рассмотрении",
+      "status_id": 2,
+      "priority_name": "Обычный",
+      "type_name": "Доработка",
+      "system_name": "Кобра",
+      "module_name": "Шина данных",
+      "module_id": 89,
+      "system_id": 4,
+      "extra_info": "",
+      "time_cost": null,
+      "company_name": "АП Хабаровск"
+    },
+    {
+      "ticket_id": 1393935736,
+      "title": "БД Metrics",
+      "description": "&lt;p&gt;Здравствуйте.&lt;/p&gt;\r\n\r\n&lt;p&gt;Проверьте, пожалуйста, базу данных &amp;#8234;\\\\kobra-1D$DBMetrics.mdf&lt;/p&gt;\r\n\r\n&lt;p&gt;Она разрослась до 103 Гб и со слов нашего сетевого администратора в ней нет данных, которым необходим такой размер.&lt;/p&gt;",
+      "author": "klebanova",
+      "author_email": "kam@airkhv.ru",
+      "created_at": "2026-01-27T02:43:34.147Z",
+      "updated_at": "2026-01-27T09:21:57.893Z",
+      "finish_time": "0001-01-01T00:00:00.000Z",
+      "client_finish": "0001-01-01T00:00:00.000Z",
+      "status_name": "Закрыта",
+      "status_id": 6,
+      "priority_name": "Обычный",
+      "type_name": "Технологическая",
+      "system_name": "Кобра",
+      "module_name": "Общий раздел",
+      "module_id": 88,
+      "system_id": 4,
+      "extra_info": null,
+      "time_cost": null,
+      "company_name": "АП Хабаровск"
+    }
+  ],
+  "comments": [],
+  "brs_tickets": [],
+  "brs_comments": [],
+  "summary": {
+    "total_tickets": 5,
+    "total_comments": 0,
+    "brs_tickets_count": 0,
+    "brs_comments_count": 0,
+    "closed_tickets": 2,
+    "open_tickets": 3,
+    "status_breakdown": {
+      "В обработке": 2,
+      "Закрыта": 2,
+      "На рассмотрении": 1
+    },
+    "open_tickets_list": [
+      {
+        "id": 1393936810,
+        "title": "Счётчик",
+        "status": "В обработке"
+      },
+      {
+        "id": 1393936120,
+        "title": "Ошибка List index out of bounds (2)",
+        "status": "В обработке"
+      },
+      {
+        "id": 1393935849,
+        "title": "Выгрузка SeasonRoute",
+        "status": "На рассмотрении"
+      }
+    ]
+  }
+}
