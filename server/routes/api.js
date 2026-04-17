@@ -329,25 +329,9 @@ router.post('/releases/:id/publish', async (req, res) => {
     release.git_tag_error = tagErr.message;
   }
 
-  // Close corresponding GitLab issues (fire-and-forget)
-  try {
-    if (product?.deploy?.gitlab?.project_id && product?.deploy?.gitlab?.access_token) {
-      const { closeIssue, commentOnIssue } = await import('../gitlab-client.js');
-      const releaseIssues = await issues.getByRelease(release.id);
-      const glIssues = releaseIssues.filter(i => i.gitlab_issue_id);
-      if (glIssues.length > 0) {
-        const comment = `✅ Задача закрыта в [Kaizen](http://localhost:3034/product.html?id=${product.id}) — релиз **${release.version}** (${release.name})`;
-        const results = await Promise.allSettled(
-          glIssues.map(async (i) => {
-            await commentOnIssue(product.deploy, i.gitlab_issue_id, comment);
-            return closeIssue(product.deploy, i.gitlab_issue_id);
-          })
-        );
-        const closed = results.filter(r => r.status === 'fulfilled' && r.value?.closed).length;
-        if (closed > 0) release.gitlab_closed = closed;
-      }
-    }
-  } catch { /* GitLab sync errors should not block publish */ }
+  // GitLab-лейблы задач релиза уже обновляются внутри releases.publish() fire-and-forget:
+  // снимаются «В работе» / «Требуется доработка», ставится «Разработка завершена»,
+  // issue остаётся open — для тестировщика.
 
   // Post release report to Б24 group (fire-and-forget)
   try {
