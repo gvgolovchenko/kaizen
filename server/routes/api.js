@@ -219,17 +219,15 @@ router.put('/issues/:id', async (req, res) => {
   const issue = await issues.update(req.params.id, req.body);
   if (!issue) return res.status(404).json({ error: 'Issue not found' });
 
-  // Обратная синхронизация: закрыть GitLab issue при переходе в done
+  // Обратная синхронизация: при переходе в done пометить GitLab issue
+  // лейблом «Разработка завершена» (снять «В работе»/«Требуется доработка»)
+  // и оставить комментарий. Issue остаётся open — ждёт тестировщика.
   if (req.body.status === 'done' && issue.gitlab_issue_id) {
     try {
       const product = await products.getById(issue.product_id);
       if (product?.deploy?.gitlab?.project_id) {
-        const { closeIssue, commentOnIssue } = await import('../gitlab-client.js');
-        const comment = `✅ Задача закрыта в Kaizen`;
-        Promise.allSettled([
-          commentOnIssue(product.deploy, issue.gitlab_issue_id, comment),
-          closeIssue(product.deploy, issue.gitlab_issue_id),
-        ]).catch(() => {});
+        const { markIssueDeveloped } = await import('../gitlab-client.js');
+        markIssueDeveloped(product.deploy, issue.gitlab_issue_id).catch(() => {});
       }
     } catch { /* GitLab sync errors should not block update */ }
   }
@@ -441,7 +439,7 @@ router.post('/releases/:id/prepare-spec', async (req, res) => {
 
 router.post('/releases/:id/develop', async (req, res) => {
   try {
-    const { model_id, git_branch, test_command, timeout_min, auto_publish, run_tests, update_docs, deploy } = req.body;
+    const { model_id, git_branch, test_command, build_command, timeout_min, auto_publish, run_tests, update_docs, deploy, config: bodyConfig } = req.body;
 
     // Load release
     const release = await releases.getById(req.params.id);
@@ -467,16 +465,19 @@ router.post('/releases/:id/develop', async (req, res) => {
       return res.status(400).json({ error: 'product.project_path is required for development' });
 
     // Determine parameters
-    const branchName = git_branch  || `kaizen/release-${release.version}`;
-    const testCmd    = test_command || detectTestCommand(product.tech_stack);
-    const timeoutMs  = Math.min(Math.max(parseInt(timeout_min) || 60, 10), 480) * 60 * 1000;
+    const branchName  = git_branch    || bodyConfig?.git_branch    || `kaizen/release-${release.version}`;
+    const testCmd     = test_command  || bodyConfig?.test_command  || detectTestCommand(product.tech_stack);
+    const buildCmd    = build_command || bodyConfig?.build_command || null;
+    const timeoutMs   = Math.min(Math.max(parseInt(timeout_min) || 60, 10), 480) * 60 * 1000;
 
     // Create process
+    const devConfig = { git_branch: branchName, test_command: testCmd, ...(buildCmd && { build_command: buildCmd }), auto_publish, run_tests, update_docs, deploy };
     const proc = await processes.create({
       product_id:  release.product_id,
       model_id,
       type:        'develop_release',
-      input_prompt: JSON.stringify({ git_branch: branchName, test_command: testCmd, auto_publish, run_tests, update_docs, deploy }),
+      input_prompt: JSON.stringify(devConfig),
+      config:       devConfig,
       release_id:  release.id,
     });
 

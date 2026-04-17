@@ -310,6 +310,98 @@ export async function commentOnIssue(deploy, issueIid, body) {
 }
 
 /**
+ * Update GitLab issue labels (add/remove).
+ * Uses comma-joined label lists per GitLab PUT /issues API.
+ * @returns {{ updated: boolean, labels?: string[], error?: string }}
+ */
+export async function updateIssueLabels(deploy, issueIid, { remove_labels = [], add_labels = [] } = {}) {
+  const gl = deploy?.gitlab;
+  if (!gl?.url || !gl?.project_id || !gl?.access_token) {
+    return { updated: false, error: 'GitLab API не настроен' };
+  }
+  if (!remove_labels.length && !add_labels.length) {
+    return { updated: false, error: 'no labels to change' };
+  }
+
+  const body = {};
+  if (remove_labels.length) body.remove_labels = remove_labels.join(',');
+  if (add_labels.length) body.add_labels = add_labels.join(',');
+
+  try {
+    const res = await fetch(
+      `${gl.url}/api/v4/projects/${gl.project_id}/issues/${issueIid}`,
+      {
+        method: 'PUT',
+        headers: { 'PRIVATE-TOKEN': gl.access_token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }
+    );
+    if (!res.ok) return { updated: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    return { updated: true, labels: data.labels || [] };
+  } catch (err) {
+    return { updated: false, error: err.message };
+  }
+}
+
+/**
+ * Стандартный набор лейблов для фазы «Разработка завершена».
+ * Используется во всех продуктах: при переходе kaizen-задачи в done
+ * с GitLab issue снимаются метки «В работе» и «Требуется доработка»,
+ * ставится «Разработка завершена» — чтобы тестировщик увидел утром.
+ */
+export const DEVELOPED_LABELS = Object.freeze({
+  remove: ['В работе', 'Требуется доработка'],
+  add: ['Разработка завершена'],
+});
+
+const DEFAULT_DEVELOPED_COMMENT = '🧪 Разработка завершена в Kaizen — готово к тестированию';
+
+/**
+ * Отметить GitLab issue как «Разработка завершена»: обновить лейблы + опц. оставить комментарий.
+ * Issue НЕ закрывается — остаётся open, чтобы тестировщик увидел его в своей выдаче.
+ * @param {object} deploy - product.deploy JSONB
+ * @param {number} issueIid - GitLab issue IID
+ * @param {object} [opts]
+ * @param {string|false} [opts.comment] - текст комментария или false чтобы не писать
+ * @returns {Promise<{ labels: object, comment: object|null }>}
+ */
+export async function markIssueDeveloped(deploy, issueIid, { comment } = {}) {
+  const labelsResult = await updateIssueLabels(deploy, issueIid, {
+    remove_labels: DEVELOPED_LABELS.remove,
+    add_labels: DEVELOPED_LABELS.add,
+  });
+  let commentResult = null;
+  if (comment !== false) {
+    const body = comment || DEFAULT_DEVELOPED_COMMENT;
+    commentResult = await commentOnIssue(deploy, issueIid, body);
+  }
+  return { labels: labelsResult, comment: commentResult };
+}
+
+/**
+ * Fire-and-forget батч: синхронизировать список kaizen-issues (status=done) с GitLab.
+ * Берёт только те, у кого задан gitlab_issue_id. Ошибки по одному issue не блокируют остальные.
+ * @param {object} deploy - product.deploy JSONB
+ * @param {Array<{gitlab_issue_id: number}>} kaizenIssues
+ * @param {object} [opts] - прокидывается в markIssueDeveloped
+ * @returns {Promise<{synced: number, failed: number}>}
+ */
+export async function syncIssuesDeveloped(deploy, kaizenIssues, opts = {}) {
+  const targets = (kaizenIssues || []).filter(i => i?.gitlab_issue_id);
+  if (!targets.length) return { synced: 0, failed: 0 };
+  const results = await Promise.allSettled(
+    targets.map(i => markIssueDeveloped(deploy, i.gitlab_issue_id, opts))
+  );
+  let synced = 0, failed = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value?.labels?.updated) synced++;
+    else failed++;
+  }
+  return { synced, failed };
+}
+
+/**
  * Resolve GitLab project ID from repo_url.
  * Parses path from URL and searches via GitLab API.
  * @returns {number|null} project ID or null

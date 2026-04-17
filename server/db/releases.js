@@ -1,4 +1,6 @@
 import { pool } from './pool.js';
+import * as products from './products.js';
+import { syncIssuesDeveloped } from '../gitlab-client.js';
 
 const TABLE = 'opii.kaizen_releases';
 const ISSUES_TABLE = 'opii.kaizen_issues';
@@ -250,6 +252,17 @@ export async function publish(id) {
     await client.query('COMMIT');
     const result = await getById(id);
     result.status_changes = { release_to_published: true, issues_to_done: issuesToDone };
+
+    // Fire-and-forget: обновить GitLab-лейблы у задач релиза на «Разработка завершена»
+    // (чтобы тестировщик увидел утром). Issue остаётся open.
+    if (result.issues?.length) {
+      products.getById(result.product_id).then(product => {
+        if (product?.deploy?.gitlab?.project_id) {
+          return syncIssuesDeveloped(product.deploy, result.issues);
+        }
+      }).catch(() => {});
+    }
+
     return result;
   } catch (err) {
     await client.query('ROLLBACK');
