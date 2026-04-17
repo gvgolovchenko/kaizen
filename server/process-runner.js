@@ -1961,14 +1961,11 @@ async function runDevelopRelease(processId, proc, product, model, startTime, tim
     throw new Error(`Параллельная разработка заблокирована: на этом продукте уже запущен develop_release (${conflict.id.slice(0, 8)})`);
   }
 
-  // 2. Parse config from input_prompt or process.config
+  // 2. Parse config: merge input_prompt (base) + proc.config (override)
   let config = {};
-  if (proc.config && typeof proc.config === 'object') {
-    config = proc.config;
-  } else {
-    try { config = JSON.parse(proc.input_prompt || '{}'); } catch (parseErr) {
-      log.warn({ processId, err: parseErr.message }, 'config parse failed, using defaults');
-    }
+  try { config = JSON.parse(proc.input_prompt || '{}'); } catch {}
+  if (proc.config && typeof proc.config === 'object' && Object.keys(proc.config).length > 0) {
+    config = { ...config, ...proc.config };
   }
   const rawBranch   = config.git_branch  || `kaizen/release-${release.version}`;
   const branchName  = validateBranchName(rawBranch);

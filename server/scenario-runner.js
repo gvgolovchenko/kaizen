@@ -17,7 +17,7 @@ import * as products from './db/products.js';
 import * as issues from './db/issues.js';
 import * as scenarioRuns from './db/scenario-runs.js';
 import * as scenarios from './db/scenarios.js';
-import { notify, getNotifyOpts } from './notifier.js';
+import { notify, getNotifyOpts, postReleaseReport } from './notifier.js';
 import { createLogger } from './logger.js';
 import { syncIssues, autoImport, reopenSyncedIssues } from './gitlab-sync.js';
 
@@ -234,17 +234,23 @@ export class ScenarioRunner {
       }
 
       // Этап 4: Тестирование (опционально)
+      let testsPassed = !runTestsOpt; // если тесты не включены — считаем ок
       if (developOk && runTestsOpt) {
         try {
           const testProc = await this._createAndWait({
             product_id: scenario.product_id,
             type: 'run_tests',
             release_id: releaseId,
+            config: {
+              ...(config.test_command  && { test_command:  config.test_command }),
+              ...(config.build_command && { build_command: config.build_command }),
+            },
           }, timeout_min);
           processIds.push(testProc.id);
 
           if (testProc.status === 'completed') {
             const testData = testProc.result || {};
+            testsPassed = testData.tests_passed !== false;
             stages.push({ release: label, stage: 'tests_completed', tests_passed: testData.tests_passed });
           } else {
             stages.push({ release: label, stage: 'tests_failed', error: testProc.error });
@@ -275,24 +281,32 @@ export class ScenarioRunner {
         }
       }
 
-      // Этап 5: Публикация
-      if (developOk && auto_publish) {
+      // Этап 5: Публикация (только если тесты прошли или тесты не включены)
+      if (developOk && testsPassed && auto_publish) {
         try {
           await releases.publish(releaseId);
           stages.push({ release: label, stage: 'published' });
+          // Пост в Б24-группу
+          const product = await products.getById(scenario.product_id);
+          const releaseData = await releases.getById(releaseId);
+          if (product && releaseData) {
+            postReleaseReport(product, releaseData).catch(() => {});
+          }
         } catch (err) {
           stages.push({ release: label, stage: 'publish_error', error: err.message });
         }
+      } else if (developOk && !testsPassed && auto_publish) {
+        stages.push({ release: label, stage: 'publish_skipped', reason: 'tests_failed' });
       }
 
-      // Этап 6: Деплой (опционально)
-      if (developOk && auto_publish && deployOpt) {
+      // Этап 6: Деплой (опционально, только если тесты прошли)
+      if (developOk && testsPassed && auto_publish && deployOpt) {
         try {
           const deployProc = await this._createAndWait({
             product_id: scenario.product_id,
             type: 'deploy',
             release_id: releaseId,
-          }, timeout_min);
+          }, config.deploy_timeout_min || timeout_min * 3);
           processIds.push(deployProc.id);
 
           if (deployProc.status === 'completed') {
@@ -583,6 +597,12 @@ export class ScenarioRunner {
             await releases.publish(release.id);
             stages.push({ release: label, stage: 'published' });
             successCount++;
+            // Пост в Б24-группу
+            const product = await products.getById(scenario.product_id);
+            const releaseData = await releases.getById(release.id);
+            if (product && releaseData) {
+              postReleaseReport(product, releaseData).catch(() => {});
+            }
           } catch (err) {
             stages.push({ release: label, stage: 'publish_error', error: err.message });
           }
@@ -946,6 +966,12 @@ export class ScenarioRunner {
         if (effectiveDevelop.auto_publish && devData.tests_passed) {
           await releases.publish(release.id);
           stages.push({ stage: 'published' });
+          // Пост в Б24-группу
+          const product = await products.getById(scenario.product_id);
+          const releaseData = await releases.getById(release.id);
+          if (product && releaseData) {
+            postReleaseReport(product, releaseData).catch(() => {});
+          }
         }
 
         // Пресс-релиз

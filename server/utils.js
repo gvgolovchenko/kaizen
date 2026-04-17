@@ -79,8 +79,13 @@ export function detectBuildCommand(techStack, projectPath) {
     return hasBackend ? 'cd backend && dotnet build' : 'dotnet build';
   }
   // Java/Spring — до Vue/Node: проекты Spring+Vue компилируются через mvn
-  if (s.includes('java') || s.includes('spring'))
-    return 'mvn compile -q';
+  if (s.includes('java') || s.includes('spring')) {
+    const java21 = '/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home';
+    const javaHome = existsSync(java21) ? `JAVA_HOME=${java21} ` : '';
+    const backendPath = projectPath ? join(projectPath, 'backend') : null;
+    const hasBackend = backendPath && existsSync(backendPath);
+    return hasBackend ? `${javaHome}cd backend && mvn compile -q` : `${javaHome}mvn compile -q`;
+  }
   if (s.includes('go'))
     return 'go build ./...';
   if (s.includes('rust'))
@@ -105,9 +110,12 @@ export function detectTestCommand(techStack) {
     return 'go test ./...';
   if (s.includes('python') || s.includes('fastapi') || s.includes('django') || s.includes('flask'))
     return 'pytest';
-  // Java/Spring проверяется ДО Vue/Node — полностековые проекты Spring+Vue тестируются через mvn
-  if (s.includes('java') || s.includes('spring'))
+  // Java/Spring: Gradle имеет приоритет над Maven
+  if (s.includes('java') || s.includes('spring')) {
+    if (s.includes('gradle'))
+      return 'cd backend && JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradlew test';
     return 'mvn test';
+  }
   if (s.includes('node') || s.includes('express') || s.includes('react') || s.includes('vue'))
     return 'npm test';
   return 'npm test';
