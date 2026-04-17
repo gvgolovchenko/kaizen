@@ -174,6 +174,7 @@ function renderProductHeader() {
   if (product.project_path) meta.push(`<span style="font-family:monospace;font-size:0.8rem">${escapeHtml(product.project_path)}</span>`);
   if (product.deploy?.urls) {
     const urls = product.deploy.urls;
+    if (urls.public) meta.push(`<span><a href="${escapeHtml(urls.public)}" target="_blank" style="color:var(--accent);font-weight:600">🌐 ${escapeHtml(urls.public.replace(/^https?:\/\//, ''))}</a></span>`);
     const links = [];
     if (urls.frontend) links.push(`<a href="${escapeHtml(urls.frontend)}" target="_blank">Frontend</a>`);
     if (urls.backend) links.push(`<a href="${escapeHtml(urls.backend)}" target="_blank">Backend</a>`);
@@ -2596,6 +2597,7 @@ function loadDeploySettings() {
   document.getElementById('deployAutoPublishOnSuccess').checked = ap.on_deploy_success || false;
 
   const urls = d.urls || {};
+  document.getElementById('deployUrlPublic').value = urls.public || '';
   document.getElementById('deployUrlFrontend').value = urls.frontend || '';
   document.getElementById('deployUrlBackend').value = urls.backend || '';
 
@@ -2650,6 +2652,7 @@ window.handleSaveDeploy = async function () {
       on_deploy_success: document.getElementById('deployAutoPublishOnSuccess').checked,
     },
     urls: {
+      public: document.getElementById('deployUrlPublic').value.trim() || null,
       frontend: document.getElementById('deployUrlFrontend').value.trim() || null,
       backend: document.getElementById('deployUrlBackend').value.trim() || null,
     },
