@@ -625,7 +625,7 @@ const PRESET_VISIBLE = {
 // Default on/off per preset (only for unlocked stages)
 const PRESET_DEFAULTS = {
   batch_develop: { develop: true, seed: false, tests: false, docs: true, publish: false, deploy: false },
-  auto_release:  { develop: true, seed: false, tests: false, docs: false, publish: false, deploy: false },
+  auto_release:  { develop: true, seed: false, tests: false, docs: true, publish: false, deploy: false },
 };
 
 let stageStates = {};

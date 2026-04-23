@@ -136,7 +136,7 @@ export class ScenarioRunner {
   async _batchDevelop(scenario, config) {
     const { release_ids, model_id, timeout_min = 30, auto_publish = true, on_failure = 'stop',
             seed_data: seedDataOpt = false, run_tests: runTestsOpt = false,
-            update_docs: updateDocsOpt = false, deploy: deployOpt = false } = config;
+            update_docs: updateDocsOpt = true, deploy: deployOpt = false } = config;
     if (!release_ids?.length) throw new Error('release_ids required for batch_develop');
     if (!model_id) throw new Error('model_id required for batch_develop');
 
@@ -344,7 +344,7 @@ export class ScenarioRunner {
   //    develop.auto_publish  — публиковать при успешных тестах (дефолт: false)
   //    develop.timeout_min   — таймаут разработки (умножается ×2)
   //    develop.run_tests     — запускать тесты после разработки (дефолт: false)
-  //    develop.update_docs   — обновлять документацию (дефолт: false)
+  //    develop.update_docs   — обновлять документацию (дефолт: true, отключить явным false)
   //    develop.deploy        — деплоить после публикации (дефолт: false)
   //    on_failure       — 'stop' | 'skip' при ошибке релиза (дефолт: 'skip')
   // ═══════════════════════════════════════════════════════════
@@ -571,8 +571,8 @@ export class ScenarioRunner {
         }
       }
 
-      // AR3: Документирование (опционально)
-      if (developOk && develop.update_docs) {
+      // AR3: Документирование (по умолчанию — включено, отключить явным update_docs: false)
+      if (developOk && develop.update_docs !== false) {
         try {
           const docsProc = await this._createAndWait({
             product_id: scenario.product_id,
